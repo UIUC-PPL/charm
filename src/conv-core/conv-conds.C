@@ -5,143 +5,59 @@
 #include "converse.h"
 #include "charm-api.h"
 
+#include <vector>
+#include <deque>
+#include <queue>
+
 /**
  * Structure to hold the requisites for a callback
  */
-typedef struct _ccd_callback {
+struct ccd_callback {
   CcdVoidFn fn;
   void *arg;
   int pe;			/* the pe that sets the callback */
-} ccd_callback;
 
-
-
-/**
- * An element (a single callback) in a list of callbacks
- */
-typedef struct _ccd_cblist_elem {
-  ccd_callback cb;
-  short int next;
-  short int prev;
-} ccd_cblist_elem;
+  ccd_callback(CcdVoidFn f, void *a, int p)
+    : fn{f}, arg{a}, pe{p}
+  { }
+};
 
 
 
 /**
  * A list of callbacks stored as an array and handled like a list
  */
-typedef struct _ccd_cblist {
-  unsigned short int maxlen;
-  unsigned short int len;
-  short int first, last;
-  short int first_free;
-  unsigned char flag;
-  ccd_cblist_elem *elems;
-} ccd_cblist;
-
-
-
-/** Initialize a list of callbacks. Alloc memory, set counters etc. */
-static void init_cblist(ccd_cblist *l, unsigned int ml)
-{
-  int i;
-  l->elems = (ccd_cblist_elem*) malloc(ml*sizeof(ccd_cblist_elem));
-  _MEMCHECK(l->elems);
-  for(i=0;i<ml;i++) {
-    l->elems[i].next = i+1;
-    l->elems[i].prev = i-1;
-  }
-  l->elems[ml-1].next = -1;
-  l->len = 0;
-  l->maxlen = ml;
-  l->first = l->last = -1;
-  l->first_free = 0;
-  l->flag = 0;
-}
-
-
-
-/** Expand the callback list to a max length of ml */
-static void expand_cblist(ccd_cblist *l, unsigned int ml)
-{
-  ccd_cblist_elem *old_elems = l->elems;
-  int i = 0;
-  l->elems = (ccd_cblist_elem*) malloc(ml*sizeof(ccd_cblist_elem));
-  _MEMCHECK(l->elems);
-  for(i=0;i<(l->len);i++)
-    l->elems[i] = old_elems[i];
-  free(old_elems);
-  for(i=l->len;i<ml;i++) {
-    l->elems[i].next = i+1;
-    l->elems[i].prev = i-1;
-  }
-  l->elems[ml-1].next = -1;
-  l->elems[l->len].prev = -1;
-  l->maxlen = ml;
-  l->first_free = l->len;
-}
+struct ccd_cblist {
+  std::deque<ccd_callback> elems{};
+  unsigned char flag{};
+};
 
 
 
 /** Remove element referred to by given list index idx. */
-static void remove_elem(ccd_cblist *l, int idx)
+static inline void remove_elem(ccd_cblist & l, int idx)
 {
-  ccd_cblist_elem *e = l->elems;
-  /* remove lidx from the busy list */
-  if(e[idx].next != (-1))
-    e[e[idx].next].prev = e[idx].prev;
-  if(e[idx].prev != (-1))
-    e[e[idx].prev].next = e[idx].next;
-  if(idx==(l->first)) 
-    l->first = e[idx].next;
-  if(idx==(l->last)) 
-    l->last = e[idx].prev;
-  /* put lidx in the free list */
-  e[idx].prev = -1;
-  e[idx].next = l->first_free;
-  if(e[idx].next != (-1))
-    e[e[idx].next].prev = idx;
-  l->first_free = idx;
-  l->len--;
+  l.elems.erase(l.elems.begin() + idx);
 }
 
 
 
 /** Remove n elements from the beginning of the list. */
-static void remove_n_elems(ccd_cblist *l, int n)
+static inline void remove_n_elems(ccd_cblist & l, size_t n)
 {
-  int i;
-  if(n==0 || (l->len < n))
+  if (n == 0 || l.elems.size() < n)
     return;
-  for(i=0;i<n;i++) {
-    remove_elem(l, l->first);
-  }
+
+  l.elems.erase(l.elems.begin(), l.elems.begin() + (n-1));
 }
 
 
 
 /** Append callback to the given cblist, and return the index. */
-static int append_elem(ccd_cblist *l, CcdVoidFn fn, void *arg, int pe)
+static inline int append_elem(ccd_cblist & l, CcdVoidFn fn, void *arg, int pe)
 {
-  int idx;
-  ccd_cblist_elem *e;
-  if(l->len == l->maxlen)
-    expand_cblist(l, l->maxlen*2);
-  idx = l->first_free;
-  e = l->elems;
-  l->first_free = e[idx].next;
-  e[idx].next = -1;
-  e[idx].prev = l->last;
-  if(l->first == (-1))
-    l->first = idx;
-  if(l->last != (-1))
-    e[l->last].next = idx;
-  l->last = idx;
-  e[idx].cb.fn = fn;
-  e[idx].cb.arg = arg;
-  e[idx].cb.pe = pe;
-  l->len++;
-  return idx;
+  l.elems.emplace_back(fn, arg, pe);
+  return l.elems.size()-1;
 }
 
 
@@ -154,14 +70,18 @@ static int append_elem(ccd_cblist *l, CcdVoidFn fn, void *arg, int pe)
  * registered from other callbacks) are ignored. 
  * @note: It is illegal to cancel callbacks from within ccd callbacks.
  */
-static void call_cblist_keep(ccd_cblist *l,double curWallTime)
+static void call_cblist_keep(const ccd_cblist & l, double curWallTime)
 {
-  int i, len = l->len, idx;
-  for(i=0, idx=l->first;i<len;i++) {
-    int old = CmiSwitchToPE(l->elems[idx].cb.pe);
-    (*(l->elems[idx].cb.fn))(l->elems[idx].cb.arg,curWallTime);
+  // save the length in case callbacks are added during execution
+  const size_t len = l.elems.size();
+
+  // we must iterate this way because insertion invalidates deque iterators
+  for (size_t i = 0; i < len; ++i)
+  {
+    const ccd_callback & cb = l.elems[i];
+    int old = CmiSwitchToPE(cb.pe);
+    (*(cb.fn))(cb.arg, curWallTime);
     int unused = CmiSwitchToPE(old);
-    idx = l->elems[idx].next;
   }
 }
 
@@ -175,29 +95,33 @@ static void call_cblist_keep(ccd_cblist *l,double curWallTime)
  * registered from other callbacks) are ignored. 
  * @note: It is illegal to cancel callbacks from within ccd callbacks.
  */
-static void call_cblist_remove(ccd_cblist *l,double curWallTime)
+static void call_cblist_remove(ccd_cblist & l, double curWallTime)
 {
-  int i, len = l->len, idx;
   /* reentrant */
-  if (l->flag) return;
-  l->flag = 1;
+  if (l.flag)
+    return;
+  l.flag = 1;
+
+  // save the length in case callbacks are added during execution
+  const size_t len = l.elems.size();
+
+  // we must iterate this way because insertion invalidates deque iterators
 #if ! CMK_BIGSIM_CHARM
-  for(i=0, idx=l->first;i<len;i++) {
-    int old = CmiSwitchToPE(l->elems[idx].cb.pe);
-    (*(l->elems[idx].cb.fn))(l->elems[idx].cb.arg,curWallTime);
-    int unused = CmiSwitchToPE(old);
-    idx = l->elems[idx].next;
-  }
+  for (size_t i = 0; i < len; ++i)
 #else
-  for(i=0, idx=l->last;i<len;i++) {
-    int old = CmiSwitchToPE(l->elems[idx].cb.pe);
-    (*(l->elems[idx].cb.fn))(l->elems[idx].cb.arg,curWallTime);
-    int unused = CmiSwitchToPE(old);
-    idx = l->elems[idx].prev;
-  }
+  // i < len is correct. after i==0, unsigned underflow will wrap to SIZE_MAX
+  for (size_t i = len-1; i < len; --i)
 #endif
-  remove_n_elems(l,len);
-  l->flag = 0;
+  {
+    const ccd_callback & cb = l.elems[i];
+    int old = CmiSwitchToPE(cb.pe);
+    (*(cb.fn))(cb.arg, curWallTime);
+    int unused = CmiSwitchToPE(old);
+  }
+
+  remove_n_elems(l, len);
+
+  l.flag = 0;
 }
 
 
@@ -208,10 +132,10 @@ static void call_cblist_remove(ccd_cblist *l,double curWallTime)
 /**
  * Lists of conditional callbacks that are maintained by the scheduler
  */
-typedef struct {
+struct ccd_cond_callbacks {
   ccd_cblist condcb[MAXNUMCONDS];
   ccd_cblist condcb_keep[MAXNUMCONDS];
-} ccd_cond_callbacks;
+};
 
 /***/
 CpvStaticDeclare(ccd_cond_callbacks, conds);   
@@ -222,18 +146,18 @@ CpvStaticDeclare(ccd_cond_callbacks, conds);
 
 /*Make sure this matches the CcdPERIODIC_* list in converse.h*/
 #define CCD_PERIODIC_MAX 13
-const static double periodicCallInterval[CCD_PERIODIC_MAX]=
+static constexpr const double periodicCallInterval[CCD_PERIODIC_MAX]=
 {0.001, 0.010, 0.100, 1.0, 5.0, 10.0, 60.0, 2*60.0, 5*60.0, 10*60.0, 3600.0, 12*3600.0, 24*3600.0};
 
 /**
  * List of periodic callbacks maintained by the scheduler
  */
-typedef struct {
+struct ccd_periodic_callbacks {
 	int nSkip;/*Number of opportunities to skip*/
 	double lastCheck;/*Time of last check*/
 	double resolution;
 	double nextCall[CCD_PERIODIC_MAX];
-} ccd_periodic_callbacks;
+};
 
 /** */
 CpvStaticDeclare(ccd_periodic_callbacks, pcb);
@@ -241,135 +165,37 @@ CpvDeclare(int, _ccd_numchecks);
 
 
 
-#define MAXTIMERHEAPENTRIES       128
 
 /**
  * Structure used to manage callbacks in a heap
  */
-typedef struct {
-    double time;
-    ccd_callback cb;
-} ccd_heap_elem;
+struct ccd_heap_elem {
+  double time;
+  ccd_callback cb;
 
+  ccd_heap_elem(double t, CcdVoidFn fn, void *arg, int pe)
+    : time{t}, cb{fn, arg, pe}
+  { }
 
-/* Note : The heap is only stored in elements ccd_heap[0] to 
- * ccd_heap[ccd_heaplen]
- */
-
-/** An array of time-scheduled callbacks managed as a heap */
-CpvStaticDeclare(ccd_heap_elem*, ccd_heap); 
-/** The length of the callback heap */
-CpvStaticDeclare(int, ccd_heaplen);
-/** The max allowed length of the callback heap */
-CpvStaticDeclare(int, ccd_heapmaxlen);
-
-
-
-/** Swap two elements on the heap */
-static void ccd_heap_swap(int index1, int index2)
-{
-  ccd_heap_elem *h = CpvAccess(ccd_heap);
-  ccd_heap_elem temp;
-  
-  temp = h[index1];
-  h[index1] = h[index2];
-  h[index2] = temp;
-}
-
-
-
-/**
- * Expand the ccd_heap to make more room.
- *
- * Double the heap size and copy everything over. Initial 128 is reasonably 
- * big, so expanding won't happen often.
- *
- * Had a bug previously due to late expansion, should work now - Gengbin 12/4/03
-*/
-static void expand_ccd_heap(void)
-{
-  int i;
-  int oldlen = CpvAccess(ccd_heapmaxlen);
-  int newlen = oldlen*2;
-  ccd_heap_elem *newheap;
-
-  CmiPrintf("[%d] Warning: ccd_heap expand from %d to %d\n", CmiMyPe(),oldlen, newlen);
-
-  newheap = (ccd_heap_elem*) malloc(sizeof(ccd_heap_elem)*2*(newlen+1));
-  _MEMCHECK(newheap);
-  /* need to copy the second half part ??? */
-  for (i=0; i<=oldlen; i++) {
-    newheap[i] = CpvAccess(ccd_heap)[i];
-    newheap[i+newlen] = CpvAccess(ccd_heap)[i+oldlen];
+  bool operator<(const ccd_heap_elem & rhs) const
+  {
+    return this->time < rhs.time;
   }
-  free(CpvAccess(ccd_heap));
-  CpvAccess(ccd_heap) = newheap;
-  CpvAccess(ccd_heapmaxlen) = newlen;
-}
+};
+
+
+/** time-scheduled callbacks */
+CpvStaticDeclare(std::priority_queue<ccd_heap_elem>, ccd_heap);
 
 
 
 /**
  * Insert a new callback into the heap
  */
-static void ccd_heap_insert(double t, CcdVoidFn fnp, void *arg, int pe)
+static inline void ccd_heap_insert(double t, CcdVoidFn fnp, void *arg, int pe)
 {
-  int child, parent;
-  ccd_heap_elem *h;
-  
-  if(CpvAccess(ccd_heaplen) >= CpvAccess(ccd_heapmaxlen)) {
-/* CmiAbort("Heap overflow (InsertInHeap), exiting...\n"); */
-    expand_ccd_heap();
-  } 
-
-  h = CpvAccess(ccd_heap);
-
-  {
-    ccd_heap_elem *e = &(h[++CpvAccess(ccd_heaplen)]);
-    e->time = t;
-    e->cb.fn = fnp;
-    e->cb.arg = arg;
-    e->cb.pe = pe;
-    child  = CpvAccess(ccd_heaplen);    
-    parent = child / 2;
-    while((parent>0) && (h[child].time<h[parent].time)) {
-	    ccd_heap_swap(child, parent);
-	    child  = parent;
-	    parent = parent / 2;
-    }
-  }
-}
-
-
-
-/**
- * Remove the top of the heap
- */
-static void ccd_heap_remove(void)
-{
-  int parent,child;
-  ccd_heap_elem *h = CpvAccess(ccd_heap);
-  
-  parent = 1;
-  if(CpvAccess(ccd_heaplen)>0) {
-    /* put deleted value at end of heap */
-    ccd_heap_swap(1,CpvAccess(ccd_heaplen)); 
-    CpvAccess(ccd_heaplen)--;
-    if(CpvAccess(ccd_heaplen)) {
-      /* if any left, then bubble up values */
-	    child = 2 * parent;
-	    while(child <= CpvAccess(ccd_heaplen)) {
-	      if(((child + 1) <= CpvAccess(ccd_heaplen))  &&
-		       (h[child].time > h[child+1].time))
-                child++; /* use the smaller of the two */
-	      if(h[parent].time <= h[child].time) 
-		      break;
-	      ccd_heap_swap(parent,child);
-	      parent  = child;      /* go down the tree one more step */
-	      child  = 2 * child;
-      }
-    }
-  } 
+  auto & h = CpvAccess(ccd_heap);
+  h.emplace(t, fnp, arg, pe);
 }
 
 
@@ -380,26 +206,23 @@ static void ccd_heap_remove(void)
  */
 static void ccd_heap_update(double curWallTime)
 {
-  ccd_heap_elem *h = CpvAccess(ccd_heap);
-  ccd_heap_elem *e = h+CpvAccess(ccd_heapmaxlen);
-  int i,ne=0;
+  auto & h = CpvAccess(ccd_heap);
+
+  std::vector<ccd_callback> expired;
+
   /* Pull out all expired heap entries */
-  while ((CpvAccess(ccd_heaplen)>0) && (h[1].time<curWallTime)) {
-    e[ne++]=h[1];
-    ccd_heap_remove();
-  }
+  for (const ccd_heap_elem * e = &h.top(); !h.empty() && e->time < curWallTime; h.pop(), e = &h.top())
+    expired.emplace_back(e->cb);
+
   /* Now execute those heap entries.  This must be
      separated from the removal phase because executing
      an entry may change the heap. 
   */
-  for (i=0;i<ne;i++) {
-/*
-      ccd_heap_elem *h = CpvAccess(ccd_heap);
-      ccd_heap_elem *e = h+CpvAccess(ccd_heapmaxlen);
-*/
-      int old = CmiSwitchToPE(e[i].cb.pe);
-      (*(e[i].cb.fn))(e[i].cb.arg,curWallTime);
-      int unused = CmiSwitchToPE(old);
+  for (const ccd_callback & cb : expired)
+  {
+    int old = CmiSwitchToPE(cb.pe);
+    (*(cb.fn))(cb.arg, curWallTime);
+    int unused = CmiSwitchToPE(old);
   }
 }
 
@@ -414,22 +237,11 @@ void CcdModuleInit(char **ignored)
 {
    int i;
    double curTime;
-   CpvInitialize(ccd_heap_elem*, ccd_heap);
+   CpvInitialize(std::priority_queue<ccd_heap_elem>, ccd_heap);
    CpvInitialize(ccd_cond_callbacks, conds);
    CpvInitialize(ccd_periodic_callbacks, pcb);
-   CpvInitialize(int, ccd_heaplen);
-   CpvInitialize(int, ccd_heapmaxlen);
    CpvInitialize(int, _ccd_numchecks);
 
-   CpvAccess(ccd_heaplen) = 0;
-   CpvAccess(ccd_heapmaxlen) = MAXTIMERHEAPENTRIES;
-   CpvAccess(ccd_heap) = 
-     (ccd_heap_elem*) malloc(sizeof(ccd_heap_elem)*2*(MAXTIMERHEAPENTRIES + 1));
-   _MEMCHECK(CpvAccess(ccd_heap));
-   for(i=0;i<MAXNUMCONDS;i++) {
-     init_cblist(&(CpvAccess(conds).condcb[i]), CBLIST_INIT_LEN);
-     init_cblist(&(CpvAccess(conds).condcb_keep[i]), CBLIST_INIT_LEN);
-   }
    CpvAccess(_ccd_numchecks) = 1;
    CpvAccess(pcb).nSkip = 1;
    curTime=CmiWallTimer();
@@ -450,7 +262,7 @@ void CcdModuleInit(char **ignored)
 int CcdCallOnCondition(int condnum, CcdVoidFn fnp, void *arg)
 {
   CmiAssert(condnum < MAXNUMCONDS);
-  return append_elem(&(CpvAccess(conds).condcb[condnum]), fnp, arg, CcdIGNOREPE);
+  return append_elem(CpvAccess(conds).condcb[condnum], fnp, arg, CcdIGNOREPE);
 } 
 
 /** 
@@ -460,7 +272,7 @@ int CcdCallOnCondition(int condnum, CcdVoidFn fnp, void *arg)
 int CcdCallOnConditionOnPE(int condnum, CcdVoidFn fnp, void *arg, int pe)
 {
   CmiAssert(condnum < MAXNUMCONDS);
-  return append_elem(&(CpvAccess(conds).condcb[condnum]), fnp, arg, pe);
+  return append_elem(CpvAccess(conds).condcb[condnum], fnp, arg, pe);
 } 
 
 /**
@@ -470,7 +282,7 @@ int CcdCallOnConditionOnPE(int condnum, CcdVoidFn fnp, void *arg, int pe)
 int CcdCallOnConditionKeep(int condnum, CcdVoidFn fnp, void *arg)
 {
   CmiAssert(condnum < MAXNUMCONDS);
-  return append_elem(&(CpvAccess(conds).condcb_keep[condnum]), fnp, arg, CcdIGNOREPE);
+  return append_elem(CpvAccess(conds).condcb_keep[condnum], fnp, arg, CcdIGNOREPE);
 } 
 
 /**
@@ -480,7 +292,7 @@ int CcdCallOnConditionKeep(int condnum, CcdVoidFn fnp, void *arg)
 int CcdCallOnConditionKeepOnPE(int condnum, CcdVoidFn fnp, void *arg, int pe)
 {
   CmiAssert(condnum < MAXNUMCONDS);
-  return append_elem(&(CpvAccess(conds).condcb_keep[condnum]), fnp, arg, pe);
+  return append_elem(CpvAccess(conds).condcb_keep[condnum], fnp, arg, pe);
 } 
 
 
@@ -490,7 +302,7 @@ int CcdCallOnConditionKeepOnPE(int condnum, CcdVoidFn fnp, void *arg, int pe)
 void CcdCancelCallOnCondition(int condnum, int idx)
 {
   CmiAssert(condnum < MAXNUMCONDS);
-  remove_elem(&(CpvAccess(conds).condcb[condnum]), idx);
+  remove_elem(CpvAccess(conds).condcb[condnum], idx);
 }
 
 
@@ -500,7 +312,7 @@ void CcdCancelCallOnCondition(int condnum, int idx)
 void CcdCancelCallOnConditionKeep(int condnum, int idx)
 {
   CmiAssert(condnum < MAXNUMCONDS);
-  remove_elem(&(CpvAccess(conds).condcb_keep[condnum]), idx);
+  remove_elem(CpvAccess(conds).condcb_keep[condnum], idx);
 }
 
 
@@ -533,8 +345,8 @@ void CcdRaiseCondition(int condnum)
 {
   CmiAssert(condnum < MAXNUMCONDS);
   double curWallTime=CmiWallTimer();
-  call_cblist_remove(&(CpvAccess(conds).condcb[condnum]),curWallTime);
-  call_cblist_keep(&(CpvAccess(conds).condcb_keep[condnum]),curWallTime);
+  call_cblist_remove(CpvAccess(conds).condcb[condnum], curWallTime);
+  call_cblist_keep(CpvAccess(conds).condcb_keep[condnum], curWallTime);
 }
 
 
