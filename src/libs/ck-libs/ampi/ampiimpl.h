@@ -1093,12 +1093,37 @@ enum AmpiSendType : bool {
 
 #define MyAlign8(x) (((x)+7)&(~7))
 
+// Forward decls:
+class IReq;
+class RednReq;
+class GatherReq;
+class GathervReq;
+class SendReq;
+class SsendReq;
+class ATAReq;
+class GReq;
+#if CMK_CUDA
+class GPUReq;
+#endif
+
 /**
 Represents an MPI request that has been initiated
 using Isend, Irecv, Ialltoall, Send_init, etc.
 */
 class AmpiRequest {
- public:
+  friend IReq;
+  friend RednReq;
+  friend GatherReq;
+  friend GathervReq;
+  friend SendReq;
+  friend SsendReq;
+  friend ATAReq;
+  friend GReq;
+#if CMK_CUDA
+  friend GPUReq;
+#endif
+
+ private:
   void *buf          = nullptr;
   int count          = 0;
   MPI_Datatype type  = MPI_DATATYPE_NULL;
@@ -1119,13 +1144,29 @@ class AmpiRequest {
   AmpiRequest() =default;
   virtual ~AmpiRequest() =default;
 
+  // Non-virtual getters & setters
+  void* getBuf() const noexcept { return buf; }
+  int getCount() const noexcept { return count; }
+  MPI_Datatype getDatatype() const noexcept { return type; }
+  int getTag() const noexcept { return tag; }
+  int getSrcRank() const noexcept { return src; }
+  int getComm() const noexcept { return comm; }
+  MPI_Request getReqIdx() const noexcept { return reqIdx; }
+  bool isComplete() const noexcept { return complete; }
+  bool isBlocked() const noexcept { return blocked; }
+
+  void setReqIdx(MPI_Request idx) noexcept { reqIdx = idx; }
+  void setComplete(bool c) noexcept { complete = c; }
+  void setBlocked(bool b) noexcept { blocked = b; }
+
+  /// Free the request's datatype
+  void free(CkDDT* ddt) noexcept {
+    if (type != MPI_DATATYPE_NULL) ddt->freeType(type);
+  }
+
   /// Activate this persistent request.
   ///  Only meaningful for persistent Ireq, SendReq, and SsendReq requests.
   virtual void start(MPI_Request reqIdx) noexcept {}
-
-  /// Used by AmmEntry's constructor
-  virtual int getTag() const noexcept { return tag; }
-  virtual int getSrcRank() const noexcept { return src; }
 
   /// Return true if this request is finished (progress):
   virtual bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept =0;
@@ -1152,19 +1193,6 @@ class AmpiRequest {
   /// Receive an Rdma message
   virtual void receiveRdma(ampi *ptr, char *sbuf, int slength, int ssendReq,
                            int srcRank, MPI_Comm scomm) noexcept { }
-
-  /// Set the request's index into AmpiRequestList
-  void setReqIdx(MPI_Request idx) noexcept { reqIdx = idx; }
-  MPI_Request getReqIdx() const noexcept { return reqIdx; }
-
-  /// Free the request's datatype
-  void free(CkDDT* ddt) noexcept {
-    if (type != MPI_DATATYPE_NULL) ddt->freeType(type);
-  }
-
-  /// Set whether the request is currently blocked on
-  void setBlocked(bool b) noexcept { blocked = b; }
-  bool isBlocked() const noexcept { return blocked; }
 
   /// Returns the type of request:
   ///  AMPI_I_REQ, AMPI_ATA_REQ, AMPI_SEND_REQ, AMPI_SSEND_REQ,
