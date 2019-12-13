@@ -57,23 +57,75 @@ typedef struct hapiEvent {
 } hapiEvent;
 
 CpvDeclare(std::queue<hapiEvent>, hapi_event_queue);
+CpvDeclare(std::queue<cudaEvent_t>, cuda_event_pool);
+CsvDeclare(int, event_pool_size);
+CsvDeclare(int, event_pool_inc);
+CsvDeclare(bool, use_event_pool);
 #endif
 CpvDeclare(int, n_hapi_events);
 
-void initEventQueues() {
+void initEventQueues(char** argv) {
 #ifndef HAPI_CUDA_CALLBACK
   CpvInitialize(std::queue<hapiEvent>, hapi_event_queue);
+  CpvInitialize(std::queue<cudaEvent_t>, cuda_event_pool);
+  CsvInitialize(int, event_pool_size);
+  CsvInitialize(int, event_pool_inc);
+  CsvInitialize(bool, use_event_pool);
+
+  // First PE of each logical node processes options
+  if (CmiMyRank() == 0) {
+    if (CmiGetArgFlagDesc(argv, "+gpueventpooloff", "Turn off CUDA Event pool")) {
+      CsvAccess(use_event_pool) = false;
+    }
+    else {
+      CsvAccess(use_event_pool) = true;
+      CsvAccess(event_pool_size) = CsvAccess(event_pool_inc) = 128;
+
+      // CUDA Event pool options
+      CmiGetArgIntDesc(argv, "+gpueventpoolsize", &CsvAccess(event_pool_size),
+          "Initial size of CUDA Event pool");
+      CmiGetArgIntDesc(argv, "+gpueventpoolinc", &CsvAccess(event_pool_inc),
+          "Increment size of CUDA Event pool");
+
+      if (CmiMyPe() == 0) {
+        CmiPrintf("HAPI> Creating CUDA Event pool with size %d, inc %d\n",
+            CsvAccess(event_pool_size), CsvAccess(event_pool_inc));
+      }
+    }
+  }
+
+  CmiNodeBarrier();
+
+  if (CsvAccess(use_event_pool)) {
+    // Create per-PE CUDA Event pool
+    double create_start_time = CmiWallTimer();
+
+    for (int i = 0; i < CsvAccess(event_pool_size); i++) {
+      cudaEvent_t ev;
+      cudaEventCreateWithFlags(&ev, cudaEventDisableTiming);
+      CpvAccess(cuda_event_pool).push(ev);
+    }
+
+    if (CmiMyPe() == 0) {
+      CmiPrintf("HAPI> Created CUDA Event pool in %.3lf ms\n",
+          (CmiWallTimer() - create_start_time) * 1000);
+    }
+  }
 #endif
   CpvInitialize(int, n_hapi_events);
   CpvAccess(n_hapi_events) = 0;
 }
 
-// Returns the CUDA device associated with the given PE.
-// TODO: should be updated to exploit the hardware topology instead of round robin
-static inline int getMyCudaDevice(int my_node) {
-  int device_count;
-  hapiCheck(cudaGetDeviceCount(&device_count));
-  return my_node % device_count;
+void destroyEventQueues() {
+#ifndef HAPI_CUDA_CALLBACK
+  // Destroy CUDA Event pool
+  int to_destroy = CpvAccess(cuda_event_pool).size();
+  for (int i = 0; i < to_destroy; i++) {
+    cudaEvent_t& ev = CpvAccess(cuda_event_pool).front();
+    cudaEventDestroy(ev);
+    CpvAccess(cuda_event_pool).pop();
+  }
+#endif
 }
 
 // Used to invoke user's Charm++ callback function
@@ -199,7 +251,9 @@ void GPUManager::init() {
 #endif
 
   // store CUDA device properties
-  hapiCheck(cudaGetDeviceProperties(&device_prop_, getMyCudaDevice(CmiMyNode())));
+  int device;
+  hapiCheck(cudaGetDevice(&device));
+  hapiCheck(cudaGetDeviceProperties(&device_prop_, device));
 
 #ifdef HAPI_CUDA_CALLBACK
   // check if CUDA callback is supported
@@ -209,9 +263,6 @@ void GPUManager::init() {
     CmiAbort("[HAPI] CUDA callback is not supported on this device");
   }
 #endif
-
-  // set which device to use
-  hapiCheck(cudaSetDevice(getMyCudaDevice(CmiMyNode())));
 
   // allocate host/device buffers array (both user and system-addressed)
   host_buffers_ = new void*[NUM_BUFFERS*2];
@@ -405,9 +456,24 @@ void GPUManager::allocateBuffers(hapiWorkRequest* wr) {
 
 #ifndef HAPI_CUDA_CALLBACK
 void recordEvent(cudaStream_t stream, void* cb, void* cb_msg, hapiWorkRequest* wr = NULL) {
-  // create CUDA event and insert into stream
   cudaEvent_t ev;
-  cudaEventCreateWithFlags(&ev, cudaEventDisableTiming);
+
+  if (CsvAccess(use_event_pool)) {
+    if (CpvAccess(cuda_event_pool).empty()) {
+      // CUDA Event pool empty, create more Events
+      for (int i = 0; i < CsvAccess(event_pool_inc); i++) {
+        cudaEvent_t new_ev;
+        cudaEventCreateWithFlags(&new_ev, cudaEventDisableTiming);
+        CpvAccess(cuda_event_pool).push(new_ev);
+      }
+    }
+
+    ev = CpvAccess(cuda_event_pool).front();
+    CpvAccess(cuda_event_pool).pop();
+  }
+  else {
+    cudaEventCreateWithFlags(&ev, cudaEventDisableTiming);
+  }
   cudaEventRecord(ev, stream);
 
   hapiEvent hev(ev, cb, cb_msg, wr);
@@ -771,10 +837,78 @@ void initHybridAPI() {
   CsvAccess(gpu_manager).init();
 }
 
-// Set HAPI device for non-0 ranks
-void setHybridAPIDevice() {
-  // set which device to use
-  hapiCheck(cudaSetDevice(getMyCudaDevice(CmiMyNode())));
+// Set up PE to GPU mapping, invoked from all PEs
+// TODO: Support custom mappings
+void initDeviceMapping(char** argv) {
+  Mapping map_type = Mapping::Block; // Default is block mapping
+  bool all_gpus = false; // If true, all GPUs are visible to all processes.
+                         // Otherwise, only a subset are visible (e.g. with jsrun)
+  char* gpumap = NULL;
+
+  // Process +gpumap
+  if (CmiGetArgStringDesc(argv, "+gpumap", &gpumap,
+        "define pe to gpu device mapping")) {
+    if (CmiMyPe() == 0) {
+      CmiPrintf("HAPI> PE-GPU mapping: %s\n", gpumap);
+    }
+
+    if (strcmp(gpumap, "none") == 0) {
+      map_type = Mapping::None;
+    }
+    else if (strcmp(gpumap, "block") == 0) {
+      map_type = Mapping::Block;
+    }
+    else if (strcmp(gpumap, "roundrobin") == 0) {
+      map_type = Mapping::RoundRobin;
+    }
+    else {
+      CmiAbort("Unsupported mapping type!");
+    }
+  }
+
+  // Process +allgpus
+  if (CmiGetArgFlagDesc(argv, "+allgpus",
+        "all GPUs are visible to all processes")) {
+    all_gpus = true;
+    if (CmiMyPe() == 0) {
+      CmiPrintf("HAPI> All GPUs are visible to all processes\n");
+    }
+  }
+
+  // No mapping specified, user assumes responsibility
+  if (map_type == Mapping::None) {
+    if (CmiMyPe() == 0) {
+      CmiPrintf("HAPI> User should explicitly select devices for PEs/chares\n");
+    }
+    return;
+  }
+
+  CmiAssert(map_type != Mapping::None);
+
+  // Get number of GPUs (visible to each process)
+  int gpu_count;
+  hapiCheck(cudaGetDeviceCount(&gpu_count));
+  if (gpu_count <= 0) {
+    CmiAbort("Unable to perform PE-GPU mapping, no GPUs found!");
+  }
+
+  // Perform mapping
+  int my_gpu = 0;
+  int pes_per_gpu = (all_gpus ? CmiNumPesOnPhysicalNode(CmiPhysicalNodeID(CmiMyPe())) :
+      CmiNodeSize(CmiMyNode())) / gpu_count;
+
+  switch (map_type) {
+    case Mapping::Block:
+      my_gpu = (all_gpus ? CmiPhysicalRank(CmiMyPe()) : CmiMyRank()) / pes_per_gpu;
+      break;
+    case Mapping::RoundRobin:
+      my_gpu = (all_gpus ? CmiPhysicalRank(CmiMyPe()) : CmiMyRank()) % gpu_count;
+      break;
+    default:
+      CmiAbort("Unsupported mapping type!");
+  }
+
+  hapiCheck(cudaSetDevice(my_gpu));
 }
 
 // Clean up and delete memory used by HAPI.
@@ -1221,8 +1355,17 @@ void hapiPollEvents() {
       if (hev.wr) {
         hapiWorkRequestCleanup(hev.wr);
       }
-      cudaEventDestroy(hev.event);
+
+      // Return CUDA Event back to pool or destroy it
+      if (CsvAccess(use_event_pool)) {
+        CpvAccess(cuda_event_pool).push(hev.event);
+      }
+      else {
+        cudaEventDestroy(hev.event);
+      }
+
       queue.pop();
+
       CpvAccess(n_hapi_events)--;
 
       // inform QD that an event was processed

@@ -1,0 +1,23 @@
+mainmodule vecadd {
+  readonly CProxy_Main mainProxy;
+  readonly int vector_size;
+  readonly int split;
+  readonly int chunk;
+
+  mainchare Main {
+    entry Main(CkArgMsg* m);
+    entry [reductiontarget] void h2d_complete();
+    entry [reductiontarget] void kernel_complete();
+    entry [reductiontarget] void d2h_complete();
+  };
+
+  array [1D] Chunk {
+    entry Chunk();
+    entry void h2d();
+    entry void h2d_done();
+    entry void kernel();
+    entry void kernel_done();
+    entry void d2h();
+    entry void d2h_done();
+  };
+};
