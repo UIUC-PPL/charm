@@ -1142,3 +1142,6 @@ machine.d: machine.C conv-autoconfig.h $(CKHEADERS)
 	$(CHARMC) $(OPTS) -M -I. -I$(INC) $< >$@.$$$$; \
 	sed -e 's,\($*\)\.o[ :]*,\1.o $@ : ,g' -e "s,[Cc]:/,`command -v cygpath >/dev/null 2>&1 && cygpath -u 'C:/' || echo '/c'`/," < $@.$$$$ > $@; \
 	rm -f $@.$$$$
+
+# Dummy target to allow recursive 'make am--refresh' from hwloc's Makefile
+am--refresh:

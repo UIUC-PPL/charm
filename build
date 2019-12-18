@@ -532,13 +532,15 @@ then
   exit 1
 fi
 
-if [ ! -f "$srcbaseabs/scripts/configure" ]
+if [ ! -f "$srcbaseabs/scripts/configure" -o "$srcbaseabs/scripts/configure" -ot "$srcbaseabs/scripts/configure.ac" ]
 then
   if ! command -v autoreconf >/dev/null 2>&1 || ! command -v aclocal >/dev/null 2>&1
   then
     echo "Error> autoconf and automake are not installed."
     exit 1
   fi
+  echo "Rerunning autoconf and automake"
+  ./refresh-configure.sh
 fi
 
 #generate header for uFcontext for the target VERSION

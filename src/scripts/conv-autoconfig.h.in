@@ -1,0 +1,1101 @@
+/* conv-autoconfig.h.in.  Generated from configure.ac by autoheader.  */
+
+/* disable ampi fatal error return */
+#undef AMPI_ERRHANDLER_RETURN
+
+/* enable ampi error checking */
+#undef AMPI_ERROR_CHECKING
+
+/* Charm++ Release/API version number */
+#undef CHARM_VERSION
+
+/* whether Cray gni_pub has GNI_GetBIConfig */
+#undef CMK_BALANCED_INJECTION_API
+
+/* bproc version */
+#undef CMK_BPROC_VERSION
+
+/* build MPI. */
+#undef CMK_BUILD_ON_MPI
+
+/* build OFI. */
+#undef CMK_BUILD_ON_OFI
+
+/* enable ccs */
+#undef CMK_CCS_AVAILABLE
+
+/* enable charmdebug */
+#undef CMK_CHARMDEBUG
+
+/* disable charmpy */
+#undef CMK_CHARMPY
+
+/* enable STL CkSectionInfo */
+#undef CMK_CKSECTIONINFO_STL
+
+/* whether c compiler knows of the c11 standard */
+#undef CMK_COMPILER_KNOWS_C11
+
+/* whether ucontext has pointer */
+#undef CMK_CONTEXT_FPU_POINTER
+
+/* whether ucontext uses uc_regs union */
+#undef CMK_CONTEXT_FPU_POINTER_UCREGS
+
+/* whether ucontext has pointer (v_regs) of vector type */
+#undef CMK_CONTEXT_V_REGS
+
+/* Cray MAXNID */
+#undef CMK_CRAY_MAXNID
+
+/* Disables conflicting macros. */
+#undef CMK_CXX_MPI_BINDINGS
+
+/* whether C inline works in C */
+#undef CMK_C_INLINE
+
+/* whether sync_add_and_fetch primitive works in C */
+#undef CMK_C_SYNC_ADD_AND_FETCH_PRIMITIVE
+
+/* whether sync_synchronize primitives works in C */
+#undef CMK_C_SYNC_SYNCHRONIZE_PRIMITIVE
+
+/* dlopen */
+#undef CMK_DLL_USE_DLOPEN
+
+/* whether getProcAddress works */
+#undef CMK_DLL_USE_WIN32
+
+/* enable drone mode */
+#undef CMK_DRONE_MODE
+
+/* enable error checking */
+#undef CMK_ERROR_CHECKING
+
+/* whether expects __morecore symbol */
+#undef CMK_EXPECTS_MORECORE
+
+/* ALLCAPS */
+#undef CMK_FORTRAN_USES_ALLCAPS
+
+/* NOSCORE */
+#undef CMK_FORTRAN_USES_NOSCORE
+
+/* ONESCORE */
+#undef CMK_FORTRAN_USES_ONESCORE
+
+/* TWOSCORE */
+#undef CMK_FORTRAN_USES_TWOSCORE
+
+/* Allows gcc x86 assembly. */
+#undef CMK_GCC_X86_ASM
+
+/* Allows gcc x86 assembly for atomic increment. */
+#undef CMK_GCC_X86_ASM_ATOMICINCREMENT
+
+/* whether personality() and ADDR_NO_RANDOMIZE exist */
+#undef CMK_HAS_ADDR_NO_RANDOMIZE
+
+/* whether compiler supports std::alignment_of */
+#undef CMK_HAS_ALIGNMENT_OF
+
+/* whether has alloca.h */
+#undef CMK_HAS_ALLOCA_H
+
+/* whether has asctime */
+#undef CMK_HAS_ASCTIME
+
+/* whether the bindprocessor() exists */
+#undef CMK_HAS_BINDPROCESSOR
+
+/* whether supports cma */
+#undef CMK_HAS_CMA
+
+/* whether PAPI exists */
+#undef CMK_HAS_COUNTER_PAPI
+
+/* whether C++ library has <cstdatomic> */
+#undef CMK_HAS_CXX0X_CSTDATOMIC
+
+/* whether C++ library has <atomic> */
+#undef CMK_HAS_CXX11_ATOMIC
+
+/* whether has dlmopen */
+#undef CMK_HAS_DLMOPEN
+
+/* whether has dl_iterate_phdr */
+#undef CMK_HAS_DL_ITERATE_PHDR
+
+/* whether has elf.h */
+#undef CMK_HAS_ELF_H
+
+/* whether has __executable_start */
+#undef CMK_HAS_EXECUTABLE_START
+
+/* whether has fabsf */
+#undef CMK_HAS_FABSF
+
+/* whether has fdatasync */
+#undef CMK_HAS_FDATASYNC_FUNC
+
+/* whether has fsync */
+#undef CMK_HAS_FSYNC_FUNC
+
+/* whether gethostname() exists */
+#undef CMK_HAS_GETHOSTNAME
+
+/* whether getifaddrs() exists */
+#undef CMK_HAS_GETIFADDRS
+
+/* whether getpagesize exists */
+#undef CMK_HAS_GETPAGESIZE
+
+/* whether getpid exists */
+#undef CMK_HAS_GETPID
+
+/* whether has get_myaddress */
+#undef CMK_HAS_GET_MYADDRESS
+
+/* whether any 128-bit integer works */
+#undef CMK_HAS_INT16
+
+/* whether compiler supports std::is_constructible */
+#undef CMK_HAS_IS_CONSTRUCTIBLE
+
+/* whether iterator_traits works */
+#undef CMK_HAS_ITERATOR_TRAITS
+
+/* whether kill exists */
+#undef CMK_HAS_KILL
+
+/* whether has log2 */
+#undef CMK_HAS_LOG2
+
+/* whether has lustrefs */
+#undef CMK_HAS_LUSTREFS
+
+/* whether has mallinfo */
+#undef CMK_HAS_MALLINFO
+
+/* whether has malloc.h */
+#undef CMK_HAS_MALLOC_H
+
+/* whether has __malloc_hook */
+#undef CMK_HAS_MALLOC_HOOK
+
+/* whether the mmap() syscall exists */
+#undef CMK_HAS_MMAP
+
+/* whether mmap() accepts MAP_ANON */
+#undef CMK_HAS_MMAP_ANON
+
+/* whether mmap() accepts MAP_NORESERVE */
+#undef CMK_HAS_MMAP_NORESERVE
+
+/* whether has mprotect */
+#undef CMK_HAS_MPROTECT
+
+/* whether has mstats */
+#undef CMK_HAS_MSTATS
+
+/* whether has Multiprocessing.h */
+#undef CMK_HAS_MULTIPROCESSING_H
+
+/* whether ntohl is available */
+#undef CMK_HAS_NTOHL
+
+/* whether NUMA control related functions exist */
+#undef CMK_HAS_NUMACTRL
+
+/* whether offsetof exists */
+#undef CMK_HAS_OFFSETOF
+
+/* whether PMI_Get_nid exists */
+#undef CMK_HAS_PMI_GET_NID
+
+/* whether has popen */
+#undef CMK_HAS_POPEN
+
+/* whether the pthread_setaffinity_np() exists */
+#undef CMK_HAS_PTHREAD_SETAFFINITY
+
+/* whether Python is installed */
+#undef CMK_HAS_PYTHON
+
+/* whether Cray rca library is available */
+#undef CMK_HAS_RCALIB
+
+/* whether Cray rca has rca_get_max_dimension */
+#undef CMK_HAS_RCA_MAX_DIMENSION
+
+/* whether has readlink */
+#undef CMK_HAS_READLINK
+
+/* whether has realpath */
+#undef CMK_HAS_REALPATH
+
+/* whether compiler implements regex */
+#undef CMK_HAS_REGEX
+
+/* whether has regex.h */
+#undef CMK_HAS_REGEX_H
+
+/* whether has RTLD_DEFAULT */
+#undef CMK_HAS_RTLD_DEFAULT
+
+/* whether has RTLD_NEXT */
+#undef CMK_HAS_RTLD_NEXT
+
+/* whether getrusage accepts RUSAGE_THREAD */
+#undef CMK_HAS_RUSAGE_THREAD
+
+/* whether has sbrk */
+#undef CMK_HAS_SBRK
+
+/* whether the sched_setaffinity() exists */
+#undef CMK_HAS_SETAFFINITY
+
+/* whether the setpriority exists */
+#undef CMK_HAS_SETPRIORITY
+
+/* whether has sleep */
+#undef CMK_HAS_SLEEP
+
+/* whether has socklen_t */
+#undef CMK_HAS_SOCKLEN
+
+/* whether the pthread_spin_lock exists */
+#undef CMK_HAS_SPINLOCK
+
+/* whether has sqrtf */
+#undef CMK_HAS_SQRTF
+
+/* whether has stdint.h */
+#undef CMK_HAS_STDINT_H
+
+/* whether std::distance works */
+#undef CMK_HAS_STD_DISTANCE
+
+/* whether std::inserter works */
+#undef CMK_HAS_STD_INSERTER
+
+/* whether std::void_t works */
+#undef CMK_HAS_STD_VOID_T
+
+/* sync program */
+#undef CMK_HAS_SYNC
+
+/* whether has sync */
+#undef CMK_HAS_SYNC_FUNC
+
+/* whether has system */
+#undef CMK_HAS_SYSTEM
+
+/* Allows __thread. */
+#undef CMK_HAS_TLS_VARIABLES
+
+/* whether typeinfo/typeid works */
+#undef CMK_HAS_TYPEINFO
+
+/* whether has _setjmp/_longjmp */
+#undef CMK_HAS_UNDERSCORE_SETJMP
+
+/* whether has usleep */
+#undef CMK_HAS_USLEEP
+
+/* whether has values.h */
+#undef CMK_HAS_VALUES_H
+
+/* whether ibv_port_attr has link_layer field */
+#undef CMK_IBV_PORT_ATTR_HAS_LINK_LAYER
+
+/* enable 64 bit LB ID */
+#undef CMK_LBID_64BIT
+
+/* Setting load balancing timer type */
+#undef CMK_LBTIME_TYPE
+
+/* disable lb user data */
+#undef CMK_LB_USER_DATA
+
+/* enable lockless queue for pe/node queue */
+#undef CMK_LOCKLESS_QUEUE
+
+/* whether long double works */
+#undef CMK_LONG_DOUBLE_DEFINED
+
+/* whether long long works */
+#undef CMK_LONG_LONG_DEFINED
+
+/* machine name */
+#undef CMK_MACHINE_NAME
+
+/* mempool cutoff */
+#undef CMK_MEMPOOL_CUTOFFNUM
+
+/* Allows MPI_Init_thread. */
+#undef CMK_MPI_INIT_THREAD
+
+/* expected message priorities are arbitrarily sized */
+#undef CMK_MSG_PRIO_TYPE
+
+/* whether operator delete can be overloaded in same class */
+#undef CMK_MULTIPLE_DELETE
+
+/* OS is Linux */
+#undef CMK_OS_IS_LINUX
+
+/* whether is power7 */
+#undef CMK_POWER7
+
+/* Allows asm eieio assembly. */
+#undef CMK_PPC_ASM
+
+/* Python version */
+#undef CMK_PYTHON_VERSION
+
+/* disable the randomized msgq in the scheduler */
+#undef CMK_RANDOMIZED_MSGQ
+
+/* envelope refnum field set to UInt */
+#undef CMK_REFNUM_TYPE
+
+/* disable replay */
+#undef CMK_REPLAYSYSTEM
+
+/* disable shrinkexpand */
+#undef CMK_SHRINK_EXPAND
+
+/* whether C++ signed char and char differ */
+#undef CMK_SIGNEDCHAR_DIFF_CHAR
+
+/* whether to use signal-safe system() */
+#undef CMK_SIGSAFE_SYSTEM
+
+/* whether size_t 64bit */
+#undef CMK_SIZET_64BIT
+
+/* disable tracing comm thread */
+#undef CMK_SMP_TRACE_COMMTHREAD
+
+/* whether supports filesystem globals */
+#undef CMK_SUPPORTS_FSGLOBALS
+
+/* whether supports PiP globals */
+#undef CMK_SUPPORTS_PIPGLOBALS
+
+/* enable task queue */
+#undef CMK_TASKQUEUE
+
+/* Allows switching TLS on x86. */
+#undef CMK_TLS_SWITCHING_X86
+
+/* Allows switching TLS on x86_64. */
+#undef CMK_TLS_SWITCHING_X86_64
+
+/* enable tracing */
+#undef CMK_TRACE_ENABLED
+
+/* whether glibc backtrace works */
+#undef CMK_USE_BACKTRACE
+
+/* whether has libjpeg */
+#undef CMK_USE_LIBJPEG
+
+/* whether has mkstemp */
+#undef CMK_USE_MKSTEMP
+
+/* whether the poll syscall exists */
+#undef CMK_USE_POLL
+
+/* whether charm scheduler should use an STL-based msg q */
+#undef CMK_USE_STL_MSGQ
+
+/* whether has zlib */
+#undef CMK_USE_ZLIB
+
+/* disable controlpoint */
+#undef CMK_WITH_CONTROLPOINT
+
+/* enable statistics collection */
+#undef CMK_WITH_STATS
+
+/* whether __int128 works */
+#undef CMK___int128_DEFINED
+
+/* whether __int128_t works */
+#undef CMK___int128_t_DEFINED
+
+/* whether __int64 works */
+#undef CMK___int64_DEFINED
+
+/* Define to 1 if the system has the type `CACHE_DESCRIPTOR'. */
+#undef HAVE_CACHE_DESCRIPTOR
+
+/* Define to 1 if the system has the type `CACHE_RELATIONSHIP'. */
+#undef HAVE_CACHE_RELATIONSHIP
+
+/* Define to 1 if you have the `clz' function. */
+#undef HAVE_CLZ
+
+/* Define to 1 if you have the `clzl' function. */
+#undef HAVE_CLZL
+
+/* Define to 1 if you have the <CL/cl_ext.h> header file. */
+#undef HAVE_CL_CL_EXT_H
+
+/* Define to 1 if you have the `cpuset_setaffinity' function. */
+#undef HAVE_CPUSET_SETAFFINITY
+
+/* Define to 1 if you have the `cpuset_setid' function. */
+#undef HAVE_CPUSET_SETID
+
+/* Define to 1 if you have the <ctype.h> header file. */
+#undef HAVE_CTYPE_H
+
+/* Define to 1 if we have -lcuda */
+#undef HAVE_CUDA
+
+/* Define to 1 if you have the <cuda.h> header file. */
+#undef HAVE_CUDA_H
+
+/* Define to 1 if you have the <cuda_runtime_api.h> header file. */
+#undef HAVE_CUDA_RUNTIME_API_H
+
+/* Define to 1 if you have the declaration of `CL_DEVICE_TOPOLOGY_AMD', and to
+   0 if you don't. */
+#undef HAVE_DECL_CL_DEVICE_TOPOLOGY_AMD
+
+/* Define to 1 if you have the declaration of `CTL_HW', and to 0 if you don't.
+   */
+#undef HAVE_DECL_CTL_HW
+
+/* Define to 1 if you have the declaration of `fabsf', and to 0 if you don't.
+   */
+#undef HAVE_DECL_FABSF
+
+/* Define to 1 if you have the declaration of `getexecname', and to 0 if you
+   don't. */
+#undef HAVE_DECL_GETEXECNAME
+
+/* Define to 1 if you have the declaration of `GetModuleFileName', and to 0 if
+   you don't. */
+#undef HAVE_DECL_GETMODULEFILENAME
+
+/* Define to 1 if you have the declaration of `getprogname', and to 0 if you
+   don't. */
+#undef HAVE_DECL_GETPROGNAME
+
+/* Define to 1 if you have the declaration of `HW_NCPU', and to 0 if you
+   don't. */
+#undef HAVE_DECL_HW_NCPU
+
+/* Define to 1 if you have the declaration of `lgrp_latency_cookie', and to 0
+   if you don't. */
+#undef HAVE_DECL_LGRP_LATENCY_COOKIE
+
+/* Define to 1 if you have the declaration of `modff', and to 0 if you don't.
+   */
+#undef HAVE_DECL_MODFF
+
+/* Define to 1 if you have the declaration of
+   `nvmlDeviceGetMaxPcieLinkGeneration', and to 0 if you don't. */
+#undef HAVE_DECL_NVMLDEVICEGETMAXPCIELINKGENERATION
+
+/* Define to 1 if you have the declaration of `pthread_getaffinity_np', and to
+   0 if you don't. */
+#undef HAVE_DECL_PTHREAD_GETAFFINITY_NP
+
+/* Define to 1 if you have the declaration of `pthread_setaffinity_np', and to
+   0 if you don't. */
+#undef HAVE_DECL_PTHREAD_SETAFFINITY_NP
+
+/* Embedded mode; just assume we do not have Valgrind support */
+#undef HAVE_DECL_RUNNING_ON_VALGRIND
+
+/* Define to 1 if you have the declaration of `sched_getcpu', and to 0 if you
+   don't. */
+#undef HAVE_DECL_SCHED_GETCPU
+
+/* Define to 1 if you have the declaration of `snprintf', and to 0 if you
+   don't. */
+#undef HAVE_DECL_SNPRINTF
+
+/* Define to 1 if you have the declaration of `strtoull', and to 0 if you
+   don't. */
+#undef HAVE_DECL_STRTOULL
+
+/* Define to 1 if you have the declaration of `_putenv', and to 0 if you
+   don't. */
+#undef HAVE_DECL__PUTENV
+
+/* Define to 1 if you have the declaration of `_SC_LARGE_PAGESIZE', and to 0
+   if you don't. */
+#undef HAVE_DECL__SC_LARGE_PAGESIZE
+
+/* Define to 1 if you have the declaration of `_SC_NPROCESSORS_CONF', and to 0
+   if you don't. */
+#undef HAVE_DECL__SC_NPROCESSORS_CONF
+
+/* Define to 1 if you have the declaration of `_SC_NPROCESSORS_ONLN', and to 0
+   if you don't. */
+#undef HAVE_DECL__SC_NPROCESSORS_ONLN
+
+/* Define to 1 if you have the declaration of `_SC_NPROC_CONF', and to 0 if
+   you don't. */
+#undef HAVE_DECL__SC_NPROC_CONF
+
+/* Define to 1 if you have the declaration of `_SC_NPROC_ONLN', and to 0 if
+   you don't. */
+#undef HAVE_DECL__SC_NPROC_ONLN
+
+/* Define to 1 if you have the declaration of `_SC_PAGESIZE', and to 0 if you
+   don't. */
+#undef HAVE_DECL__SC_PAGESIZE
+
+/* Define to 1 if you have the declaration of `_SC_PAGE_SIZE', and to 0 if you
+   don't. */
+#undef HAVE_DECL__SC_PAGE_SIZE
+
+/* Define to 1 if you have the declaration of `_strdup', and to 0 if you
+   don't. */
+#undef HAVE_DECL__STRDUP
+
+/* Define to 1 if you have the <dirent.h> header file. */
+#undef HAVE_DIRENT_H
+
+/* Define to 1 if you have the <dlfcn.h> header file. */
+#undef HAVE_DLFCN_H
+
+/* Define to 1 if you have the `ffs' function. */
+#undef HAVE_FFS
+
+/* Define to 1 if you have the `ffsl' function. */
+#undef HAVE_FFSL
+
+/* Define to 1 if you have the `fls' function. */
+#undef HAVE_FLS
+
+/* Define to 1 if you have the `flsl' function. */
+#undef HAVE_FLSL
+
+/* Define to 1 if you have the `getpagesize' function. */
+#undef HAVE_GETPAGESIZE
+
+/* Define to 1 if the system has the type `GROUP_AFFINITY'. */
+#undef HAVE_GROUP_AFFINITY
+
+/* Define to 1 if the system has the type `GROUP_RELATIONSHIP'. */
+#undef HAVE_GROUP_RELATIONSHIP
+
+/* Define to 1 if you have the `host_info' function. */
+#undef HAVE_HOST_INFO
+
+/* Define to 1 if you have the <inttypes.h> header file. */
+#undef HAVE_INTTYPES_H
+
+/* Define to 1 if the system has the type `KAFFINITY'. */
+#undef HAVE_KAFFINITY
+
+/* Define to 1 if you have the <kstat.h> header file. */
+#undef HAVE_KSTAT_H
+
+/* Define to 1 if we have -lgdi32 */
+#undef HAVE_LIBGDI32
+
+/* Define to 1 if we have -lkstat */
+#undef HAVE_LIBKSTAT
+
+/* Define to 1 if we have -llgrp */
+#undef HAVE_LIBLGRP
+
+/* Define to 1 if you have the <libudev.h> header file. */
+#undef HAVE_LIBUDEV_H
+
+/* Define to 1 if the system has the type `LOGICAL_PROCESSOR_RELATIONSHIP'. */
+#undef HAVE_LOGICAL_PROCESSOR_RELATIONSHIP
+
+/* Define to 1 if you have the <mach/mach_host.h> header file. */
+#undef HAVE_MACH_MACH_HOST_H
+
+/* Define to 1 if you have the <mach/mach_init.h> header file. */
+#undef HAVE_MACH_MACH_INIT_H
+
+/* Define to 1 if you have the <malloc.h> header file. */
+#undef HAVE_MALLOC_H
+
+/* Define to 1 if you have the `memalign' function. */
+#undef HAVE_MEMALIGN
+
+/* Define to 1 if you have the <memory.h> header file. */
+#undef HAVE_MEMORY_H
+
+/* Define to 1 if you have the <numaif.h> header file. */
+#undef HAVE_NUMAIF_H
+
+/* Define to 1 if the system has the type `NUMA_NODE_RELATIONSHIP'. */
+#undef HAVE_NUMA_NODE_RELATIONSHIP
+
+/* Define to 1 if you have the <NVCtrl/NVCtrl.h> header file. */
+#undef HAVE_NVCTRL_NVCTRL_H
+
+/* Define to 1 if you have the <nvml.h> header file. */
+#undef HAVE_NVML_H
+
+/* Define to 1 if you have the `openat' function. */
+#undef HAVE_OPENAT
+
+/* Define to 1 if you have the <OpenCL/cl_ext.h> header file. */
+#undef HAVE_OPENCL_CL_EXT_H
+
+/* Define to 1 if you have the <picl.h> header file. */
+#undef HAVE_PICL_H
+
+/* Define to 1 if you have the `posix_memalign' function. */
+#undef HAVE_POSIX_MEMALIGN
+
+/* Define to 1 if the system has the type `PROCESSOR_CACHE_TYPE'. */
+#undef HAVE_PROCESSOR_CACHE_TYPE
+
+/* Define to 1 if the system has the type `PROCESSOR_GROUP_INFO'. */
+#undef HAVE_PROCESSOR_GROUP_INFO
+
+/* Define to 1 if the system has the type `PROCESSOR_NUMBER'. */
+#undef HAVE_PROCESSOR_NUMBER
+
+/* Define to 1 if the system has the type `PROCESSOR_RELATIONSHIP'. */
+#undef HAVE_PROCESSOR_RELATIONSHIP
+
+/* Define to '1' if program_invocation_name is present and usable */
+#undef HAVE_PROGRAM_INVOCATION_NAME
+
+/* Define to 1 if the system has the type `PSAPI_WORKING_SET_EX_BLOCK'. */
+#undef HAVE_PSAPI_WORKING_SET_EX_BLOCK
+
+/* Define to 1 if the system has the type `PSAPI_WORKING_SET_EX_INFORMATION'.
+   */
+#undef HAVE_PSAPI_WORKING_SET_EX_INFORMATION
+
+/* Define to 1 if you have the <pthread_np.h> header file. */
+#undef HAVE_PTHREAD_NP_H
+
+/* Define to 1 if the system has the type `pthread_t'. */
+#undef HAVE_PTHREAD_T
+
+/* Define to 1 if the system has the type `RelationProcessorPackage'. */
+#undef HAVE_RELATIONPROCESSORPACKAGE
+
+/* Define to 1 if you have the `setlocale' function. */
+#undef HAVE_SETLOCALE
+
+/* Define to 1 if the system has the type `ssize_t'. */
+#undef HAVE_SSIZE_T
+
+/* Define to 1 if you have the <stdint.h> header file. */
+#undef HAVE_STDINT_H
+
+/* Define to 1 if you have the <stdlib.h> header file. */
+#undef HAVE_STDLIB_H
+
+/* Define to 1 if you have the `strcasecmp' function. */
+#undef HAVE_STRCASECMP
+
+/* Define to 1 if you have the `strftime' function. */
+#undef HAVE_STRFTIME
+
+/* Define to 1 if you have the <strings.h> header file. */
+#undef HAVE_STRINGS_H
+
+/* Define to 1 if you have the <string.h> header file. */
+#undef HAVE_STRING_H
+
+/* Define to 1 if you have the `strncasecmp' function. */
+#undef HAVE_STRNCASECMP
+
+/* Define to 1 if you have the `strtoull' function. */
+#undef HAVE_STRTOULL
+
+/* Define to '1' if sysctl is present and usable */
+#undef HAVE_SYSCTL
+
+/* Define to '1' if sysctlbyname is present and usable */
+#undef HAVE_SYSCTLBYNAME
+
+/* Define to 1 if the system has the type
+   `SYSTEM_LOGICAL_PROCESSOR_INFORMATION'. */
+#undef HAVE_SYSTEM_LOGICAL_PROCESSOR_INFORMATION
+
+/* Define to 1 if the system has the type
+   `SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX'. */
+#undef HAVE_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX
+
+/* Define to 1 if you have the <sys/cpuset.h> header file. */
+#undef HAVE_SYS_CPUSET_H
+
+/* Define to 1 if you have the <sys/lgrp_user.h> header file. */
+#undef HAVE_SYS_LGRP_USER_H
+
+/* Define to 1 if you have the <sys/mman.h> header file. */
+#undef HAVE_SYS_MMAN_H
+
+/* Define to 1 if you have the <sys/param.h> header file. */
+#undef HAVE_SYS_PARAM_H
+
+/* Define to 1 if you have the <sys/stat.h> header file. */
+#undef HAVE_SYS_STAT_H
+
+/* Define to 1 if you have the <sys/sysctl.h> header file. */
+#undef HAVE_SYS_SYSCTL_H
+
+/* Define to 1 if you have the <sys/types.h> header file. */
+#undef HAVE_SYS_TYPES_H
+
+/* Define to 1 if you have the <sys/utsname.h> header file. */
+#undef HAVE_SYS_UTSNAME_H
+
+/* Define to 1 if you have the `uname' function. */
+#undef HAVE_UNAME
+
+/* Define to 1 if you have the <unistd.h> header file. */
+#undef HAVE_UNISTD_H
+
+/* Define to 1 if you have the <valgrind/valgrind.h> header file. */
+#undef HAVE_VALGRIND_VALGRIND_H
+
+/* Define to 1 if you have the <X11/keysym.h> header file. */
+#undef HAVE_X11_KEYSYM_H
+
+/* Define to 1 if you have the <X11/Xlib.h> header file. */
+#undef HAVE_X11_XLIB_H
+
+/* Define to 1 if you have the <X11/Xutil.h> header file. */
+#undef HAVE_X11_XUTIL_H
+
+/* Define to '1' if __progname is present and usable */
+#undef HAVE___PROGNAME
+
+/* Define to 1 on AIX */
+#undef HWLOC_AIX_SYS
+
+/* Define to 1 on BlueGene/Q */
+#undef HWLOC_BGQ_SYS
+
+/* Whether C compiler supports symbol visibility or not */
+#undef HWLOC_C_HAVE_VISIBILITY
+
+/* Define to 1 on Darwin */
+#undef HWLOC_DARWIN_SYS
+
+/* Whether we are in debugging mode or not */
+#undef HWLOC_DEBUG
+
+/* Define to 1 on *FREEBSD */
+#undef HWLOC_FREEBSD_SYS
+
+/* Whether your compiler has __attribute__ or not */
+#undef HWLOC_HAVE_ATTRIBUTE
+
+/* Whether your compiler has __attribute__ aligned or not */
+#undef HWLOC_HAVE_ATTRIBUTE_ALIGNED
+
+/* Whether your compiler has __attribute__ always_inline or not */
+#undef HWLOC_HAVE_ATTRIBUTE_ALWAYS_INLINE
+
+/* Whether your compiler has __attribute__ cold or not */
+#undef HWLOC_HAVE_ATTRIBUTE_COLD
+
+/* Whether your compiler has __attribute__ const or not */
+#undef HWLOC_HAVE_ATTRIBUTE_CONST
+
+/* Whether your compiler has __attribute__ deprecated or not */
+#undef HWLOC_HAVE_ATTRIBUTE_DEPRECATED
+
+/* Whether your compiler has __attribute__ format or not */
+#undef HWLOC_HAVE_ATTRIBUTE_FORMAT
+
+/* Whether your compiler has __attribute__ hot or not */
+#undef HWLOC_HAVE_ATTRIBUTE_HOT
+
+/* Whether your compiler has __attribute__ malloc or not */
+#undef HWLOC_HAVE_ATTRIBUTE_MALLOC
+
+/* Whether your compiler has __attribute__ may_alias or not */
+#undef HWLOC_HAVE_ATTRIBUTE_MAY_ALIAS
+
+/* Whether your compiler has __attribute__ nonnull or not */
+#undef HWLOC_HAVE_ATTRIBUTE_NONNULL
+
+/* Whether your compiler has __attribute__ noreturn or not */
+#undef HWLOC_HAVE_ATTRIBUTE_NORETURN
+
+/* Whether your compiler has __attribute__ no_instrument_function or not */
+#undef HWLOC_HAVE_ATTRIBUTE_NO_INSTRUMENT_FUNCTION
+
+/* Whether your compiler has __attribute__ packed or not */
+#undef HWLOC_HAVE_ATTRIBUTE_PACKED
+
+/* Whether your compiler has __attribute__ pure or not */
+#undef HWLOC_HAVE_ATTRIBUTE_PURE
+
+/* Whether your compiler has __attribute__ sentinel or not */
+#undef HWLOC_HAVE_ATTRIBUTE_SENTINEL
+
+/* Whether your compiler has __attribute__ unused or not */
+#undef HWLOC_HAVE_ATTRIBUTE_UNUSED
+
+/* Whether your compiler has __attribute__ warn unused result or not */
+#undef HWLOC_HAVE_ATTRIBUTE_WARN_UNUSED_RESULT
+
+/* Whether your compiler has __attribute__ weak alias or not */
+#undef HWLOC_HAVE_ATTRIBUTE_WEAK_ALIAS
+
+/* Define to 1 if your `ffs' function is known to be broken. */
+#undef HWLOC_HAVE_BROKEN_FFS
+
+/* Define to 1 if you have the `clz' function. */
+#undef HWLOC_HAVE_CLZ
+
+/* Define to 1 if you have the `clzl' function. */
+#undef HWLOC_HAVE_CLZL
+
+/* Define to 1 if the CPU_SET macro works */
+#undef HWLOC_HAVE_CPU_SET
+
+/* Define to 1 if the CPU_SET_S macro works */
+#undef HWLOC_HAVE_CPU_SET_S
+
+/* Define to 1 if you have the `cudart' SDK. */
+#undef HWLOC_HAVE_CUDART
+
+/* Define to 1 if function `clz' is declared by system headers */
+#undef HWLOC_HAVE_DECL_CLZ
+
+/* Define to 1 if function `clzl' is declared by system headers */
+#undef HWLOC_HAVE_DECL_CLZL
+
+/* Define to 1 if function `ffs' is declared by system headers */
+#undef HWLOC_HAVE_DECL_FFS
+
+/* Define to 1 if function `ffsl' is declared by system headers */
+#undef HWLOC_HAVE_DECL_FFSL
+
+/* Define to 1 if function `fls' is declared by system headers */
+#undef HWLOC_HAVE_DECL_FLS
+
+/* Define to 1 if function `flsl' is declared by system headers */
+#undef HWLOC_HAVE_DECL_FLSL
+
+/* Define to 1 if function `strcasecmp' is declared by system headers */
+#undef HWLOC_HAVE_DECL_STRCASECMP
+
+/* Define to 1 if function `strncasecmp' is declared by system headers */
+#undef HWLOC_HAVE_DECL_STRNCASECMP
+
+/* Define to 1 if you have the `ffs' function. */
+#undef HWLOC_HAVE_FFS
+
+/* Define to 1 if you have the `ffsl' function. */
+#undef HWLOC_HAVE_FFSL
+
+/* Define to 1 if you have the `fls' function. */
+#undef HWLOC_HAVE_FLS
+
+/* Define to 1 if you have the `flsl' function. */
+#undef HWLOC_HAVE_FLSL
+
+/* Define to 1 if you have the GL module components. */
+#undef HWLOC_HAVE_GL
+
+/* Define to 1 if you have libudev. */
+#undef HWLOC_HAVE_LIBUDEV
+
+/* Define to 1 if you have the `libxml2' library. */
+#undef HWLOC_HAVE_LIBXML2
+
+/* Define to 1 if building the Linux PCI component */
+#undef HWLOC_HAVE_LINUXPCI
+
+/* Define to 1 if mbind is available. */
+#undef HWLOC_HAVE_MBIND
+
+/* Define to 1 if migrate_pages is available. */
+#undef HWLOC_HAVE_MIGRATE_PAGES
+
+/* Define to 1 if move_pages is available. */
+#undef HWLOC_HAVE_MOVE_PAGES
+
+/* Define to 1 if you have the `NVML' library. */
+#undef HWLOC_HAVE_NVML
+
+/* Define to 1 if glibc provides the old prototype (without length) of
+   sched_setaffinity() */
+#undef HWLOC_HAVE_OLD_SCHED_SETAFFINITY
+
+/* Define to 1 if you have the `OpenCL' library. */
+#undef HWLOC_HAVE_OPENCL
+
+/* Define to 1 if the hwloc library should support dynamically-loaded plugins
+   */
+#undef HWLOC_HAVE_PLUGINS
+
+/* `Define to 1 if you have pthread_getthrds_np' */
+#undef HWLOC_HAVE_PTHREAD_GETTHRDS_NP
+
+/* Define to 1 if pthread mutexes are available */
+#undef HWLOC_HAVE_PTHREAD_MUTEX
+
+/* Define to 1 if glibc provides a prototype of sched_setaffinity() */
+#undef HWLOC_HAVE_SCHED_SETAFFINITY
+
+/* Define to 1 if set_mempolicy is available. */
+#undef HWLOC_HAVE_SET_MEMPOLICY
+
+/* Define to 1 if you have the <stdint.h> header file. */
+#undef HWLOC_HAVE_STDINT_H
+
+/* Define to 1 if function `syscall' is available */
+#undef HWLOC_HAVE_SYSCALL
+
+/* Define to 1 if you have the `windows.h' header. */
+#undef HWLOC_HAVE_WINDOWS_H
+
+/* Define to 1 if X11 headers including Xutil.h and keysym.h are available. */
+#undef HWLOC_HAVE_X11_KEYSYM
+
+/* Define to 1 if you have x86 cpuid */
+#undef HWLOC_HAVE_X86_CPUID
+
+/* Define to 1 on HP-UX */
+#undef HWLOC_HPUX_SYS
+
+/* Define to 1 on Irix */
+#undef HWLOC_IRIX_SYS
+
+/* Define to 1 on Linux */
+#undef HWLOC_LINUX_SYS
+
+/* Define to 1 on *NETBSD */
+#undef HWLOC_NETBSD_SYS
+
+/* Define to 1 on OSF */
+#undef HWLOC_OSF_SYS
+
+/* The size of `unsigned int', as computed by sizeof */
+#undef HWLOC_SIZEOF_UNSIGNED_INT
+
+/* The size of `unsigned long', as computed by sizeof */
+#undef HWLOC_SIZEOF_UNSIGNED_LONG
+
+/* Define to 1 on Solaris */
+#undef HWLOC_SOLARIS_SYS
+
+/* The hwloc symbol prefix */
+#undef HWLOC_SYM_PREFIX
+
+/* The hwloc symbol prefix in all caps */
+#undef HWLOC_SYM_PREFIX_CAPS
+
+/* Whether we need to re-define all the hwloc public symbols or not */
+#undef HWLOC_SYM_TRANSFORM
+
+/* Define to 1 on unsupported systems */
+#undef HWLOC_UNSUPPORTED_SYS
+
+/* The library version, always available, even in embedded mode, contrary to
+   VERSION */
+#undef HWLOC_VERSION
+
+/* Define to 1 on WINDOWS */
+#undef HWLOC_WIN_SYS
+
+/* Define to 1 on x86_32 */
+#undef HWLOC_X86_32_ARCH
+
+/* Define to 1 on x86_64 */
+#undef HWLOC_X86_64_ARCH
+
+/* Define to the sub-directory where libtool stores uninstalled libraries. */
+#undef LT_OBJDIR
+
+/* Define to the address where bug reports for this package should be sent. */
+#undef PACKAGE_BUGREPORT
+
+/* Define to the full name of this package. */
+#undef PACKAGE_NAME
+
+/* Define to the full name and version of this package. */
+#undef PACKAGE_STRING
+
+/* Define to the one symbol short name of this package. */
+#undef PACKAGE_TARNAME
+
+/* Define to the home page for this package. */
+#undef PACKAGE_URL
+
+/* Define to the version of this package. */
+#undef PACKAGE_VERSION
+
+/* enable qlogic */
+#undef QLOGIC
+
+/* The size of `unsigned int', as computed by sizeof. */
+#undef SIZEOF_UNSIGNED_INT
+
+/* The size of `unsigned long', as computed by sizeof. */
+#undef SIZEOF_UNSIGNED_LONG
+
+/* The size of `void *', as computed by sizeof. */
+#undef SIZEOF_VOID_P
+
+/* Define to 1 if you have the ANSI C header files. */
+#undef STDC_HEADERS
+
+/* Enable extensions on HP-UX. */
+#ifndef _HPUX_SOURCE
+# undef _HPUX_SOURCE
+#endif
+
+
+/* Enable extensions on AIX 3, Interix.  */
+#ifndef _ALL_SOURCE
+# undef _ALL_SOURCE
+#endif
+/* Enable GNU extensions on systems that have them.  */
+#ifndef _GNU_SOURCE
+# undef _GNU_SOURCE
+#endif
+/* Enable threading extensions on Solaris.  */
+#ifndef _POSIX_PTHREAD_SEMANTICS
+# undef _POSIX_PTHREAD_SEMANTICS
+#endif
+/* Enable extensions on HP NonStop.  */
+#ifndef _TANDEM_SOURCE
+# undef _TANDEM_SOURCE
+#endif
+/* Enable general extensions on Solaris.  */
+#ifndef __EXTENSIONS__
+# undef __EXTENSIONS__
+#endif
+
+
+/* Define to 1 if the X Window System is missing or not being used. */
+#undef X_DISPLAY_MISSING
+
+/* Are we building for HP-UX? */
+#undef _HPUX_SOURCE
+
+/* Define to 1 if on MINIX. */
+#undef _MINIX
+
+/* Define to 2 if the system does not provide POSIX.1 features except with
+   this defined. */
+#undef _POSIX_1_SOURCE
+
+/* Define to 1 if you need to in order for `stat' and other things to work. */
+#undef _POSIX_SOURCE
+
+/* Define this to the process ID type */
+#undef hwloc_pid_t
+
+/* Define this to the thread ID type */
+#undef hwloc_thread_t
