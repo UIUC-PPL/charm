@@ -21,6 +21,7 @@ Charm++ Documentation
    f90charm/manual
    libraries/manual
    faq/manual
+   charm++/glossary
 
 .. toctree::
    :maxdepth: 1
