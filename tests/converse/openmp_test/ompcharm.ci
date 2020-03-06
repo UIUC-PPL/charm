@@ -1,0 +1,16 @@
+mainmodule OmpCharmTest {
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_TestInstance testArray;
+  readonly int numChares; 
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void testStart(void);
+    entry [reductiontarget] void testDone(int result);
+  }
+
+  array [1d] TestInstance {
+    entry TestInstance(void);
+    entry void testRun(); 
+  }
+}
