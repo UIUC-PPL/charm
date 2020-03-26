@@ -84,6 +84,10 @@ CmiIdleLock_checkMessage
 #include <mutex>
 #include <condition_variable>
 
+#if CMK_HAS_OPENMP
+#include <omp.h>
+#endif
+
 void CmiStateInit(int pe, int rank, CmiState state);
 void CommunicationServerInit(void);
 
@@ -411,12 +415,6 @@ pthread_t *_Cmi_mypidlist;
 
 static void CmiStartThreads(char **argv)
 {
-  pthread_t pid;
-  size_t i;
-  int ok, tocreate;
-  pthread_attr_t attr;
-  int start, end;
-
   MACHSTATE(4,"CmiStartThreads")
   CmiMemLock_lock=CmiCreateLock();
   _smp_mutex = CmiCreateLock();
@@ -448,12 +446,28 @@ static void CmiStartThreads(char **argv)
   }
 #endif
 
+  int tocreate;
 #if CMK_MULTICORE || CMK_SMP_NO_COMMTHD
   if (!Cmi_commthread)
     tocreate = _Cmi_mynodesize-1;
   else
 #endif
   tocreate = _Cmi_mynodesize;
+
+#if CMK_HAS_OPENMP
+
+  int num_threads = tocreate + 1;
+  omp_set_dynamic(0);
+  omp_set_num_threads(num_threads);
+  #pragma omp parallel
+  {
+    size_t i = omp_get_thread_num();
+    call_startfn((void *)i);
+  }
+
+#else
+
+  int start, end;
 #if CMK_CONVERSE_MPI
   if(!CharmLibInterOperate) {
     start = 0;
@@ -470,6 +484,11 @@ static void CmiStartThreads(char **argv)
   _Cmi_mypidlist = (pthread_t *)malloc(sizeof(pthread_t)*(end - start +1));
   int numThreads = 0;
 #endif
+
+  pthread_t pid;
+  size_t i;
+  int ok;
+  pthread_attr_t attr;
 
   for (i=start; i<=end; i++) {        
     pthread_attr_init(&attr);
@@ -491,6 +510,8 @@ static void CmiStartThreads(char **argv)
   else 
 #endif
     pthread_setspecific(Cmi_state_key, Cmi_state_vector);
+#endif
+
 #endif
 
   MACHSTATE(4,"CmiStartThreads done")

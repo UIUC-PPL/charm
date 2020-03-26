@@ -1497,7 +1497,9 @@ if (  MSG_STATISTIC)
 
     CmiStartThreads(argv);
 
+#if !CMK_HAS_OPENMP
     ConverseRunPE(initret);
+#endif
 }
 
 void ConverseCommonInit(char **argv);

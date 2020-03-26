@@ -2945,6 +2945,7 @@ if test $pass -eq 1
 then
 	add_flag "CMK_HAS_OPENMP='1'" "OpenMP"
 fi
+AC_DEFINE_UNQUOTED(CMK_HAS_OPENMP, $pass, [whether OpenMP is supported])
 
 ### check for Lustre FS availability ###
 cat > $tc <<EOT
