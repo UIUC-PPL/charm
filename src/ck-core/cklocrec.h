@@ -49,7 +49,9 @@ public:
   void stopTiming(int ignore_running=0);
   void setObjTime(double cputime);
   double getObjTime();
+  const std::vector<LBRealType> getObjVectorLoad() const;
   void *getObjUserData(int idx);
+  void CkLBSetPhase(int phase);
 #else
   inline void startTiming(int ignore_running=0) {  }
   inline void stopTiming(int ignore_running=0) { }

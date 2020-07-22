@@ -74,6 +74,10 @@ public:
     LbObj(h)->getTime(&walltime, &cputime);
   };
 
+  inline const std::vector<LBRealType> GetObjVectorLoad (const LDObjHandle& h) const {
+    return LbObj(h)->getVectorLoad();
+  }
+
   inline void* GetObjUserData(LDObjHandle &h) {
     return LbObj(h)->getLocalUserData();
   }
@@ -192,6 +196,10 @@ public:
 
     NoRunningObj();
   };
+
+  inline void SetPhase(const LDObjHandle &h, int phase) {
+    LbObj(h)->setPhase(phase);
+  }
   inline const LDObjHandle &GetObjHandle(int idx) {
     return LbObjIdx(idx)->GetLDObjHandle();
   }

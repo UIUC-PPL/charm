@@ -91,9 +91,11 @@ public:
   virtual void UserSetLBLoad(void);  /// user define this when setLBLoad is true
   void setObjTime(double cputime);
   double getObjTime();
+  const std::vector<LBRealType> getObjVectorLoad() const;
 #if CMK_LB_USER_DATA
   void *getObjUserData(int idx);
 #endif
+  void CkLBSetPhase(int phase);
 
 #if CMK_LBDB_ON  //For load balancing:
   void AtSync(int waitForMigration=1);
