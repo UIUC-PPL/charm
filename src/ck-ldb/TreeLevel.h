@@ -39,8 +39,6 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
 
   float* oloads;  // array of obj loads (grouped by pe), i-th obj in the array is
                   // considered to have ID i
-  unsigned int*
-      order;  // list of obj ids sorted by load (ids are determined by position in oloads)
 
   static TreeLBMessage* merge(std::vector<TreeLBMessage*>& msgs)
   {
@@ -63,9 +61,9 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
 
     LBStatsMsg_1* newMsg;
     if (rateAware)
-      newMsg = new (nPes, nPes, nPes, nPes + 1, nObjs, nObjs, 0) LBStatsMsg_1;
+      newMsg = new (nPes, nPes, nPes, nPes + 1, nObjs) LBStatsMsg_1;
     else
-      newMsg = new (nPes, nPes, 0, nPes + 1, nObjs, nObjs, 0) LBStatsMsg_1;
+      newMsg = new (nPes, nPes, 0, nPes + 1, nObjs) LBStatsMsg_1;
     newMsg->nObjs = nObjs;
     newMsg->nPes = nPes;
     int pe_cnt = 0;
@@ -1099,11 +1097,11 @@ class PELevel : public LevelLogic
     LBStatsMsg_1* msg;
     if (rateAware)
     {
-      msg = new (1, 1, 1, 2, nobjs, nobjs, 0) LBStatsMsg_1;
+      msg = new (1, 1, 1, 2, nobjs) LBStatsMsg_1;
       msg->speeds[0] = float(lbmgr->ProcessorSpeed());
     }
     else
-      msg = new (1, 1, 0, 2, nobjs, nobjs, 0) LBStatsMsg_1;
+      msg = new (1, 1, 0, 2, nobjs) LBStatsMsg_1;
     msg->nObjs = nobjs;
     msg->nPes = 1;
     msg->pe_ids[0] = mype;
@@ -1117,7 +1115,6 @@ class PELevel : public LevelLogic
         msg->oloads[i] = float(myObjs[i].wallTime) * msg->speeds[0];
       else
         msg->oloads[i] = float(myObjs[i].wallTime);
-      msg->order[i] = i;
     }
 
     LBRealType t1, t2, t3, t4, bg_walltime;
