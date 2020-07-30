@@ -16,9 +16,49 @@ class Greedy : public Strategy<O, P, S>
  public:
   void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution, bool objsSorted)
   {
+    // Sorts by maxload in vector
     if (!objsSorted) std::sort(objs.begin(), objs.end(), CmpLoadGreater<O>());
+
+    std::vector<ProcHeap<P>> heaps;
+    for (int i = 0; i < O::dimension; i++)
+    {
+      heaps.push_back(ProcHeap<P>(procs, i));
+    }
+
+    for (const auto& o : objs)
+    {
+      int maxdimension = 0;
+      CkPrintf("Obj %d, dimension %d\n", o.id, O::dimension);
+      for (int i = 0; i < O::dimension; i++)
+      {
+        if (o.load[i] > o.load[maxdimension])
+          maxdimension = i;
+        CkPrintf(" %f", o.load[i]);
+      }
+      CkPrintf("\n");
+      P p = heaps[maxdimension].top();
+      solution.assign(o, p);  // update solution (assumes solution updates processor load)
+      for (int i = 0; i < O::dimension; i++)
+      {
+        heaps[i].remove(p);
+        heaps[i].push(p);
+      }
+      CkPrintf("Obj %d going to PE %d\n", o.id, p.id);
+    }
+  }
+};
+
+template <typename P, typename S>
+class Greedy<Obj<1>, P, S> : public Strategy<Obj<1>, P, S>
+{
+public:
+  void solve(std::vector<Obj<1>>& objs, std::vector<P>& procs, S& solution,
+             bool objsSorted)
+  {
+    if (!objsSorted) std::sort(objs.begin(), objs.end(), CmpLoadGreater<Obj<1>>());
     std::priority_queue<P, std::vector<P>, CmpLoadGreater<P>> procHeap(
         CmpLoadGreater<P>(), procs);
+
     for (const auto& o : objs)
     {
       P p = procHeap.top();

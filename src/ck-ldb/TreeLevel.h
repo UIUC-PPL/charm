@@ -462,7 +462,13 @@ class RootLevel : public LevelLogic
 
   virtual ~RootLevel()
   {
-    for (auto w : wrappers) delete w;
+    for (auto v : wrappers)
+    {
+      for (auto w : v)
+      {
+        delete w;
+      }
+    }
   }
 
   /**
@@ -474,7 +480,13 @@ class RootLevel : public LevelLogic
                          bool token_passing = true)
   {
     using namespace TreeStrategy;
-    for (auto w : wrappers) delete w;
+    for (auto v : wrappers)
+    {
+      for (auto w : v)
+      {
+        delete w;
+      }
+    }
     wrappers.clear();
     if (num_groups == -1)
     {
@@ -483,13 +495,53 @@ class RootLevel : public LevelLogic
       {
         if (rateAware)
         {
-          wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, true>>(
-              strategy_name, true, config[strategy_name]));
+          wrappers.push_back({new StrategyWrapper<Obj<1>, Proc<1, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<1>, Proc<1, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<2>, Proc<2, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<3>, Proc<3, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<4>, Proc<4, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<5>, Proc<5, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<6>, Proc<6, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<7>, Proc<7, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<8>, Proc<8, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<9>, Proc<9, true>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<10>, Proc<10, true>>(
+                                  strategy_name, true, config[strategy_name])});
         }
         else
         {
-          wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, false>>(
-              strategy_name, true, config[strategy_name]));
+          wrappers.push_back({new StrategyWrapper<Obj<1>, Proc<1, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<1>, Proc<1, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<2>, Proc<2, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<3>, Proc<3, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<4>, Proc<4, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<5>, Proc<5, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<6>, Proc<6, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<7>, Proc<7, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<8>, Proc<8, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<9>, Proc<9, false>>(
+                                  strategy_name, true, config[strategy_name]),
+                              new StrategyWrapper<Obj<10>, Proc<10, false>>(
+                                  strategy_name, true, config[strategy_name])});
         }
       }
       this->repeat_strategies = repeat_strategies;
@@ -531,7 +583,9 @@ class RootLevel : public LevelLogic
     {
       // msg has object loads
       CkAssert(wrappers.size() > current_strategy);
-      IStrategyWrapper* wrapper = wrappers[current_strategy];
+      const auto dimension = ((LBStatsMsg_1*)stats_msgs[0])->dimension;
+      CkAssert(dimension <= 10);
+      IStrategyWrapper* wrapper = wrappers[current_strategy][dimension];
       CkAssert(wrapper != nullptr);
       CkAssert(nPes == CkNumPes());
       LLBMigrateMsg* migMsg = new (nPes, nPes, nObjs, 0) LLBMigrateMsg;
@@ -660,7 +714,7 @@ class RootLevel : public LevelLogic
   unsigned int nPes = 0;  // total number of processors in msgs I am processing
   unsigned int nObjs = 0;  // total number of objects in msgs I am processing
   float total_load = 0;
-  std::vector<IStrategyWrapper*> wrappers;
+  std::vector<std::vector<IStrategyWrapper*>> wrappers;
 };
 
 // ---------------- NodeSetLevel ----------------

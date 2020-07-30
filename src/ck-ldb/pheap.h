@@ -8,8 +8,9 @@ template <typename P>
 class ProcHeap
 {
  public:
-  ProcHeap(std::vector<P>& procs)
+  ProcHeap(std::vector<P>& procs, int dimension = 0)
   {
+    this->dimension = dimension;
     int index = 1;
     Q.resize(procs.size() + 1);
     elem_pos.resize(CkNumPes(), 0);
@@ -65,12 +66,19 @@ class ProcHeap
     Q[pos] = Q.back();
     Q.pop_back();
     elem_pos[ptr(Q[pos])->id] = pos;
-    if (ptr(Q[pos / 2])->getLoad() > ptr(Q[pos])->getLoad())
+    if (ptr(Q[pos / 2])->getLoad(dimension) > ptr(Q[pos])->getLoad(dimension))
       siftUp(pos);
     else
       siftDown(pos);
   }
 
+  // Assumes that load will only ever increase when updating and that this will
+  // always be a minheap
+  void update(P& p)
+  {
+    const int pos = elem_pos[ptr(p)->id];
+    min_heapify(pos);
+  }
   /*void clear() {
     Q.clear();
     Q.emplace_back();
@@ -82,9 +90,9 @@ class ProcHeap
     const int left = 2 * i;
     const int right = 2 * i + 1;
     int smallest = i;
-    if ((left < Q.size()) && (ptr(Q[left])->getLoad()) < ptr(Q[smallest])->getLoad())
+    if ((left < Q.size()) && (ptr(Q[left])->getLoad(dimension)) < ptr(Q[smallest])->getLoad(dimension))
       smallest = left;
-    if ((right < Q.size()) && (ptr(Q[right])->getLoad()) < ptr(Q[smallest])->getLoad())
+    if ((right < Q.size()) && (ptr(Q[right])->getLoad(dimension)) < ptr(Q[smallest])->getLoad(dimension))
       smallest = right;
     if (smallest != i)
     {
@@ -105,7 +113,7 @@ class ProcHeap
   {
     if (pos == 1) return;  // reached root
     int ppos = pos / 2;
-    if (ptr(Q[ppos])->getLoad() > ptr(Q[pos])->getLoad())
+    if (ptr(Q[ppos])->getLoad(dimension) > ptr(Q[pos])->getLoad(dimension))
     {
       std::swap(Q[ppos], Q[pos]);
       elem_pos[ptr(Q[ppos])->id] = ppos;
@@ -120,7 +128,7 @@ class ProcHeap
     int c2 = pos * 2 + 1;
     if (c1 >= Q.size()) return -1;
     if (c2 >= Q.size()) return c1;
-    if (ptr(Q[c1])->getLoad() < ptr(Q[c2])->getLoad())
+    if (ptr(Q[c1])->getLoad(dimension) < ptr(Q[c2])->getLoad(dimension))
       return c1;
     else
       return c2;
@@ -130,7 +138,7 @@ class ProcHeap
   {
     int cpos = minChild(pos);
     if (cpos == -1) return;
-    if (ptr(Q[pos])->getLoad() > ptr(Q[cpos])->getLoad())
+    if (ptr(Q[pos])->getLoad(dimension) > ptr(Q[cpos])->getLoad(dimension))
     {
       std::swap(Q[pos], Q[cpos]);
       elem_pos[ptr(Q[cpos])->id] = cpos;
@@ -141,6 +149,7 @@ class ProcHeap
 
   std::vector<P> Q;
   std::vector<int> elem_pos;
+  int dimension;
 };
 
 #endif /* PROC_HEAP_H */
