@@ -90,9 +90,8 @@ struct obj_1_data
 template <int N>
 struct obj_N_data
 {
-  float totalLoad;
+  float totalload;
   float load[N];
-  float maxload;
 };
 
 template <int N, bool multi = (N > 1)>
@@ -108,19 +107,17 @@ class Obj : public std::conditional<multi, obj_N_data<N>, obj_1_data>::type
   {
     id = _id;
     oldPe = _oldPe;
-    this->maxload = 0;
     // The zeroth element of _load will be the traditional walltime load,
-    //  and then 1 through N will be the elements of the vector load
-    this->totalLoad = *_load;
+    // and then 1 through N will be the elements of the vector load
+    this->totalload = *_load;
     _load++;
     for (int i = 0; i < N; i++)
     {
       this->load[i] = _load[i];
-      if (this->load[i] > this->maxload) this->maxload = this->load[i];
     }
   }
 
-  inline float getLoad() const { return this->maxload; }
+  inline float getLoad() const { return this->totalload; }
   inline float getLoad(int dim) const
   {
     CkAssert(dim < dimension);
@@ -165,6 +162,9 @@ class Proc
   float getLoad(int dim) const;  // returns current load of processor
   void assign(const Obj<N>* o);  // add object loads to this processor's loads
   void assign(const Obj<N>& o);  // add object loads to this processor's loads
+  void unassign(const Obj<N>* o);  // remove object loads from this processor's loads
+  void unassign(const Obj<N>& o);  // remove object loads from this processor's loads
+
   void resetLoad();              // sets processor loads to background loads
 };
 
@@ -173,7 +173,7 @@ struct proc_N_data
 {
   float load[N] = {0};
   float bgload[N] = {0};
-  float maxload = 0;
+  float totalload = 0;
 };
 struct proc_1_data
 {
@@ -195,10 +195,10 @@ class Proc<N, false, multi>
   {
     id = _id;
     // TODO: implement vector bgload
-    //std::copy_n(_bgload, N, this->bgload);
+    std::copy_n(_bgload, N, this->bgload);
   }
 
-  inline float getLoad() const { return this->maxload; }
+  inline float getLoad() const { return this->totalload; }
 
   inline float getLoad(int dim) const
   {
@@ -211,18 +211,29 @@ class Proc<N, false, multi>
     for (int i = 0; i < N; i++)
     {
       this->load[i] += o->load[i];
-      if (this->load[i] > this->maxload) this->maxload = this->load[i];
+      this->totalload += o->load[i];
     }
   }
   inline void assign(const Obj<N>& o) { assign(&o); }
 
+  inline void unassign(const Obj<N>* o)
+  {
+    for (int i = 0; i < N; i++)
+    {
+      this->load[i] -= o->load[i];
+      this->totalload -= o->load[i];
+    }
+  }
+  inline void unassign(const Obj<N>& o) { unassign(&o); }
+
+  
   inline void resetLoad()
   {
-    this->maxload = 0;
+    this->totalload = 0;
     for (int i = 0; i < N; i++)
     {
       this->load[i] = this->bgload[i];
-      if (this->load[i] > this->maxload) this->maxload = this->load[i];
+      this->totalload += this->bgload[i];
     }
   }
 };
@@ -247,6 +258,11 @@ template <>
 void Proc<1, false>::assign(const Obj<1>* o)
 {
   this->load += o->load;
+}
+template <>
+void Proc<1, false>::unassign(const Obj<1>* o)
+{
+  this->load -= o->load;
 }
 template <>
 void Proc<1, false>::resetLoad()
@@ -274,7 +290,7 @@ class Proc<N, true, multi>
     std::copy_n(_speed, N, this->speed);
   }
 
-  inline float getLoad() const { return this->maxload; }
+  inline float getLoad() const { return this->totalload; }
 
   inline float getLoad(int dim) const
   {
@@ -287,18 +303,29 @@ class Proc<N, true, multi>
     for (int i = 0; i < N; i++)
     {
       this->load[i] += (o->load[i] / speed[i]);
-      if (this->load[i] > this->maxload) this->maxload = this->load[i];
+      this->totalload += (o->load[i] / speed[i]);
     }
   }
   inline void assign(const Obj<N>& o) { assign(&o); }
 
+  inline void unassign(const Obj<N>* o)
+  {
+    for (int i = 0; i < N; i++)
+    {
+      this->load[i] -= (o->load[i] / speed[i]);
+      this->totalload -= (o->load[i] / speed[i]);
+    }
+  }
+  inline void unassign(const Obj<N>& o) { unassign(&o); }
+
+  
   inline void resetLoad()
   {
-    this->maxload = 0;
+    this->totalload = 0;
     for (int i = 0; i < N; i++)
     {
       this->load[i] = this->bgload[i];
-      if (this->load[i] > this->maxload) this->maxload = this->load[i];
+      this->totalload += this->bgload[i];
     }
   }
 };
@@ -324,6 +351,11 @@ template <>
 void Proc<1, true>::assign(const Obj<1>* o)
 {
   this->load += (o->load / speed[0]);
+}
+template <>
+void Proc<1, true>::unassign(const Obj<1>* o)
+{
+  this->load -= (o->load / speed[0]);
 }
 template <>
 void Proc<1, true>::resetLoad()

@@ -107,7 +107,7 @@ class RefineA : public Strategy<O, P, S>
           if (lightest.getLoad() + o.getLoad() <= M)
           {
             heavy_processors.pop();
-            heavy.load -= o.getLoad();
+            heavy.unassign(o);
             for (auto& light : light_processors)
             {
               if (light.getLoad() + o.getLoad() <= M)
@@ -245,7 +245,7 @@ class RefineB : public Strategy<O, P, S>
           O& o = *i;
           if (light.getLoad() + o.getLoad() <= M)
           {
-            heavy.load -= o.getLoad();
+            heavy.unassign(o);
             solutions.back().assign(o, light);
             light_maxload = std::max(light_maxload, light.getLoad());
             heavy_objs.erase(i);

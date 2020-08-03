@@ -234,10 +234,10 @@ void _loadbalancerInit()
         const char* legacyBalancer;
         if (strcmp(balancer, "GreedyLB") == 0)
           legacyBalancer = "Greedy";
-/*        else if (strcmp(balancer, "GreedyRefineLB") == 0)
+        else if (strcmp(balancer, "GreedyRefineLB") == 0)
           legacyBalancer = "GreedyRefine";
         else if (strcmp(balancer, "RefineLB") == 0)
-        legacyBalancer = "RefineA";*/
+        legacyBalancer = "RefineA";
         else if (strcmp(balancer, "RandCentLB") == 0)
           legacyBalancer = "Random";
         else if (strcmp(balancer, "DummyLB") == 0)
