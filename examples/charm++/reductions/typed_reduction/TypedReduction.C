@@ -85,13 +85,13 @@ void Driver::typed_array_doubles_done(int n, double* results)
 void Driver::set_done(CkReductionMsg* msg)
 {
     CkPrintf("Set Reduction: ");
-    int set_size = 0;
-    int total_set_elements = 0;
+    size_t set_size = 0;
+    size_t total_set_elements = 0;
     CkReduction::setElement* set_result = (CkReduction::setElement*)msg->getData();
     while (set_result && set_result->dataSize > 0)
     {
-        int numElements = set_result->dataSize / sizeof(int);
-        for (int idx =0; idx < numElements; ++idx)
+        size_t numElements = set_result->dataSize / sizeof(int);
+        for (size_t idx =0; idx < numElements; ++idx)
             CkPrintf("%d", ((int*)set_result->data)[idx]);
         CkPrintf(", ");
         set_result = set_result->next();
@@ -150,13 +150,13 @@ void Driver::tuple_reducer_done(CkReductionMsg* msg)
     }
 
     CkPrintf("Tuple Set Reduction: ");
-    int set_size = 0;
-    int total_set_elements = 0;
+    size_t set_size = 0;
+    size_t total_set_elements = 0;
     CkReduction::setElement* set_result = (CkReduction::setElement*)results[4].data;
     while (set_result && set_result->dataSize > 0)
     {
-        int numElements = set_result->dataSize / sizeof(int);
-        for (int idx =0; idx < numElements; ++idx)
+        size_t numElements = set_result->dataSize / sizeof(int);
+        for (size_t idx =0; idx < numElements; ++idx)
             CkPrintf("%d", ((int*)set_result->data)[idx]);
         CkPrintf(", ");
         set_result = set_result->next();

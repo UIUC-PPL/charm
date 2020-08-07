@@ -280,7 +280,7 @@ MBlockChunk::send(int fid,const extrudeMethod &meth,const void *grid)
     blockSpan src=ip->getExtents(meth,fields[fid]->forVoxel,-1);
     int dest = ip->dest;
     int num = src.getDim().getSize();
-    int msgLen=len*num;
+    size_t msgLen=len*num;
     MBlockDataMsg *msg = new (&msgLen, 0) MBlockDataMsg(seqnum, thisIndex, fid, 
         ip->destPatch); 
     CHK(msg);

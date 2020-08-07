@@ -29,7 +29,7 @@ static void deleteTwoInts(void *data) {
   free(data);
 }
 
-static void *mergeTwoInts(int *size, void *data, void **remote, int count) {
+static void *mergeTwoInts(size_t *size, void *data, void **remote, int count) {
   int i;
   struct twoInts *local = (struct twoInts *)data;
   DebugPrintf("[%d] called mergeTwoInts with local(%d/%d), %d remote(",CmiMyPe(),
@@ -48,7 +48,7 @@ CpvStaticDeclare(int, broadcast_msg_idx);
 CpvStaticDeclare(int, reduction_msg_idx);
 CpvStaticDeclare(int, broadcast_struct_idx);
 
-static void * addMessage(int *size, void *data, void **remote, int count) {
+static void * addMessage(size_t *size, void *data, void **remote, int count) {
   mesg msg = (mesg)data;
   int i;
   DebugPrintf("[%d] called addMessage with local(%d), %d remote(",CmiMyPe(),msg->sum,count);

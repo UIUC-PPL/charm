@@ -266,7 +266,7 @@ public:
   VectorMigrateInfo* moves;
 
 public:
-  LBVectorMigrateMsg(): level(0), n_moves(0) {}
+  LBVectorMigrateMsg(void): level(0), n_moves(0) {}
 };
 
 // for a FooLB, the following macro defines these functions for each LB:

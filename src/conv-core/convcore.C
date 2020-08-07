@@ -2361,8 +2361,8 @@ void CsdInit(char **argv)
 
 #if CMK_VECTOR_SEND_USES_COMMON_CODE
 
-void CmiSyncVectorSend(int destPE, int n, int *sizes, char **msgs) {
-  int total;
+void CmiSyncVectorSend(int destPE, int n, size_t *sizes, char **msgs) {
+  size_t total;
   char *mesg;
 #if CMK_USE_IBVERBS
   VECTOR_COMPACT(total, mesg, n, sizes, msgs,sizeof(infiCmiChunkHeader));
@@ -2372,12 +2372,12 @@ void CmiSyncVectorSend(int destPE, int n, int *sizes, char **msgs) {
   CmiSyncSendAndFree(destPE, total, mesg);
 }
 
-CmiCommHandle CmiASyncVectorSend(int destPE, int n, int *sizes, char **msgs) {
+CmiCommHandle CmiASyncVectorSend(int destPE, int n, size_t *sizes, char **msgs) {
   CmiSyncVectorSend(destPE, n, sizes, msgs);
   return NULL;
 }
 
-void CmiSyncVectorSendAndFree(int destPE, int n, int *sizes, char **msgs) {
+void CmiSyncVectorSendAndFree(int destPE, int n, size_t *sizes, char **msgs) {
   int i;
   CmiSyncVectorSend(destPE, n, sizes, msgs);
   for(i=0;i<n;i++) CmiFree(msgs[i]);
@@ -2563,7 +2563,7 @@ CmiReductionID CmiGetDynamicNodeReduction(void) {
 void CmiReductionHandleDynamicRequest(char *msg) {
   int *values = (int*)(msg+CmiMsgHeaderSizeBytes);
   int pe = values[0];
-  int size = CmiMsgHeaderSizeBytes+2*sizeof(int)+values[1];
+  size_t size = CmiMsgHeaderSizeBytes+2*sizeof(int)+values[1];
   values[0] = CmiGetDynamicReduction();
   CmiSetHandler(msg, CmiGetXHandler(msg));
   if (pe >= 0) {
@@ -2576,7 +2576,7 @@ void CmiReductionHandleDynamicRequest(char *msg) {
 void CmiNodeReductionHandleDynamicRequest(char *msg) {
   int *values = (int*)(msg+CmiMsgHeaderSizeBytes);
   int node = values[0];
-  int size = CmiMsgHeaderSizeBytes+2*sizeof(int)+values[1];
+  size_t size = CmiMsgHeaderSizeBytes+2*sizeof(int)+values[1];
   values[0] = CmiGetDynamicNodeReduction();
   CmiSetHandler(msg, CmiGetXHandler(msg));
   if (node >= 0) {
@@ -2586,12 +2586,12 @@ void CmiNodeReductionHandleDynamicRequest(char *msg) {
   }
 }
 
-void CmiGetDynamicReductionRemote(int handlerIdx, int pe, int dataSize, void *data) {
-  int size = CmiMsgHeaderSizeBytes+2*sizeof(int)+dataSize;
+void CmiGetDynamicReductionRemote(int handlerIdx, int pe, size_t dataSize, void *data) {
+  size_t size = CmiMsgHeaderSizeBytes+2*sizeof(int)+dataSize;
   char *msg = (char*)CmiAlloc(size);
   int *values = (int*)(msg+CmiMsgHeaderSizeBytes);
   values[0] = pe;
-  values[1] = dataSize;
+  values[1] = (int)dataSize;
   CmiSetXHandler(msg, handlerIdx);
   if (dataSize) memcpy(msg+CmiMsgHeaderSizeBytes+2*sizeof(int), data, dataSize);
   if (CmiMyPe() == 0) {
@@ -2603,8 +2603,8 @@ void CmiGetDynamicReductionRemote(int handlerIdx, int pe, int dataSize, void *da
   }
 }
 
-void CmiGetDynamicNodeReductionRemote(int handlerIdx, int node, int dataSize, void *data) {
-  int size = CmiMsgHeaderSizeBytes+2*sizeof(int)+dataSize;
+void CmiGetDynamicNodeReductionRemote(int handlerIdx, int node, size_t dataSize, void *data) {
+  size_t size = CmiMsgHeaderSizeBytes+2*sizeof(int)+dataSize;
   char *msg = (char*)CmiAlloc(size);
   int *values = (int*)(msg+CmiMsgHeaderSizeBytes);
   values[0] = node;
@@ -2622,7 +2622,7 @@ void CmiGetDynamicNodeReductionRemote(int handlerIdx, int node, int dataSize, vo
 
 void CmiSendReduce(CmiReduction *red) {
   void *mergedData, *msg;
-  int msg_size;
+  size_t msg_size;
   if (!red->localContributed || red->numChildren != red->numRemoteReceived) return;
   mergedData = red->localData;
   msg_size = red->localSize;
@@ -2660,7 +2660,7 @@ void CmiSendReduce(CmiReduction *red) {
 
 void CmiSendNodeReduce(CmiReduction *red) {
   void *mergedData, *msg;
-  int msg_size;
+  size_t msg_size;
   if (!red->localContributed || red->numChildren != red->numRemoteReceived) return;
   mergedData = red->localData;
   msg_size = red->localSize;
@@ -2696,7 +2696,7 @@ void CmiSendNodeReduce(CmiReduction *red) {
   CmiClearNodeReduction(red->seqID);
 }
 
-void *CmiReduceMergeFn_random(int *size, void *data, void** remote, int n) {
+void *CmiReduceMergeFn_random(size_t *size, void *data, void** remote, int n) {
   return data;
 }
 
@@ -2708,7 +2708,7 @@ void CmiResetGlobalNodeReduceSeqID(void) {
 	CsvAccess(_nodereduce_seqID_global) = 0;
 }
 
-static void CmiGlobalReduce(void *msg, int size, CmiReduceMergeFn mergeFn, CmiReduction *red) {
+static void CmiGlobalReduce(void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReduction *red) {
   CmiAssert(red->localContributed == 0);
   red->localContributed = 1;
   red->localData = msg;
@@ -2739,7 +2739,7 @@ static void CmiGlobalReduceStruct(void *data, CmiReducePupFn pupFn,
   CmiSendReduce(red);
 }
 
-static void CmiGlobalNodeReduce(void *msg, int size, CmiReduceMergeFn mergeFn, CmiReduction *red) {
+static void CmiGlobalNodeReduce(void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReduction *red) {
   CmiAssert(red->localContributed == 0);
   red->localContributed = 1;
   red->localData = msg;
@@ -2770,7 +2770,7 @@ static void CmiGlobalNodeReduceStruct(void *data, CmiReducePupFn pupFn,
   CmiSendNodeReduce(red);
 }
 
-void CmiReduce(void *msg, int size, CmiReduceMergeFn mergeFn) {
+void CmiReduce(void *msg, size_t size, CmiReduceMergeFn mergeFn) {
   CmiReduction *red = CmiGetNextReduction(CmiNumSpanTreeChildren(CmiMyPe()));
   CmiGlobalReduce(msg, size, mergeFn, red);
 }
@@ -2782,7 +2782,7 @@ void CmiReduceStruct(void *data, CmiReducePupFn pupFn,
   CmiGlobalReduceStruct(data, pupFn, mergeFn, dest, deleteFn, red);
 }
 
-void CmiReduceID(void *msg, int size, CmiReduceMergeFn mergeFn, CmiReductionID id) {
+void CmiReduceID(void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReductionID id) {
   CmiReduction *red = CmiGetReductionCreate(id, CmiNumSpanTreeChildren(CmiMyPe()));
   CmiGlobalReduce(msg, size, mergeFn, red);
 }
@@ -2794,7 +2794,7 @@ void CmiReduceStructID(void *data, CmiReducePupFn pupFn,
   CmiGlobalReduceStruct(data, pupFn, mergeFn, dest, deleteFn, red);
 }
 
-void CmiListReduce(int npes, int *pes, void *msg, int size, CmiReduceMergeFn mergeFn, CmiReductionID id) {
+void CmiListReduce(int npes, int *pes, void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReductionID id) {
   CmiReduction *red = CmiGetReductionCreate(id, CmiNumSpanTreeChildren(CmiMyPe()));
   int myPos;
   CmiAssert(red->localContributed == 0);
@@ -2843,7 +2843,7 @@ void CmiListReduceStruct(int npes, int *pes,
   CmiSendReduce(red);
 }
 
-void CmiGroupReduce(CmiGroup grp, void *msg, int size, CmiReduceMergeFn mergeFn, CmiReductionID id) {
+void CmiGroupReduce(CmiGroup grp, void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReductionID id) {
   int npes, *pes;
   CmiLookupGroup(grp, &npes, &pes);
   CmiListReduce(npes, pes, msg, size, mergeFn, id);
@@ -2857,7 +2857,7 @@ void CmiGroupReduceStruct(CmiGroup grp, void *data, CmiReducePupFn pupFn,
   CmiListReduceStruct(npes, pes, data, pupFn, mergeFn, dest, deleteFn, id);
 }
 
-void CmiNodeReduce(void *msg, int size, CmiReduceMergeFn mergeFn) {
+void CmiNodeReduce(void *msg, size_t size, CmiReduceMergeFn mergeFn) {
   CmiReduction *red = CmiGetNextNodeReduction(CmiNumNodeSpanTreeChildren(CmiMyNode()));
   CmiGlobalNodeReduce(msg, size, mergeFn, red);
 }
@@ -2869,7 +2869,7 @@ void CmiNodeReduceStruct(void *data, CmiReducePupFn pupFn,
   CmiGlobalNodeReduceStruct(data, pupFn, mergeFn, dest, deleteFn, red);
 }
 
-void CmiNodeReduceID(void *msg, int size, CmiReduceMergeFn mergeFn, CmiReductionID id) {
+void CmiNodeReduceID(void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReductionID id) {
   CmiReduction *red = CmiGetNodeReductionCreate(id, CmiNumNodeSpanTreeChildren(CmiMyNode()));
   CmiGlobalNodeReduce(msg, size, mergeFn, red);
 }
@@ -3031,7 +3031,7 @@ void CmiGroupInit(void)
 
 #if CMK_MULTICAST_LIST_USE_COMMON_CODE
 
-void CmiSyncListSendFn(int npes, const int *pes, int len, char *msg)
+void CmiSyncListSendFn(int npes, const int *pes, size_t len, char *msg)
 {
   int i;
   for(i=0;i<npes;i++) {
@@ -3039,14 +3039,14 @@ void CmiSyncListSendFn(int npes, const int *pes, int len, char *msg)
   }
 }
 
-CmiCommHandle CmiAsyncListSendFn(int npes, const int *pes, int len, char *msg)
+CmiCommHandle CmiAsyncListSendFn(int npes, const int *pes, size_t len, char *msg)
 {
   /* A better asynchronous implementation may be wanted, but at least it works */
   CmiSyncListSendFn(npes, pes, len, msg);
   return (CmiCommHandle) 0;
 }
 
-void CmiFreeListSendFn(int npes, const int *pes, int len, char *msg)
+void CmiFreeListSendFn(int npes, const int *pes, size_t len, char *msg)
 {
   int i;
   for(i=0;i<npes-1;i++) {
@@ -3067,7 +3067,7 @@ typedef struct MultiMsg_s
   char core[CmiMsgHeaderSizeBytes];
   CmiGroup group;
   int pos;
-  int origlen;
+  size_t origlen;
 }
 *MultiMsg;
 
@@ -3076,7 +3076,8 @@ CpvDeclare(int, CmiMulticastHandlerIndex);
 
 void CmiMulticastDeliver(MultiMsg msg)
 {
-  int npes, *pes; int olen, nlen, pos, child1, child2;
+  int npes, *pes; int pos, child1, child2;
+  size_t olen, nlen;
   olen = msg->origlen;
   nlen = olen + sizeof(struct MultiMsg_s);
   CmiLookupGroup(msg->group, &npes, &pes);
@@ -3117,9 +3118,9 @@ void CmiMulticastHandler(MultiMsg msg)
   CmiMulticastDeliver(msg);
 }
 
-void CmiSyncMulticastFn(CmiGroup grp, int len, char *msg)
+void CmiSyncMulticastFn(CmiGroup grp, size_t len, char *msg)
 {
-  int newlen; MultiMsg newmsg;
+  size_t newlen; MultiMsg newmsg;
   newlen = len + sizeof(struct MultiMsg_s);
   newmsg = (MultiMsg)CmiAlloc(newlen);
   if(len < sizeof(struct MultiMsg_s)) {
@@ -3135,13 +3136,13 @@ void CmiSyncMulticastFn(CmiGroup grp, int len, char *msg)
   CmiMulticastDeliver(newmsg);
 }
 
-void CmiFreeMulticastFn(CmiGroup grp, int len, char *msg)
+void CmiFreeMulticastFn(CmiGroup grp, size_t len, char *msg)
 {
   CmiSyncMulticastFn(grp, len, msg);
   CmiFree(msg);
 }
 
-CmiCommHandle CmiAsyncMulticastFn(CmiGroup grp, int len, char *msg)
+CmiCommHandle CmiAsyncMulticastFn(CmiGroup grp, size_t len, char *msg)
 {
   CmiError("Async Multicast not implemented.");
   return (CmiCommHandle) 0;
@@ -3186,7 +3187,7 @@ extern void arena_free(void *blockPtr);
  ***************************************************************************/
 
 
-void *CmiAlloc(int size)
+void *CmiAlloc(size_t size)
 {
 
   char *res;
@@ -3298,7 +3299,7 @@ void CmiReference(void *blk)
 }
 
 /** Return the size of the user portion of this block. */
-int CmiSize(void *blk)
+size_t CmiSize(void *blk)
 {
   return SIZEFIELD(blk);
 }
@@ -3314,9 +3315,9 @@ void CmiFree(void *blk)
 #endif
   if(refCount==1) { /* This was the last reference to the block-- free it */
 #ifdef MEMMONITOR
-    int size=SIZEFIELD(parentBlk);
+    size_t size=SIZEFIELD(parentBlk);
     if (size > 1000000000) /* Absurdly large size field-- warning */
-      CmiPrintf("MEMSTAT Uh-oh -- SIZEFIELD=%d\n",size);
+      CmiPrintf("MEMSTAT Uh-oh -- SIZEFIELD=%zu\n",size);
     CpvAccess(MemoryUsage) -= (size + sizeof(CmiChunkHeader));
     CpvAccess(BlocksAllocated)--;
 #endif
@@ -3552,7 +3553,7 @@ void infi_freeMultipleSend(void *msgWhole)
 #endif
 
 
-static void _CmiMultipleSend(unsigned int destPE, int len, int sizes[], char *msgComps[], int immed)
+static void _CmiMultipleSend(unsigned int destPE, size_t len, size_t sizes[], char *msgComps[], int immed)
 {
   CmiMultipleSendHeader header;
   int m; /* Outgoing message */
@@ -3566,7 +3567,7 @@ static void _CmiMultipleSend(unsigned int destPE, int len, int sizes[], char *ms
 	
   double pad = 0; /* padding required */
   int vecLen; /* Number of pieces in outgoing message vector */
-  int *vecSizes; /* Sizes of each piece we're sending out. */
+  size_t *vecSizes; /* Sizes of each piece we're sending out. */
   char **vecPtrs; /* Pointers to each piece we're sending out. */
   int vec; /* Entry we're currently filling out in above array */
 	
@@ -3578,7 +3579,7 @@ static void _CmiMultipleSend(unsigned int destPE, int len, int sizes[], char *ms
 	
   /* Allocate memory for the outgoing vector*/
   vecLen=1+3*len; /* Header and 3 parts per message */
-  vecSizes = (int *)CmiTmpAlloc(vecLen * sizeof(int));
+  vecSizes = (size_t *)CmiTmpAlloc(vecLen * sizeof(size_t));
   vecPtrs = (char **)CmiTmpAlloc(vecLen * sizeof(char *));
   vec=0;
   
@@ -3631,12 +3632,12 @@ static void _CmiMultipleSend(unsigned int destPE, int len, int sizes[], char *ms
   CmiTmpFree(msgHdr);
 }
 
-void CmiMultipleSend(unsigned int destPE, int len, int sizes[], char *msgComps[])
+void CmiMultipleSend(unsigned int destPE, size_t len, size_t sizes[], char *msgComps[])
 {
   _CmiMultipleSend(destPE, len, sizes, msgComps, 0);
 }
 
-void CmiMultipleIsend(unsigned int destPE, int len, int sizes[], char *msgComps[])
+void CmiMultipleIsend(unsigned int destPE, size_t len, size_t sizes[], char *msgComps[])
 {
   _CmiMultipleSend(destPE, len, sizes, msgComps, 1);
 }
@@ -3674,13 +3675,13 @@ static void CmiMultiMsgHandler(char *msgWhole)
 #if CMK_USE_IBVERBS
     infiCmiChunkHeader *ch=(infiCmiChunkHeader *)(msgWhole+offset);
     char *msg=(msgWhole+offset+sizeof(infiCmiChunkHeader));
-    int msgSize=ch->chunkHeader.size; /* Size of user portion of message (plus padding at end) */
+    size_t msgSize=ch->chunkHeader.size; /* Size of user portion of message (plus padding at end) */
     ch->chunkHeader.setRef(msgWhole-msg);
     ch->metaData =  registerMultiSendMesg(msg,msgSize);
 #else
     CmiChunkHeader *ch=(CmiChunkHeader *)(msgWhole+offset);
     char *msg=(msgWhole+offset+sizeof(CmiChunkHeader));
-    int msgSize=ch->size; /* Size of user portion of message (plus padding at end) */
+    size_t msgSize=ch->size; /* Size of user portion of message (plus padding at end) */
     ch->setRef(msgWhole-msg);
 #endif		
     /* Link new message to owner via a negative ref pointer */
@@ -4219,7 +4220,7 @@ void __cmi_assert(const char *errmsg)
   CmiAbort("[%d] %s\n", CmiMyPe(), errmsg);
 }
 
-char *CmiCopyMsg(char *msg, int len)
+char *CmiCopyMsg(char *msg, size_t len)
 {
   char *copy = (char *)CmiAlloc(len);
   _MEMCHECK(copy);
@@ -4227,9 +4228,9 @@ char *CmiCopyMsg(char *msg, int len)
   return copy;
 }
 
-unsigned char computeCheckSum(unsigned char *data, int len)
+unsigned char computeCheckSum(unsigned char *data, size_t len)
 {
-  int i;
+  size_t i;
   unsigned char ret = 0;
   for (i=0; i<len; i++) ret ^= (unsigned char)data[i];
   return ret;

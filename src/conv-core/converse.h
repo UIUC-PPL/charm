@@ -737,7 +737,7 @@ extern void CmiInitHwlocTopology(void);
 
 /** Return 1 if our outgoing message queue 
    for this node is longer than this many bytes. */
-int CmiLongSendQueue(int forNode,int longerThanBytes);
+int CmiLongSendQueue(int forNode,size_t longerThanBytes);
 
 /******** CMI, CSD: MANY LOW-LEVEL OPERATIONS ********/
 
@@ -929,10 +929,10 @@ void free_nomigrate(void* ptr);
    in which to construct messages should prefer the malloc()/free()
    provided by libmemory-*.
 */
-void    *CmiAlloc(int size);
+void    *CmiAlloc(size_t size);
 void     CmiReference(void *blk);
 int      CmiGetReference(void *blk);
-int      CmiSize(void *blk);
+size_t   CmiSize(void *blk);
 void     CmiFree(void *blk);
 void     CmiRdmaFree(void *blk);
 void     CmiInitMsgHeader(void *msg, int size);
@@ -1304,41 +1304,41 @@ void CmiPushPE(int, void*);
 void          CmiSuspendedTaskEnqueue(int targetRank, void *msg);
 void      *   CmiSuspendedTaskPop(void);
 #endif
-void          CmiSyncSendFn(int, int, char *);
-CmiCommHandle CmiAsyncSendFn(int, int, char *);
-void          CmiFreeSendFn(int, int, char *);
+void          CmiSyncSendFn(int, size_t, char *);
+CmiCommHandle CmiAsyncSendFn(int, size_t, char *);
+void          CmiFreeSendFn(int, size_t, char *);
 
-void          CmiSyncBroadcastFn(int, char *);
-CmiCommHandle CmiAsyncBroadcastFn(int, char *);
-void          CmiFreeBroadcastFn(int, char *);
+void          CmiSyncBroadcastFn(size_t, char *);
+CmiCommHandle CmiAsyncBroadcastFn(size_t, char *);
+void          CmiFreeBroadcastFn(size_t, char *);
 
-void          CmiSyncBroadcastAllFn(int, char *);
-CmiCommHandle CmiAsyncBroadcastAllFn(int, char *);
-void          CmiFreeBroadcastAllFn(int, char *);
+void          CmiSyncBroadcastAllFn(size_t, char *);
+CmiCommHandle CmiAsyncBroadcastAllFn(size_t, char *);
+void          CmiFreeBroadcastAllFn(size_t, char *);
 
-void          CmiWithinNodeBroadcastFn(int, char*);
+void          CmiWithinNodeBroadcastFn(size_t, char*);
 
-void          CmiSyncListSendFn(int, const int *, int, char*);
-CmiCommHandle CmiAsyncListSendFn(int, const int *, int, char*);
-void          CmiFreeListSendFn(int, const int *, int, char*);
-void          CmiFreeNodeListSendFn(int, const int *, int, char*);
+void          CmiSyncListSendFn(int, const int *, size_t, char*);
+CmiCommHandle CmiAsyncListSendFn(int, const int *, size_t, char*);
+void          CmiFreeListSendFn(int, const int *, size_t, char*);
+void          CmiFreeNodeListSendFn(int, const int *, size_t, char*);
 
-void          CmiSyncMulticastFn(CmiGroup, int, char*);
-CmiCommHandle CmiAsyncMulticastFn(CmiGroup, int, char*);
-void          CmiFreeMulticastFn(CmiGroup, int, char*);
+void          CmiSyncMulticastFn(CmiGroup, size_t, char*);
+CmiCommHandle CmiAsyncMulticastFn(CmiGroup, size_t, char*);
+void          CmiFreeMulticastFn(CmiGroup, size_t, char*);
 
 /* inter partition send counterparts */
-void          CmiInterSyncSendFn(int, int, int, char *);
-void          CmiInterFreeSendFn(int, int, int, char *);
+void          CmiInterSyncSendFn(int, int, size_t, char *);
+void          CmiInterFreeSendFn(int, int, size_t, char *);
 
-typedef void * (*CmiReduceMergeFn)(int*,void*,void**,int);
+typedef void * (*CmiReduceMergeFn)(size_t*,void*,void**,int);
 typedef void (*CmiReducePupFn)(void*,void*);
 typedef void (*CmiReduceDeleteFn)(void*);
 
 typedef struct {
   void *localData;
   char **remoteData;
-  int localSize;
+  size_t localSize;
   short int numRemoteReceived;
   short int numChildren;
   int parent;
@@ -1354,30 +1354,30 @@ typedef struct {
 
 typedef CmiUInt2 CmiReductionID;
 
-void * CmiReduceMergeFn_random(int*, void*, void**, int);
+void * CmiReduceMergeFn_random(size_t*, void*, void**, int);
 
-void CmiReduce(void *msg, int size, CmiReduceMergeFn mergeFn);
+void CmiReduce(void *msg, size_t size, CmiReduceMergeFn mergeFn);
 void CmiReduceStruct(void *data, CmiReducePupFn pupFn,
                      CmiReduceMergeFn mergeFn, CmiHandler dest,
                      CmiReduceDeleteFn deleteFn);
-void CmiReduceID(void *msg, int size, CmiReduceMergeFn mergeFn, CmiReductionID id);
+void CmiReduceID(void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReductionID id);
 void CmiReduceStructID(void *data, CmiReducePupFn pupFn,
                      CmiReduceMergeFn mergeFn, CmiHandler dest,
                      CmiReduceDeleteFn deleteFn, CmiReductionID id);
-void CmiListReduce(int npes, int *pes, void *msg, int size, CmiReduceMergeFn mergeFn, CmiReductionID id);
+void CmiListReduce(int npes, int *pes, void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReductionID id);
 void CmiListReduceStruct(int npes, int *pes,
                      void *data, CmiReducePupFn pupFn,
                      CmiReduceMergeFn mergeFn, CmiHandler dest,
                      CmiReduceDeleteFn deleteFn, CmiReductionID id);
-void CmiGroupReduce(CmiGroup grp, void *msg, int size, CmiReduceMergeFn mergeFn, CmiReductionID id);
+void CmiGroupReduce(CmiGroup grp, void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReductionID id);
 void CmiGroupReduceStruct(CmiGroup grp, void *data, CmiReducePupFn pupFn,
                      CmiReduceMergeFn mergeFn, CmiHandler dest,
                      CmiReduceDeleteFn deleteFn, CmiReductionID id);
-void CmiNodeReduce(void *msg, int size, CmiReduceMergeFn mergeFn);
+void CmiNodeReduce(void *msg, size_t size, CmiReduceMergeFn mergeFn);
 void CmiNodeReduceStruct(void *data, CmiReducePupFn pupFn,
                          CmiReduceMergeFn mergeFn, CmiHandler dest,
                          CmiReduceDeleteFn deleteFn);
-void CmiNodeReduceID(void *msg, int size, CmiReduceMergeFn mergeFn, CmiReductionID id);
+void CmiNodeReduceID(void *msg, size_t size, CmiReduceMergeFn mergeFn, CmiReductionID id);
 void CmiNodeReduceStructID(void *data, CmiReducePupFn pupFn,
                            CmiReduceMergeFn mergeFn, CmiHandler dest,
                            CmiReduceDeleteFn deleteFn, CmiReductionID id);
@@ -1387,8 +1387,8 @@ CmiReductionID CmiGetGlobalReduction(void);
 CmiReductionID CmiGetGlobalNodeReduction(void);
 CmiReductionID CmiGetDynamicReduction(void);
 CmiReductionID CmiGetDynamicNodeReduction(void);
-void CmiGetDynamicReductionRemote(int handlerIdx, int pe, int dataSize, void *data);
-void CmiGetDynamicNodeReductionRemote(int handlerIdx, int node, int dataSize, void *data);
+void CmiGetDynamicReductionRemote(int handlerIdx, int pe, size_t dataSize, void *data);
+void CmiGetDynamicNodeReductionRemote(int handlerIdx, int node, size_t dataSize, void *data);
 
 void CmiResetGlobalReduceSeqID(void);
 void CmiResetGlobalNodeReduceSeqID(void);
@@ -1398,12 +1398,12 @@ void CmiResetGlobalNodeReduceSeqID(void);
  * be preponed to every message (message nesting), except the first one which
  * uses that of the entire message.
  */
-void          CmiSyncVectorSend(int, int, int *, char **);
-CmiCommHandle CmiAsyncVectorSend(int, int, int *, char **);
-void          CmiSyncVectorSendAndFree(int, int, int *, char **);
+void          CmiSyncVectorSend(int, int, size_t *, char **);
+CmiCommHandle CmiAsyncVectorSend(int, int, size_t *, char **);
+void          CmiSyncVectorSendAndFree(int, int, size_t *, char **);
 
-void	      CmiMultipleSend(unsigned int, int, int *, char **);
-void	      CmiMultipleIsend(unsigned int, int, int *, char **);
+void	      CmiMultipleSend(unsigned int, size_t, size_t *, char **);
+void	      CmiMultipleIsend(unsigned int, size_t, size_t *, char **);
 
 int           CmiAsyncMsgSent(CmiCommHandle);
 void          CmiReleaseCommHandle(CmiCommHandle);
@@ -1442,21 +1442,21 @@ void          CmiReleaseCommHandle(CmiCommHandle);
 /* support for rest may come later if required */
 
 #if CMK_NODE_QUEUE_AVAILABLE
-void          CmiSyncNodeSendFn(int, int, char *);
-CmiCommHandle CmiAsyncNodeSendFn(int, int, char *);
-void          CmiFreeNodeSendFn(int, int, char *);
+void          CmiSyncNodeSendFn(int, size_t, char *);
+CmiCommHandle CmiAsyncNodeSendFn(int, size_t, char *);
+void          CmiFreeNodeSendFn(int, size_t, char *);
 
-void          CmiSyncNodeBroadcastFn(int, char *);
-CmiCommHandle CmiAsyncNodeBroadcastFn(int, char *);
-void          CmiFreeNodeBroadcastFn(int, char *);
+void          CmiSyncNodeBroadcastFn(size_t, char *);
+CmiCommHandle CmiAsyncNodeBroadcastFn(size_t, char *);
+void          CmiFreeNodeBroadcastFn(size_t, char *);
 
-void          CmiSyncNodeBroadcastAllFn(int, char *);
-CmiCommHandle CmiAsyncNodeBroadcastAllFn(int, char *);
-void          CmiFreeNodeBroadcastAllFn(int, char *);
+void          CmiSyncNodeBroadcastAllFn(size_t, char *);
+CmiCommHandle CmiAsyncNodeBroadcastAllFn(size_t, char *);
+void          CmiFreeNodeBroadcastAllFn(size_t, char *);
 
 /* if node queue is available, adding inter partition counterparts */
-void          CmiInterSyncNodeSendFn(int, int, int, char *);
-void          CmiInterFreeNodeSendFn(int, int, int, char *);
+void          CmiInterSyncNodeSendFn(int, int, size_t, char *);
+void          CmiInterFreeNodeSendFn(int, int, size_t, char *);
 #endif
 
 #if CMK_NODE_QUEUE_AVAILABLE
@@ -1769,7 +1769,7 @@ typedef void (*CldPackFn)(void *msg);
 
 typedef void (*CldInfoFn)(void *msg, 
                           CldPackFn *packer,
-                          int *len,
+                          size_t *len,
                           int *queueing,
                           int *priobits, 
                           unsigned int **prioptr);
@@ -1839,7 +1839,7 @@ __attribute__ ((format (printf, 1, 2)))
 #endif
 void CmiAbort(const char *msg, ...);
 
-void CmiOutOfMemory(int nBytes);
+void CmiOutOfMemory(size_t nBytes);
 
 #if CMK_MEMCHECK_OFF
 #define _MEMCHECK(p) do{}while(0)
@@ -1963,7 +1963,7 @@ int CmiIsFortranLibraryCall(void);
 CpvExtern(void*, CmiLocalQueue);
 #endif
 
-char *CmiCopyMsg(char *msg, int len);
+char *CmiCopyMsg(char *msg, size_t len);
 
 /******** Hypercube broadcast propagation (Binomial tree) ********/
 

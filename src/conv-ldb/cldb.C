@@ -162,7 +162,8 @@ void CldPutToken(char *msg)
   CldProcInfo proc = CpvAccess(CldProc);
   CldInfoFn ifn = (CldInfoFn)CmiHandlerToFunction(CmiGetInfo(msg));
   CldToken tok;
-  int len, queueing, priobits; unsigned int *prioptr;
+  int queueing, priobits; unsigned int *prioptr;
+  size_t len;
   CldPackFn pfn;
 
   CmiLock(CpvAccess(cldLock));
@@ -188,7 +189,8 @@ void CldPutTokenPrio(char *msg)
   CldProcInfo proc = CpvAccess(CldProc);
   CldInfoFn ifn = (CldInfoFn)CmiHandlerToFunction(CmiGetInfo(msg));
   CldToken tok, ptr;
-  int len, queueing, priobits; unsigned int *prioptr, ints;
+  int queueing, priobits; unsigned int *prioptr, ints;
+  size_t len;
   CldPackFn pfn;
 
   ifn(msg, &pfn, &len, &queueing, &priobits, &prioptr);
@@ -201,7 +203,8 @@ void CldPutTokenPrio(char *msg)
   /* find the right place */
   ptr = proc->sentinel->succ;
   while (ptr!=proc->sentinel) {
-    int len1, queueing1, priobits1; unsigned int *prioptr1, ints1;
+    int queueing1, priobits1; unsigned int *prioptr1, ints1;
+    size_t len1;
     CldPackFn pfn1;
     ifn(ptr->msg, &pfn1, &len1, &queueing1, &priobits1, &prioptr1);
     ints1 = (priobits1+CINTBITS-1)/CINTBITS;
@@ -314,7 +317,8 @@ int CldPresentPE(int pe)
 void CldMoveAllSeedsAway(void)
 {
   char *msg;
-  int len, queueing, priobits, pe;
+  int queueing, priobits, pe;
+  size_t len;
   unsigned int *prioptr;
   CldInfoFn ifn;  CldPackFn pfn;
 
@@ -388,13 +392,14 @@ void CldModuleGeneralInit(char **argv)
 void CldMultipleSend(int pe, int numToSend, int rank, int immed)
 {
   char **msgs;
-  int len, queueing, priobits, *msgSizes, i, numSent, done=0, parcelSize;
+  int queueing, priobits, i, numSent, done=0, parcelSize;
+  size_t len, *msgSizes;
   unsigned int *prioptr;
   CldInfoFn ifn;
   CldPackFn pfn;
 
   msgs = (char **)calloc(numToSend, sizeof(char *));
-  msgSizes = (int *)calloc(numToSend, sizeof(int));
+  msgSizes = (size_t *)calloc(numToSend, sizeof(size_t));
 
   while (!done) {
     numSent = 0;
@@ -450,7 +455,8 @@ void CldMultipleSend(int pe, int numToSend, int rank, int immed)
 void CldMultipleSendPrio(int pe, int numToSend, int rank, int immed)
 {
   char **msgs;
-  int len, queueing, priobits, *msgSizes, i;
+  int queueing, priobits, i;
+  size_t len, *msgSizes;
   unsigned int *prioptr;
   CldInfoFn ifn;
   CldPackFn pfn;
@@ -460,7 +466,7 @@ void CldMultipleSendPrio(int pe, int numToSend, int rank, int immed)
 
   if (numToSend ==0) return;
   msgs = (char **)calloc(numToSend, sizeof(char *));
-  msgSizes = (int *)calloc(numToSend, sizeof(int));
+  msgSizes = (size_t *)calloc(numToSend, sizeof(size_t));
 
   tok = proc->sentinel->succ;
   if (tok == proc->sentinel) {
@@ -507,7 +513,8 @@ void CldMultipleSendPrio(int pe, int numToSend, int rank, int immed)
 void CldSimpleMultipleSend(int pe, int numToSend, int rank)
 {
   char *msg;
-  int len, queueing, priobits, *msgSizes, i, numSent, done=0;
+  int queueing, priobits, i, numSent, done=0;
+  size_t len;
   unsigned int *prioptr;
   CldInfoFn ifn;
   CldPackFn pfn;

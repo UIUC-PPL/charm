@@ -1340,11 +1340,11 @@ static void restartBeginHandler(char *msg)
 extern void _discard_charm_message();
 extern void _resume_charm_message();
 
-static void * doNothingMsg(int * size, void * data, void ** remote, int count){
+static void * doNothingMsg(size_t * size, void * data, void ** remote, int count){
 	return data;
 }
 
-static void * minChkpNumMsg(int * size, void * data, void ** remote, int count)
+static void * minChkpNumMsg(size_t * size, void * data, void ** remote, int count)
 {
   int minNum = *(int *)((char *)data+CmiMsgHeaderSizeBytes);
   for(int i = 0; i < count;i++)

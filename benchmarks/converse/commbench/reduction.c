@@ -68,7 +68,7 @@ typedef struct _timemsg timemsg;
 
 static const char sync_outstr[] = "[broadcast] (%s) %le seconds per %d bytes\n";
 
-static void* reduceMessage(int* size, void* data, void** remote, int count) {
+static void* reduceMessage(size_t* size, void* data, void** remote, int count) {
   (void)size;
   (void)remote;
   (void)count;

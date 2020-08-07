@@ -365,7 +365,7 @@ void setCurrentlyExecutingPathTo100(void){
 
 /// Acquire the critical path and deliver it to the user supplied callback
 void traceCriticalPathBack(CkCallback cb, bool saveToProjectionsTraces){
-    pathInformationMsg *newmsg = new(0) pathInformationMsg;
+    pathInformationMsg *newmsg = new pathInformationMsg;
     newmsg->historySize = 0;
     newmsg->cb = cb;
     newmsg->hops = CkpvAccess(currentlyExecutingPath).hops - CkpvAccess(traceLastHop) -1;

@@ -7,7 +7,7 @@
 
 class varsizetest_Msg : public CMessage_varsizetest_Msg {
  public:
-  static void *alloc(int mnum, size_t size, int *sizes, int priobits, GroupDepNum groupDepNum);
+  static void *alloc(int mnum, size_t size, size_t *sizes, int priobits, GroupDepNum groupDepNum);
   static void *pack(varsizetest_Msg *msg);
   static varsizetest_Msg *unpack(void *buf);
   varsizetest_Msg(int s);

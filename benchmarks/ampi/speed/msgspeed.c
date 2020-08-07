@@ -216,7 +216,7 @@ static void msg_driver_state(msg_comm* comm)
 #define MSG_LEN_MAX (1024 * 1024)
 
 /** Send len (random) bytes to "the other guy" */
-static void msg_driver_send(msg_comm* comm, int len)
+static void msg_driver_send(msg_comm* comm, size_t len)
 {
   int otherPe = !CD->myPe;
   void* data = CD->msgBuf;
@@ -236,14 +236,14 @@ static void msg_driver_send(msg_comm* comm, int len)
   be made from a msg_send_fn (for a blocking send)
   or from outside (for a non-blocking send).
   */
-void msg_send_complete(msg_comm* comm, void* data, int len)
+void msg_send_complete(msg_comm* comm, void* data, size_t len)
 {
   CD->nSends--;
   msg_driver_state(comm);
 }
 
 /** Receive len (random) bytes from "the other guy" */
-static void msg_driver_recv(msg_comm* comm, int len)
+static void msg_driver_recv(msg_comm* comm, size_t len)
 {
   int otherPe = !comm->driver->myPe;
   CD->nRecvs++;
@@ -256,7 +256,7 @@ static void msg_driver_recv(msg_comm* comm, int len)
   like MPI), or can be made from outside (for an
   asynchronous API like converse or Charm++).
   */
-void msg_recv_complete(msg_comm* comm, void* data, int len)
+void msg_recv_complete(msg_comm* comm, void* data, size_t len)
 {
   CD->nRecvs--;
   if (len)
@@ -427,7 +427,7 @@ static void test_pingpong(msg_comm* comm)
 
 static void call_short_send(msg_comm* comm) { msg_driver_send(comm, 0); }
 
-static void test_oneway_inner(msg_comm* comm, int len, int n)
+static void test_oneway_inner(msg_comm* comm, size_t len, int n)
 {
   int i;
   if (CD->myPe == 0)

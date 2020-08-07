@@ -83,9 +83,9 @@ void CcsSetMergeFn(const char *name, CmiReduceMergeFn newMerge) {
   rec->redID=CmiGetGlobalReduction();
 }
 
-void * CcsMerge_concat(int *size,void *local,void **remote,int n) {
+void * CcsMerge_concat(size_t *size,void *local,void **remote,int n) {
   CcsImplHeader *hdr;
-  int total = *size;
+  size_t total = *size;
   void *reply;
   char *ptr;
   int i;
@@ -108,15 +108,15 @@ void * CcsMerge_concat(int *size,void *local,void **remote,int n) {
 }
 
 #define SIMPLE_REDUCTION(name, dataType, loop) \
-void * CcsMerge_##name(int *size,void *local,void **remote,int n) { \
+void * CcsMerge_##name(size_t *size,void *local,void **remote,int n) { \
   int i, m; \
   CcsImplHeader *hdrLocal = (CcsImplHeader*)(((char*)local)+CmiReservedHeaderSize); \
-  int lenLocal = ChMessageInt(hdrLocal->len); \
-  int nElem = lenLocal / sizeof(dataType); \
+  size_t lenLocal = ChMessageInt(hdrLocal->len); \
+  size_t nElem = lenLocal / sizeof(dataType); \
   dataType *ret = (dataType *) (hdrLocal+1); \
   CcsImplHeader *hdr; \
   for (m=0; m<n; ++m) { \
-    int len; \
+    size_t len; \
     dataType *value; \
     hdr = (CcsImplHeader*)(((char*)remote[m])+CmiReservedHeaderSize); \
     len = ChMessageInt(hdr->len); \

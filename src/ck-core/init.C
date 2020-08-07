@@ -475,7 +475,7 @@ typedef struct _statsHeader
   int n;
 } statsHeader;
 
-static void * mergeStats(int *size, void *data, void **remote, int count)
+static void * mergeStats(size_t *size, void *data, void **remote, int count)
 {
   envelope *newData;
   statsHeader *dataMsg = (statsHeader*)EnvToUsr((envelope*) data), *newDataMsg;

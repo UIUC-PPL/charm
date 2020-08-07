@@ -9,7 +9,7 @@ void convBcastHandler(void *env);
 // Converse redn msg handler triggered at the root of the converse redn
 void convRednHandler(void *env);
 /// Converse redn merge fn triggered at each vertex along the redn tree
-void* convRedn_sum (int *size, void *local, void **remote, int count);
+void* convRedn_sum (size_t *size, void *local, void **remote, int count);
 
 // Registration function for all the converse msg handlers
 void registerHandlers();

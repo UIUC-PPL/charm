@@ -71,13 +71,13 @@
  *     the socket can recv or accept, or (failing that) in the given
  *     number of milliseconds.  Returns 0 on timeout; 1 on readable.
  *
- * int skt_recvN(SOCKET fd,      void *buf,int nBytes)
- * int skt_sendN(SOCKET fd,const void *buf,int nBytes)
+ * int skt_recvN(SOCKET fd,      void *buf,size_t nBytes)
+ * int skt_sendN(SOCKET fd,const void *buf,size_t nBytes)
  *   - Blocking send/recv nBytes on the given socket.
  *     Retries if possible (e.g., if interrupted), but aborts
  *     on serious errors.  Returns zero or an abort code.
  *
- * int skt_sendV(SOCKET fd,int nBuffers,void **buffers,int *lengths)
+ * int skt_sendV(SOCKET fd,int nBuffers,void **buffers,size_t *lengths)
  *   - Blocking call to write from several buffers.  This is much more
  *     performance-critical than read-from-several buffers, because
  *     individual sends go out as separate network packets, and include
@@ -182,13 +182,13 @@ int skt_select1(SOCKET fd, int msec);
 void skt_setSockBuf(SOCKET skt, int bufsize);
 
 /*Blocking Send/Recv*/
-int skt_sendN(SOCKET hSocket, const void *pBuff, int nBytes);
-int skt_recvN(SOCKET hSocket,       void *pBuff, int nBytes);
-int skt_sendV(SOCKET fd, int nBuffers, const void **buffers, int *lengths);
+int skt_sendN(SOCKET hSocket, const void *pBuff, size_t nBytes);
+int skt_recvN(SOCKET hSocket,       void *pBuff, size_t nBytes);
+int skt_sendV(SOCKET fd, int nBuffers, const void **buffers, size_t *lengths);
 #if !defined(_WIN32)
-int skt_sendmsg(SOCKET hSocket, struct msghdr *mh, int num_bufs, int total_bytes);
+int skt_sendmsg(SOCKET hSocket, struct msghdr *mh, int num_bufs, size_t total_bytes);
 #else
-int skt_sendmsg(SOCKET hSocket, WSABUF *buffers, int num_bufs, int total_bytes);
+int skt_sendmsg(SOCKET hSocket, WSABUF *buffers, int num_bufs, size_t total_bytes);
 #endif
 
 int skt_tcp_no_nagle(SOCKET fd);

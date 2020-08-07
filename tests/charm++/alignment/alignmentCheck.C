@@ -93,7 +93,7 @@ public:
     CkPrintf("Size of Charm++ envelope: %zu bytes\n", sizeof(envelope));
     CkPrintf("Default alignment: %d bytes\n", ALIGN_BYTES);
 
-    int msgSizes[] = {varSize1, varSize2};
+    size_t msgSizes[] = {varSize1, varSize2};
     std::vector<TestMessage *> allMsgs;
     for (int i = 0; i < nCheck; i++) {
       TestMessage *msg = new (msgSizes, sizeof(int)*8) TestMessage();

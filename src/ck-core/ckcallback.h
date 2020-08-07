@@ -456,7 +456,7 @@ public:
 /**
  * Send this data, formatted as a CkDataMsg, back to the caller.
  */
-	void send(int length,const void *data) const;
+	void send(size_t length,const void *data) const;
 	
 	void pup(PUP::er &p);
 

@@ -14,7 +14,7 @@
 
    In particular, the fields "hdl", "xhdl" and "info" must be always present in
    the extended header, since they are directly accessed in converse.h */
-#define CMK_MSG_HEADER_UNIQUE    CmiUInt4 size; CmiUInt2 hdl,xhdl,info;
+#define CMK_MSG_HEADER_UNIQUE    size_t size; CmiUInt2 hdl,xhdl,info;
 
 #define CMK_MSG_HEADER_BASIC  CMK_MSG_HEADER_EXT
 #define CMK_MSG_HEADER_EXT            { CMK_MSG_HEADER_UNIQUE }

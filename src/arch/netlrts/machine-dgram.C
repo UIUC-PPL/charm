@@ -47,7 +47,7 @@ typedef struct {
 /* the window size needs to be Cmi_window_size + sizeof(unsigned int) bytes) */
 typedef struct { DgramHeader head; char window[1024]; } DgramAck;
 
-unsigned char computeCheckSum(unsigned char *data, int len);
+unsigned char computeCheckSum(unsigned char *data, size_t len);
 
 #define DgramHeaderMake(ptr, dstrank_, srcpe_, magic_, seqno_, root_) { \
    DgramHeader *header = (DgramHeader *)(ptr);	\
@@ -171,7 +171,7 @@ typedef struct OutgoingMsgStruct
 {
   struct OutgoingMsgStruct *next;
   int   src, dst;
-  int   size;
+  size_t   size;
   char *data;
   int   refcount;
   int   freemode;
@@ -182,7 +182,7 @@ typedef struct ExplicitDgramStruct
 {
   struct ExplicitDgramStruct CMK_SMP_volatile *next;
   int  srcpe, rank, seqno, broot;
-  unsigned int len, dummy; /* dummy to fix bug in rs6k alignment */
+  size_t len;
   double data[1];
 }
 CMK_SMP_volatile *ExplicitDgram;
@@ -193,7 +193,7 @@ typedef struct ImplicitDgramStruct
   struct OtherNodeStruct *dest;
   int srcpe, rank, seqno, broot;
   char  *dataptr;
-  int    datalen;
+  size_t    datalen;
   OutgoingMsg ogm;
 }
 CMK_SMP_volatile *ImplicitDgram;
@@ -202,7 +202,7 @@ struct PendingMsgStruct;
 
 typedef struct FutureMessageStruct {
   char *msg;
-  int len;
+  size_t len;
 } *FutureMessage;
 
 typedef struct OtherNodeStruct
@@ -228,8 +228,8 @@ typedef struct OtherNodeStruct
   int                      retransmit_leash; /*Maximum number of packets to retransmit*/
 
   int                      asm_rank;
-  int                      asm_total;
-  int                      asm_fill;
+  size_t                   asm_total;
+  size_t                   asm_fill;
   char                    *asm_msg;
   
   int                      recv_ack_cnt; /* number of unacked dgrams */
@@ -316,7 +316,7 @@ static OtherNode  nodes;        /* Indexed only by ``node number'' */
 #ifdef CMK_USE_SPECIAL_MESSAGE_QUEUE_CHECK
 /** Return 1 if our outgoing message queue 
    for this node is longer than this many bytes. */
-int CmiLongSendQueue(int forNode,int longerThan) {
+int CmiLongSendQueue(int forNode,size_t longerThan) {
 	int ret=0;
 	ImplicitDgram dg;
 	CmiCommLock();

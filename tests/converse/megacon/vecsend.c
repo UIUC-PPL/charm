@@ -12,7 +12,7 @@ void Cpm_megacon_ack(CpmDestination);
 void vecsend_handler(int *msg)
 {
   int i, next;
-  int sizes[1];
+  size_t sizes[1];
   char *msgs[1];
 
   if (CmiMyPe()==0) {
@@ -35,13 +35,13 @@ void vecsend_handler(int *msg)
 void vecsend_init()
 {
   int i, *msg;
-  int *sizes;
+  size_t *sizes;
   int **msgs;
   if (CmiNumPes()<2) {
     CmiPrintf("note: vecsend requires at least 2 processors, skipping test.\n");
     Cpm_megacon_ack(CpmSend(0));
   } else {
-    sizes = (int *) CmiAlloc(4*sizeof(int));
+    sizes = (size_t *) CmiAlloc(4*sizeof(size_t));
     msgs = (int **) CmiAlloc(4*sizeof(int *));
     sizes[0] = 1000; sizes[1] = 500; sizes[2] = 2000; sizes[3] = 100;
     for(i=0;i<4;i++) msgs[i] = (int *)CmiAlloc(sizes[i]*sizeof(int));

@@ -118,7 +118,7 @@ void CpdSearchLeaks(char * msg) {
 void * (*CpdDebugGetAllocationTree)(int *) = NULL;
 void (*CpdDebug_pupAllocationPoint)(pup_er p, void *data) = NULL;
 void (*CpdDebug_deleteAllocationPoint)(void *ptr) = NULL;
-void * (*CpdDebug_MergeAllocationTree)(int *size, void *data, void **remoteData, int numRemote) = NULL;
+void * (*CpdDebug_MergeAllocationTree)(size_t *size, void *data, void **remoteData, int numRemote) = NULL;
 CpvDeclare(int, CpdDebugCallAllocationTree_Index);
 CpvStaticDeclare(CcsDelayedReply, allocationTreeDelayedReply);
 
@@ -169,7 +169,7 @@ static void CpdDebugCallAllocationTree(char *msg)
 void * (*CpdDebugGetMemStat)(void) = NULL;
 void (*CpdDebug_pupMemStat)(pup_er p, void *data) = NULL;
 void (*CpdDebug_deleteMemStat)(void *ptr) = NULL;
-void * (*CpdDebug_mergeMemStat)(int *size, void *data, void **remoteData, int numRemote) = NULL;
+void * (*CpdDebug_mergeMemStat)(size_t *size, void *data, void **remoteData, int numRemote) = NULL;
 CpvDeclare(int, CpdDebugCallMemStat_Index);
 CpvStaticDeclare(CcsDelayedReply, memStatDelayedReply);
 

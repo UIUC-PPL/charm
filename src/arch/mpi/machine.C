@@ -285,7 +285,7 @@ static void reportMsgHistogramInfo(void);
 #define CHARM_MAGIC_NUMBER		 126
 
 #if CMK_ERROR_CHECKING
-unsigned char computeCheckSum(unsigned char *data, int len);
+unsigned char computeCheckSum(unsigned char *data, size_t len);
 static int checksum_flag = 0;
 #define CMI_SET_CHECKSUM(msg, len)	\
 	if (checksum_flag)  {	\

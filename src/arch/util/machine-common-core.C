@@ -75,24 +75,24 @@ static int CmiNodesDim;
 double TraceTimerCommon(void);
 #endif
 
-static void handleOneBcastMsg(int size, char *msg);
+static void handleOneBcastMsg(size_t size, char *msg);
 static void processBcastQs(void);
 
 /* Utility functions for forwarding broadcast messages,
  * should not be used in machine-specific implementations
  * except in some special occasions.
  */
-static INLINE_KEYWORD void processProcBcastMsg(int size, char *msg);
-static INLINE_KEYWORD void processNodeBcastMsg(int size, char *msg);
-static void SendSpanningChildrenProc(int size, char *msg);
-static void SendHyperCubeProc(int size, char *msg);
+static INLINE_KEYWORD void processProcBcastMsg(size_t size, char *msg);
+static INLINE_KEYWORD void processNodeBcastMsg(size_t size, char *msg);
+static void SendSpanningChildrenProc(size_t size, char *msg);
+static void SendHyperCubeProc(size_t size, char *msg);
 #if CMK_NODE_QUEUE_AVAILABLE
-static void SendSpanningChildrenNode(int size, char *msg);
-static void SendHyperCubeNode(int size, char *msg);
+static void SendSpanningChildrenNode(size_t size, char *msg);
+static void SendHyperCubeNode(size_t size, char *msg);
 #endif
 
-static void SendSpanningChildren(int size, char *msg, int rankToAssign, int startNode);
-static void SendHyperCube(int size,  char *msg, int rankToAssign, int startNode);
+static void SendSpanningChildren(size_t size, char *msg, int rankToAssign, int startNode);
+static void SendHyperCube(size_t size,  char *msg, int rankToAssign, int startNode);
 
 #if USE_COMMON_SYNC_BCAST || USE_COMMON_ASYNC_BCAST
 #if !CMK_BROADCAST_SPANNING_TREE && !CMK_BROADCAST_HYPERCUBE
@@ -102,22 +102,22 @@ static void SendHyperCube(int size,  char *msg, int rankToAssign, int startNode)
 
 #include <assert.h>
 
-void CmiSyncBroadcastFn(int size, char *msg);
-CmiCommHandle CmiAsyncBroadcastFn(int size, char *msg);
-void CmiFreeBroadcastFn(int size, char *msg);
+void CmiSyncBroadcastFn(size_t size, char *msg);
+CmiCommHandle CmiAsyncBroadcastFn(size_t size, char *msg);
+void CmiFreeBroadcastFn(size_t size, char *msg);
 
-void CmiSyncBroadcastAllFn(int size, char *msg);
-CmiCommHandle CmiAsyncBroadcastAllFn(int size, char *msg);
-void CmiFreeBroadcastAllFn(int size, char *msg);
+void CmiSyncBroadcastAllFn(size_t size, char *msg);
+CmiCommHandle CmiAsyncBroadcastAllFn(size_t size, char *msg);
+void CmiFreeBroadcastAllFn(size_t size, char *msg);
 
 #if CMK_NODE_QUEUE_AVAILABLE
-void CmiSyncNodeBroadcastFn(int size, char *msg);
-CmiCommHandle CmiAsyncNodeeroadcastFn(int size, char *msg);
-void CmiFreeNodeBroadcastFn(int size, char *msg);
+void CmiSyncNodeBroadcastFn(size_t size, char *msg);
+CmiCommHandle CmiAsyncNodeeroadcastFn(size_t size, char *msg);
+void CmiFreeNodeBroadcastFn(size_t size, char *msg);
 
-void CmiSyncNodeBroadcastAllFn(int size, char *msg);
-CmiCommHandle CmiAsyncNodeBroadcastAllFn(int size, char *msg);
-void CmiFreeNodeBroadcastAllFn(int size, char *msg);
+void CmiSyncNodeBroadcastAllFn(size_t size, char *msg);
+CmiCommHandle CmiAsyncNodeBroadcastAllFn(size_t size, char *msg);
+void CmiFreeNodeBroadcastAllFn(size_t size, char *msg);
 #endif
 
 /************** Done with Broadcast related */
@@ -244,13 +244,13 @@ CMK_NORETURN void CmiAbort(const char *message, ...);
 static void PerrorExit(const char *msg);
 
 /* This function handles the msg received as which queue to push into */
-static void handleOneRecvedMsg(int size, char *msg);
+static void handleOneRecvedMsg(size_t size, char *msg);
 
 /* Utility functions for forwarding broadcast messages,
  * should not be used in machine-specific implementations
  * except in some special occasions.
  */
-static void SendToPeers(int size, char *msg);
+static void SendToPeers(size_t size, char *msg);
 
 
 void CmiPushPE(int rank, void *msg);
@@ -277,16 +277,16 @@ void CmiPushNode(void *msg);
 
 static void CmiSendSelf(char *msg);
 
-void CmiSyncSendFn(int destPE, int size, char *msg);
-CmiCommHandle CmiAsyncSendFn(int destPE, int size, char *msg);
-void CmiFreeSendFn(int destPE, int size, char *msg);
+void CmiSyncSendFn(int destPE, size_t size, char *msg);
+CmiCommHandle CmiAsyncSendFn(int destPE, size_t size, char *msg);
+void CmiFreeSendFn(int destPE, size_t size, char *msg);
 
 #if CMK_NODE_QUEUE_AVAILABLE
 static void CmiSendNodeSelf(char *msg);
 
-void CmiSyncNodeSendFn(int destNode, int size, char *msg);
-CmiCommHandle CmiAsyncNodeSendFn(int destNode, int size, char *msg);
-void CmiFreeNodeSendFn(int destNode, int size, char *msg);
+void CmiSyncNodeSendFn(int destNode, size_t size, char *msg);
+CmiCommHandle CmiAsyncNodeSendFn(int destNode, size_t size, char *msg);
+void CmiFreeNodeSendFn(int destNode, size_t size, char *msg);
 
 #endif
 
@@ -309,7 +309,7 @@ void *CmiGetNonLocal(void);
 void *CmiGetNonLocalNodeQ(void);
 #endif
 /* Utiltiy functions */
-static char *CopyMsg(char *msg, int len);
+static char *CopyMsg(char *msg, size_t len);
 
 /* ===== End of Common Function Declarations ===== */
 
@@ -421,7 +421,7 @@ static int CmiState_hasMessage(void) {
 }
 
 // Function declaration
-CmiCommHandle CmiInterSendNetworkFunc(int destPE, int partition, int size, char *msg, int mode);
+CmiCommHandle CmiInterSendNetworkFunc(int destPE, int partition, size_t size, char *msg, int mode);
 
 /* ===== End of Processor/Node State-related Stuff =====*/
 
@@ -519,7 +519,7 @@ void CmiPushNode(void *msg) {
 #endif
 
 /* This function handles the msg received as which queue to push into */
-static INLINE_KEYWORD void handleOneRecvedMsg(int size, char *msg) {
+static INLINE_KEYWORD void handleOneRecvedMsg(size_t size, char *msg) {
 
 #if CMK_SMP_TRACE_COMMTHREAD
     TRACE_COMM_CREATION(TraceTimerCommon(), msg);
@@ -556,7 +556,7 @@ static INLINE_KEYWORD void handleOneRecvedMsg(int size, char *msg) {
 }
 
 
-static void SendToPeers(int size, char *msg) {
+static void SendToPeers(size_t size, char *msg) {
   /* FIXME: now it's just a flat p2p send!! When node size is large,
   * it should also be sent in a tree
   */
@@ -597,7 +597,7 @@ static void CmiSendSelf(char *msg) {
 
 /* Functions regarding P2P send op */
 #if USE_COMMON_SYNC_P2P
-void CmiSyncSendFn(int destPE, int size, char *msg) {
+void CmiSyncSendFn(int destPE, size_t size, char *msg) {
     if (CMI_MSG_NOKEEP(msg)) {
         CmiReference(msg);
         CmiFreeSendFn(destPE, size, msg);
@@ -607,7 +607,7 @@ void CmiSyncSendFn(int destPE, int size, char *msg) {
     }
 }
 //inter-partition send
-void CmiInterSyncSendFn(int destPE, int partition, int size, char *msg) {
+void CmiInterSyncSendFn(int destPE, int partition, size_t size, char *msg) {
     if (CMI_MSG_NOKEEP(msg)) {
         CmiReference(msg);
         CmiInterFreeSendFn(destPE, partition, size, msg);
@@ -632,13 +632,13 @@ CpvExtern(int, _urgentSend);
 
 //I am changing this function to offload task to a generic function - the one
 //that handles sending to any partition
-INLINE_KEYWORD CmiCommHandle CmiSendNetworkFunc(int destPE, int size, char *msg, int mode) {
+INLINE_KEYWORD CmiCommHandle CmiSendNetworkFunc(int destPE, size_t size, char *msg, int mode) {
   // Set the message as a regular message (defined in lrts-common.h)
   CMI_CMA_MSGTYPE(msg) = CMK_REG_NO_CMA_MSG;
   return CmiInterSendNetworkFunc(destPE, CmiMyPartition(), size, msg, mode);
 }
 //the generic function that replaces the older one
-CmiCommHandle CmiInterSendNetworkFunc(int destPE, int partition, int size, char *msg, int mode)
+CmiCommHandle CmiInterSendNetworkFunc(int destPE, int partition, size_t size, char *msg, int mode)
 {
         int rank;
         int destLocalNode = CmiNodeOf(destPE); 
@@ -694,12 +694,12 @@ if (MSG_STATISTIC)
 
 //I am changing this function to offload task to a generic function - the one
 //that handles sending to any partition
-void CmiFreeSendFn(int destPE, int size, char *msg) {
+void CmiFreeSendFn(int destPE, size_t size, char *msg) {
     CmiInterFreeSendFn(destPE, CmiMyPartition(), size, msg);
 }
 //and the generic implementation - I may be in danger of making the frequent
 //case slower - two extra comparisons may happen
-void CmiInterFreeSendFn(int destPE, int partition, int size, char *msg) {
+void CmiInterFreeSendFn(int destPE, int partition, size_t size, char *msg) {
     CMI_SET_BROADCAST_ROOT(msg, 0);
 
     // Set the message as a regular message (defined in lrts-common.h)
@@ -737,7 +737,7 @@ void CmiInterFreeSendFn(int destPE, int partition, int size, char *msg) {
 
 #if USE_COMMON_ASYNC_P2P
 //not implementing it for partition
-CmiCommHandle CmiAsyncSendFn(int destPE, int size, char *msg) {
+CmiCommHandle CmiAsyncSendFn(int destPE, size_t size, char *msg) {
     int destNode = CmiNodeOf(destPE);
     if (destNode == CmiMyNode()) {
         CmiSyncSendFn(destPE,size,msg);
@@ -778,7 +778,7 @@ static void CmiSendNodeSelf(char *msg) {
 
 //I think this #if is incorrect - should be SYNC_P2P
 #if USE_COMMON_SYNC_P2P
-void CmiSyncNodeSendFn(int destNode, int size, char *msg) {
+void CmiSyncNodeSendFn(int destNode, size_t size, char *msg) {
     if (CMI_MSG_NOKEEP(msg)) {
         CmiReference(msg);
         CmiFreeNodeSendFn(destNode, size, msg);
@@ -788,7 +788,7 @@ void CmiSyncNodeSendFn(int destNode, int size, char *msg) {
     }
 }
 //inter-partition send
-void CmiInterSyncNodeSendFn(int destNode, int partition, int size, char *msg) {
+void CmiInterSyncNodeSendFn(int destNode, int partition, size_t size, char *msg) {
     if (CMI_MSG_NOKEEP(msg)) {
         CmiReference(msg);
         CmiInterFreeNodeSendFn(destNode, partition, size, msg);
@@ -799,11 +799,11 @@ void CmiInterSyncNodeSendFn(int destNode, int partition, int size, char *msg) {
 }
 
 //again, offloading the task to a generic function
-void CmiFreeNodeSendFn(int destNode, int size, char *msg) {
+void CmiFreeNodeSendFn(int destNode, size_t size, char *msg) {
   CmiInterFreeNodeSendFn(destNode, CmiMyPartition(), size, msg);
 }
 //and the inter-partition function
-void CmiInterFreeNodeSendFn(int destNode, int partition, int size, char *msg) {
+void CmiInterFreeNodeSendFn(int destNode, int partition, size_t size, char *msg) {
     CMI_DEST_RANK(msg) = DGRAM_NODEMESSAGE;
 #if CMI_QD
     CQdCreate(CpvAccess(cQdState), 1);
@@ -832,7 +832,7 @@ if (  MSG_STATISTIC)
 
 #if USE_COMMON_ASYNC_P2P
 //not implementing it for partition
-CmiCommHandle CmiAsyncNodeSendFn(int destNode, int size, char *msg) {
+CmiCommHandle CmiAsyncNodeSendFn(int destNode, size_t size, char *msg) {
     if (destNode == CmiMyNode()) {
         CmiSyncNodeSendFn(destNode, size, msg);
         return 0;
@@ -1934,7 +1934,7 @@ void CmiNotifyIdle(void) {
 }
 
 /* Utiltiy functions */
-static char *CopyMsg(char *msg, int len) {
+static char *CopyMsg(char *msg, size_t len) {
     char *copy = (char *)CmiAlloc(len);
 #if CMK_ERROR_CHECKING
     if (!copy) {

@@ -383,10 +383,10 @@ void sendRecvDoneMsgToPeers(envelope *env, CkArray *mgr);
 void initEMNcpyAckHandler(void);
 
 // Broadcast API support
-void CmiForwardProcBcastMsg(int size, char *msg); // for forwarding proc messages to my child nodes
-void CmiForwardNodeBcastMsg(int size, char *msg); // for forwarding node queue messages to my child nodes
+void CmiForwardProcBcastMsg(size_t size, char *msg); // for forwarding proc messages to my child nodes
+void CmiForwardNodeBcastMsg(size_t size, char *msg); // for forwarding node queue messages to my child nodes
 
-void CmiForwardMsgToPeers(int size, char *msg); // for forwarding messages to my peer PEs
+void CmiForwardMsgToPeers(size_t size, char *msg); // for forwarding messages to my peer PEs
 
 #if CMK_REG_REQUIRED
 void CmiInvokeRemoteDeregAckHandler(int pe, NcpyOperationInfo *info);

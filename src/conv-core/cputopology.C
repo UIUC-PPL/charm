@@ -274,7 +274,7 @@ static void cpuTopoRecvHandler(void *msg)
 }
 
 // reduction function
-static void * combineMessage(int *size, void *data, void **remote, int count) 
+static void * combineMessage(size_t *size, void *data, void **remote, int count)
 {
   int i, j;
   int nprocs = ((hostnameMsg *)data)->n;
@@ -301,7 +301,7 @@ static void * combineMessage(int *size, void *data, void **remote, int count)
 }
 
 // reduction function
-static void *emptyReduction(int *size, void *data, void **remote, int count)
+static void *emptyReduction(size_t *size, void *data, void **remote, int count)
 {
   if (CmiMyPe() != 0) {
     CmiLock(topoLock);

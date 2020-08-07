@@ -41,7 +41,7 @@ public:
 	void call(CkCallback &&c, CkMarshalledMessage &&msg) {
 		c.send(msg.getMessage());
 	}
-	void call(CkCallback &&c, int length, const char *data) {
+	void call(CkCallback &&c, size_t length, const char *data) {
 		if(c.requiresMsgConstruction())
 			c.send(CkDataMsg::buildNew(length,data));
 		else
@@ -302,7 +302,7 @@ static void CkCallbackSendExt(const CkCallback &cb, void *msg)
 }
 #endif
 
-void CkCallback::send(int length,const void *data) const
+void CkCallback::send(size_t length,const void *data) const
 {
 	if(requiresMsgConstruction())
 		send(CkDataMsg::buildNew(length,data));
@@ -429,7 +429,7 @@ void CkCallback::send(void *msg) const
 #endif
 	case replyCCS: { /* Send CkDataMsg as a CCS reply */
 		void *data=NULL;
-		int length=0;
+		size_t length=0;
 		if (msg) {
 			CkDataMsg *m=(CkDataMsg *)msg;
 			m->check();
@@ -595,7 +595,7 @@ void CcsRegisterHandler(const char *ccs_handlername,const CkCallback &cb) {
 enum {dataMsgTag=0x7ed2beef};
 #endif
 
-CkDataMsg *CkDataMsg::buildNew(int length,const void *data)
+CkDataMsg *CkDataMsg::buildNew(size_t length,const void *data)
 {
 	CkDataMsg *msg=new (&length,0) CkDataMsg;
 	msg->length=length;

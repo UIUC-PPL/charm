@@ -83,13 +83,13 @@ typedef struct _cma_src_buffer_info {
   int srcPE;
   pid_t srcPid;
   void *srcAddr;
-  int size;
+  size_t size;
 }CmaSrcBufferInfo_t;
 
 // Method invoked on receiving a CMK_CMA_MD_MSG
 // This method uses the buffer metadata to perform a CMA read. It also modifies *sizePtr & *msgPtr to
 // point to the buffer message
-void handleOneCmaMdMsg(int *sizePtr, char **msgPtr) {
+void handleOneCmaMdMsg(size_t *sizePtr, char **msgPtr) {
   struct iovec local, remote;
   char *destAddr;
 
@@ -131,7 +131,7 @@ void handleOneCmaMdMsg(int *sizePtr, char **msgPtr) {
 
 // Method invoked on receiving CMK_CMA_ACK_MSG
 // This method frees the buffer and the received buffer ack msg
-void handleOneCmaAckMsg(int size, void *msg) {
+void handleOneCmaAckMsg(size_t size, void *msg) {
 
   // Get buffer metadata
   CmaSrcBufferInfo_t *bufInfo = (CmaSrcBufferInfo_t *)((char *)msg + CmiMsgHeaderSizeBytes);
@@ -146,7 +146,7 @@ void handleOneCmaAckMsg(int size, void *msg) {
 // Method invoked to send the buffer via CMA
 // This method creates a buffer metadata msg from a buffer and modifies the *msgPtr and *sizePtr to point to
 // the buffer metadata msg.
-void CmiSendMessageCma(char **msgPtr, int *sizePtr) {
+void CmiSendMessageCma(char **msgPtr, size_t *sizePtr) {
 
   // Send buffer metadata instead of original msg
   // Buffer metadata msg consists of pid, addr, size for the other process to perform a read through CMA

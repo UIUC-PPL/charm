@@ -18,7 +18,7 @@ Initial version by Orion Sky Lawlor, olawlor@acm.org, 2/8/2002
 class CkCcsRequestMsg : public CMessage_CkCcsRequestMsg {
 public:
 	CcsDelayedReply reply; /*Object to send reply to*/
-	int length; //Number of bytes of request data.
+	size_t length; //Number of bytes of request data.
 	char *data; //Actual data sent along with request.
 };
 
@@ -27,18 +27,18 @@ public:
  */
 class CkDataMsg : public CMessage_CkDataMsg {
 public:
-	int length; //Number of bytes of data below.
+	size_t length; //Number of bytes of data below.
 	char *data; //Message data.
 #if CMK_ERROR_CHECKING
 	int checkTag; // For detecting message corruption
 #endif
 	
-	inline int getLength(void) const {return length;}
-        inline int getSize(void) const {return length;}
+	inline size_t getLength(void) const {return length;}
+        inline size_t getSize(void) const {return length;}
         inline void *getData(void) const {return data;}
 	
 	/// This is how you must create a CkDataMsg
-	static CkDataMsg *buildNew(int length,const void *data);
+	static CkDataMsg *buildNew(size_t length,const void *data);
 	
 	void check(void);
 };

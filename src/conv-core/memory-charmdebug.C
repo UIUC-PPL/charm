@@ -738,7 +738,7 @@ void MergeAllocationTreeSingle(AllocationPoint *node, AllocationPoint *remote, i
   }
 }
 
-void * MergeAllocationTree(int *size, void *data, void **remoteData, int numRemote) {
+void * MergeAllocationTree(size_t *size, void *data, void **remoteData, int numRemote) {
   int i;
   for (i=0; i<numRemote; ++i) {
     pup_er p = pup_new_fromMem(remoteData[i]);
@@ -801,7 +801,7 @@ void deleteMemStat(void *ptr) {
 }
 
 static int memStatReturnOnlyOne = 1;
-void * mergeMemStat(int *size, void *data, void **remoteData, int numRemote) {
+void * mergeMemStat(size_t *size, void *data, void **remoteData, int numRemote) {
   int i,j,k;
   if (memStatReturnOnlyOne) {
     MemStatSingle *l = &((MemStat*) data)->array[0];

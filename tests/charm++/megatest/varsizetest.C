@@ -13,11 +13,11 @@ void varsizetest_init(void)
 
 void varsizetest_moduleinit(void) {}
 
-void *varsizetest_Msg::alloc(int mnum, size_t size, int *sizes, int pbits, GroupDepNum groupDepNum)
+void *varsizetest_Msg::alloc(int mnum, size_t size, size_t *sizes, int pbits, GroupDepNum groupDepNum)
 {
   // CkPrintf("Msg::alloc called with size=%d, sizes[0]=%d, sizes[1]=%d\n",
   //         size, sizes[0], sizes[1]);
-  int stmp = sizes[0]*sizeof(int)+sizes[1]*sizeof(float);
+  size_t stmp = sizes[0]*sizeof(int)+sizes[1]*sizeof(float);
   varsizetest_Msg *m = (varsizetest_Msg *) CkAllocMsg(mnum, size+stmp, pbits, groupDepNum);
   m->isize = sizes[0];
   m->fsize = sizes[1];
@@ -43,7 +43,7 @@ varsizetest_Msg *varsizetest_Msg::unpack(void *buf)
 
 varsizetest_main::varsizetest_main(void)
 {
-  int sizes[2];
+  size_t sizes[2];
   sizes[0] = 100; sizes[1] = 300;
   varsizetest_Msg *m = new (sizes,0) varsizetest_Msg(nextseq++);
   m->myMain = thishandle;
@@ -94,7 +94,7 @@ varsizetest_test::varsizetest_test(varsizetest_Msg *m)
     return;
   }
   delete m;
-  int sizes[2];
+  size_t sizes[2];
   sizes[0] = 300;
   sizes[1] = 100;
   m = new (sizes,0) varsizetest_Msg(currentSeqnum);

@@ -153,11 +153,11 @@ void TransmitAckDatagram(OtherNode node)
  ***********************************************************************/
 void TransmitImplicitDgram(ImplicitDgram dg)
 {
-  char *data; DgramHeader *head; int len; DgramHeader temp;
+  char *data; DgramHeader *head; size_t len; DgramHeader temp;
   OtherNode dest;
   int retval;
   
-  MACHSTATE3(3,"  TransmitImplicitDgram (%d bytes) [seq %d to 'pe' %d]",
+  MACHSTATE3(3,"  TransmitImplicitDgram (%zu bytes) [seq %d to 'pe' %d]",
 	     dg->datalen,dg->seqno,dg->dest->nodestart)
   len = dg->datalen;
   data = dg->dataptr;
@@ -179,11 +179,11 @@ void TransmitImplicitDgram(ImplicitDgram dg)
 
 void TransmitImplicitDgram1(ImplicitDgram dg)
 {
-  char *data; DgramHeader *head; int len; DgramHeader temp;
+  char *data; DgramHeader *head; size_t len; DgramHeader temp;
   OtherNode dest;
   int retval;
 
-  MACHSTATE3(4,"  RETransmitImplicitDgram (%d bytes) [seq %d to 'pe' %d]",
+  MACHSTATE3(4,"  RETransmitImplicitDgram (%zu bytes) [seq %d to 'pe' %d]",
 	     dg->datalen,dg->seqno,dg->dest->nodestart)
   len = dg->datalen;
   data = dg->dataptr;
@@ -302,7 +302,7 @@ int TransmitDatagram(void)
  * datagrams. 
  ***********************************************************************/
 void EnqueueOutgoingDgram
-        (OutgoingMsg ogm, char *ptr, int len, OtherNode node, int rank, int broot)
+        (OutgoingMsg ogm, char *ptr, size_t len, OtherNode node, int rank, int broot)
 {
   int seqno, dst, src; ImplicitDgram dg;
   src = ogm->src;
@@ -339,7 +339,7 @@ void EnqueueOutgoingDgram
  ***********************************************************************/
 void DeliverViaNetwork(OutgoingMsg ogm, OtherNode node, int rank, unsigned int broot, int copy)
 {
-  int size; char *data;
+  size_t size; char *data;
   OtherNode myNode = nodes+CmiMyNodeGlobal();
 
   MACHSTATE2(3,"DeliverViaNetwork %d-byte message to pe %d",
@@ -378,7 +378,7 @@ void DeliverViaNetwork(OutgoingMsg ogm, OtherNode node, int rank, unsigned int b
 void AssembleDatagram(OtherNode node, ExplicitDgram dg)
 {
   int i;
-  unsigned int size; char *msg;
+  size_t size; char *msg;
   OtherNode myNode = nodes+CmiMyNodeGlobal();
   
   MACHSTATE3(2,"  AssembleDatagram [seq %d from 'pe' %d, packet len %d]",

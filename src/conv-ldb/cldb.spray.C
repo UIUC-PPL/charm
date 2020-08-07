@@ -105,7 +105,7 @@ void CldAverageHandler(struct loadmsg *msg)
 
 void CldEnqueueHandler(char *msg)
 {
-  int len, queueing, priobits; unsigned int *prioptr;
+  int queueing, priobits; size_t len; unsigned int *prioptr;
   CldInfoFn ifn; CldPackFn pfn;
   ifn = (CldInfoFn)CmiHandlerToFunction(CmiGetInfo(msg));
   ifn(msg, &pfn, &len, &queueing, &priobits, &prioptr);
@@ -116,7 +116,7 @@ void CldEnqueueHandler(char *msg)
 void CldHopHandler(char *msg)
 {
   peinfo *pinf = &(CpvAccess(peinf));
-  int len, queueing, priobits; unsigned int *prioptr;
+  int queueing, priobits; size_t len; unsigned int *prioptr;
   CldInfoFn ifn; CldPackFn pfn; int pe;
 
   if (pinf->rebalance) {
@@ -140,7 +140,7 @@ void CldHopHandler(char *msg)
 void CldEnqueueGroup(CmiGroup grp, void *msg, int infofn)
 {
   int npes, *pes;
-  int len, queueing, priobits,i; unsigned int *prioptr;
+  int queueing, priobits, i; size_t len; unsigned int *prioptr;
   CldInfoFn ifn = (CldInfoFn)CmiHandlerToFunction(infofn);
   peinfo *pinf = &(CpvAccess(peinf));
   CldPackFn pfn;
@@ -161,7 +161,8 @@ void CldEnqueueGroup(CmiGroup grp, void *msg, int infofn)
 
 void CldEnqueueWithinNode(void *msg, int infofn)
 {
-  int len, queueing, priobits;
+  size_t len;
+  int queueing, priobits;
   unsigned int *prioptr;
   CldPackFn pfn;
   CldInfoFn ifn = (CldInfoFn)CmiHandlerToFunction(infofn);
@@ -181,7 +182,7 @@ void CldEnqueueWithinNode(void *msg, int infofn)
 
 void CldEnqueueMulti(int npes, const int *pes, void *msg, int infofn)
 {
-  int len, queueing, priobits,i; unsigned int *prioptr;
+  int queueing, priobits, i; size_t len; unsigned int *prioptr;
   CldInfoFn ifn = (CldInfoFn)CmiHandlerToFunction(infofn);
   peinfo *pinf = &(CpvAccess(peinf));
   CldPackFn pfn;
@@ -201,7 +202,7 @@ void CldEnqueueMulti(int npes, const int *pes, void *msg, int infofn)
 
 void CldEnqueue(int pe, void *msg, int infofn)
 {
-  int len, queueing, priobits; unsigned int *prioptr;
+  int queueing, priobits; size_t len; unsigned int *prioptr;
   CldInfoFn ifn; CldPackFn pfn;
   peinfo *pinf = &(CpvAccess(peinf));
   ifn = (CldInfoFn)CmiHandlerToFunction(infofn);
@@ -227,7 +228,7 @@ void CldEnqueue(int pe, void *msg, int infofn)
 
 void CldNodeEnqueue(int node, void *msg, int infofn)
 {
-  int len, queueing, priobits; unsigned int *prioptr;
+  int queueing, priobits; size_t len; unsigned int *prioptr;
   CldInfoFn ifn; CldPackFn pfn;
   peinfo *pinf = &(CpvAccess(peinf));
   ifn = (CldInfoFn)CmiHandlerToFunction(infofn);

@@ -18,7 +18,7 @@ The message looks like this:
 
 messagestart>--------- PUP'd data ----------------
         |  PUP'd nx
-        |  PUP'd offset-to-xarr (from array start, int byte count)
+        |  PUP'd offset-to-xarr (from array start, size_t byte count)
         |  PUP'd length-of-xarr (in elements)
         |  PUP'd offset-to-yarr
         |  PUP'd length-of-yarr (in elements)
@@ -252,10 +252,10 @@ void ParamList::marshall(XStr& str, XStr& entry_str) {
     print(str, 0);
     str << "\n";
     // First pass: find sizes
-    str << "  int impl_off=0;\n";
+    str << "  size_t impl_off=0;\n";
     int hasArrays = orEach(&Parameter::isArray);
     if (hasArrays) {
-      str << "  int impl_arrstart=0;\n";
+      str << "  size_t impl_arrstart=0;\n";
       callEach(&Parameter::marshallRegArraySizes, str);
     }
 
@@ -302,7 +302,7 @@ void ParamList::marshall(XStr& str, XStr& entry_str) {
         str << "  int impl_num_root_node = CkMyNode();\n";
         callEach(&Parameter::marshallRdmaParameters, str, true);
         str << "#else\n";
-        if (!hasArrays) str << "  int impl_arrstart=0;\n";
+        if (!hasArrays) str << "  size_t impl_arrstart=0;\n";
         callEach(&Parameter::marshallRdmaParameters, str, false);
         str << "#endif\n";
       }
@@ -405,7 +405,7 @@ void Parameter::checkPointer(Type* dt) {
 }
 
 void Parameter::marshallArraySizes(XStr& str, Type* dt) {
-  str << "  int impl_off_" << name << ", impl_cnt_" << name << ";\n";
+  str << "  size_t impl_off_" << name << ", impl_cnt_" << name << ";\n";
   str << "  impl_off_" << name << "=impl_off=CK_ALIGN(impl_off,sizeof(" << dt << "));\n";
   str << "  impl_off+=(impl_cnt_" << name << "=sizeof(" << dt << ")*(" << arrLen
       << "));\n";
@@ -754,7 +754,7 @@ void Parameter::storePostedRdmaPtrs(XStr& str, bool genRdma, bool isSDAGGen, boo
 }
 
 void Parameter::beginUnmarshallArray(XStr& str) {
-  str << "  int impl_off_" << name << ", impl_cnt_" << name << ";\n";
+  str << "  size_t impl_off_" << name << ", impl_cnt_" << name << ";\n";
   str << "  implP|impl_off_" << name << ";\n";
   str << "  implP|impl_cnt_" << name << ";\n";
 

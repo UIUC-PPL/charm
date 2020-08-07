@@ -308,11 +308,11 @@ static void freeMaxBuf(char *buf) {
 
 #endif
 
-static void IntegrateMessageDatagram(char **msg, int len)
+static void IntegrateMessageDatagram(char **msg, size_t len)
 {
   char *newmsg;
   int rank, srcpe, seqno, magic, broot, i;
-  int size;
+  size_t size;
   
   if (len >= DGRAM_HEADER_SIZE) {
     DgramHeaderBreak(*msg, rank, srcpe, magic, seqno, broot);
@@ -376,14 +376,14 @@ static void IntegrateMessageDatagram(char **msg, int len)
 void ReceiveDatagram(int node)
 {
   static char *buf = NULL;
-  int size;
+  size_t size;
   DgramHeader *head, temp;
   int newmsg = 0;
 
   OtherNode nodeptr = &nodes[node];
 
   SOCKET fd = nodeptr->sock;
-  if (-1 == skt_recvN(fd, &size, sizeof(int)))
+  if (-1 == skt_recvN(fd, &size, sizeof(size_t)))
     KillEveryoneCode(4559318);
 
 #if FRAGMENTATION
@@ -445,11 +445,11 @@ static WSABUF iov[2];
 int TransmitImplicitDgram(ImplicitDgram dg)
 {
   ChMessageHeader msg;
-  char *data; DgramHeader *head; int len; DgramHeader temp;
+  char *data; DgramHeader *head; size_t len; DgramHeader temp;
   OtherNode dest;
   int retval;
   
-  MACHSTATE2(2,"  TransmitImplicitDgram (%d bytes) [%d]",dg->datalen,dg->seqno)
+  MACHSTATE2(2,"  TransmitImplicitDgram (%zu bytes) [%d]",dg->datalen,dg->seqno)
   len = dg->datalen+DGRAM_HEADER_SIZE;
   data = dg->dataptr;
   head = (DgramHeader *)(data - DGRAM_HEADER_SIZE);
@@ -511,7 +511,7 @@ int TransmitDatagram(int pe)
 }
 
 void EnqueueOutgoingDgram
-        (OutgoingMsg ogm, char *ptr, int len, OtherNode node, int rank, int broot)
+        (OutgoingMsg ogm, char *ptr, size_t len, OtherNode node, int rank, int broot)
 {
   int seqno, dst, src; ImplicitDgram dg;
   src = ogm->src;
@@ -541,7 +541,7 @@ void EnqueueOutgoingDgram
 /* ignore copy, because it is safe to reuse the msg buffer after send */
 void DeliverViaNetwork(OutgoingMsg ogm, OtherNode node, int rank, unsigned int broot, int copy)
 {
-  int size; char *data;
+  size_t size; char *data;
 
 /*CmiPrintf("DeliverViaNetwork to %d\n", node->nodestart);*/
 /*CmiPrintf("send time: %fus\n", (CmiWallTimer()-t)*1.0e6); */

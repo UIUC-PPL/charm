@@ -472,9 +472,9 @@ void skt_setSockBuf(SOCKET skt, int bufsize)
 	skt_abort(-1, 93496, "Error on RCVBUF sockopt for datagram socket.");
 }
 
-int skt_recvN(SOCKET hSocket,void *buff,int nBytes)
+int skt_recvN(SOCKET hSocket,void *buff,size_t nBytes)
 {
-  int nLeft,nRead;
+  size_t nLeft,nRead;
   char *pBuff=(char *)buff;
 
   nLeft = nBytes;
@@ -500,9 +500,9 @@ int skt_recvN(SOCKET hSocket,void *buff,int nBytes)
   return 0;
 }
 
-int skt_sendN(SOCKET hSocket,const void *buff,int nBytes)
+int skt_sendN(SOCKET hSocket,const void *buff,size_t nBytes)
 {
-  int nLeft,nWritten;
+  size_t nLeft,nWritten;
   const char *pBuff=(const char *)buff;
   
   nLeft = nBytes;
@@ -531,9 +531,10 @@ int skt_sendN(SOCKET hSocket,const void *buff,int nBytes)
 */
 #define skt_sendV_max (16*1024)
 
-int skt_sendV(SOCKET fd,int nBuffers,const void **bufs,int *lens)
+int skt_sendV(SOCKET fd,int nBuffers,const void **bufs,size_t *lens)
 {
-	int b,len=0;
+	size_t len = 0;
+	int b;
 	for (b=0;b<nBuffers;b++) len+=lens[b];
 	if (len<=skt_sendV_max) { /*Short message: Copy and do one big send*/
 		char *buf=(char *)CmiTmpAlloc(skt_sendV_max);
@@ -557,26 +558,26 @@ int skt_sendV(SOCKET fd,int nBuffers,const void **bufs,int *lens)
 }
 
 #if !defined(_WIN32)
-int skt_sendmsg(SOCKET hSocket, struct msghdr *mh, int num_bufs, int nBytes)
+int skt_sendmsg(SOCKET hSocket, struct msghdr *mh, int num_bufs, size_t nBytes)
 {
   while (nBytes > 0) {
     skt_ignore_SIGPIPE = 1;
-    int bytes_sent = sendmsg(hSocket, mh, 0);
+    size_t bytes_sent = sendmsg(hSocket, mh, 0);
     skt_ignore_SIGPIPE = 0;
     if (bytes_sent <= 0) {
       return skt_abort(hSocket, 93700+hSocket, "Error on socket send!");
     } else if (bytes_sent < nBytes) {
       // this should happen very rarely
-      int offset = 0;
+      size_t offset = 0;
       int i;
       for (i=0; i < num_bufs; i++) {
-        int l = mh->msg_iov[i].iov_len;
+        size_t l = mh->msg_iov[i].iov_len;
         if ((offset + l) <= bytes_sent) {
           mh->msg_iov[i].iov_len = 0; // all bytes from this buffer have been sent
           offset += l;
         } else {
           // bytes from this buffer have been partially sent
-          int buf_transmitted = (bytes_sent - offset);
+          size_t buf_transmitted = (bytes_sent - offset);
           mh->msg_iov[i].iov_len  -= buf_transmitted;
           mh->msg_iov[i].iov_base = (char*)mh->msg_iov[i].iov_base + buf_transmitted;
           break;
@@ -588,7 +589,7 @@ int skt_sendmsg(SOCKET hSocket, struct msghdr *mh, int num_bufs, int nBytes)
   return 0;
 }
 #else
-int skt_sendmsg(SOCKET hSocket, WSABUF *buffers, int num_bufs, int nBytes)
+int skt_sendmsg(SOCKET hSocket, WSABUF *buffers, int num_bufs, size_t nBytes)
 {
   DWORD bytes_sent = 0;
   int rc;
@@ -705,7 +706,7 @@ void ChMessage_new(const char *type,int len,ChMessage *dst)
 }
 int ChMessage_send(SOCKET fd,const ChMessage *src)
 {
-  const void *bufs[2]; int lens[2];
+  const void *bufs[2]; size_t lens[2];
   bufs[0]=&src->header; lens[0]=sizeof(src->header);
   bufs[1]=src->data; lens[1]=src->len;
   return skt_sendV(fd,2,bufs,lens);

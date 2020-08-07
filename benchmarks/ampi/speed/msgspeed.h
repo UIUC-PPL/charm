@@ -28,6 +28,9 @@
 #ifndef __CHARM_MSG_SPEED_H
 #define __CHARM_MSG_SPEED_H
 
+/* for size_t */
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,14 +42,14 @@ extern "C" {
     Send len bytes of data to dest.
     Once the data is sent, you must call msg_send_complete.
     */
-  typedef void (*msg_send_fn)(void *data,int len, int dest,msg_comm *comm);
+  typedef void (*msg_send_fn)(void *data,size_t len, int dest,msg_comm *comm);
 
   /**
     This message was actually sent.  This call can
     be made from a msg_send_fn (for a blocking send)
     or from outside (for a non-blocking send).
     */
-  void msg_send_complete(msg_comm *comm,void *data,int len);
+  void msg_send_complete(msg_comm *comm,void *data,size_t len);
 
 
   /**
@@ -55,7 +58,7 @@ Once the data arrives, you must call msg_recv_complete.
 You only own the data pointer from this call until
 you make the call to msg_recv_complete.
 */
-  typedef void (*msg_recv_fn)(void *data,int len, int src,msg_comm *comm);
+  typedef void (*msg_recv_fn)(void *data,size_t len, int src,msg_comm *comm);
 
   /**
     This message just arrived.  This call can
@@ -67,7 +70,7 @@ you make the call to msg_recv_complete.
     to msg_recv, and this function does not transfer
     ownership of the data pointer.
     */
-  void msg_recv_complete(msg_comm *comm,void *data,int len);
+  void msg_recv_complete(msg_comm *comm,void *data,size_t len);
 
 
   /**

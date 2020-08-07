@@ -195,7 +195,7 @@ public:
 	// and contains the data from one contribution.
 	class setElement {
 	public:
-	        int dataSize;//The allocated length of the `data' array, in bytes
+	        size_t dataSize;//The allocated length of the `data' array, in bytes
 	        char data[1];//The beginning of the array of data
 		//Utility routine: get the next setElement,
 		// or return NULL if there are none.
@@ -367,12 +367,12 @@ public:
 //Publically-accessible fields:
 	//"Constructor"-- builds and returns a new CkReductionMsg.
 	//  the "srcData" array you specify will be copied into this object (unless NULL).
-	static CkReductionMsg *buildNew(int NdataSize,const void *srcData,
+	static CkReductionMsg *buildNew(size_t NdataSize,const void *srcData,
 		CkReduction::reducerType reducer=CkReduction::invalid,
                 CkReductionMsg *buf = NULL);
 
-	inline int getLength() const {return dataSize;}
-	inline int getSize() const {return dataSize;}
+	inline size_t getLength() const {return dataSize;}
+	inline size_t getSize() const {return dataSize;}
 	inline void *getData() {return data;}
 	inline const void *getData() const {return data;}
 
@@ -400,7 +400,7 @@ public:
 
 //Implementation-only fields (don't access these directly!)
 	//Msg runtime support
-	static void *alloc(int msgnum, size_t size, int *reqSize, int priobits, GroupDepNum groupDepNum=GroupDepNum{});
+	static void *alloc(int msgnum, size_t size, size_t *reqSize, int priobits, GroupDepNum groupDepNum=GroupDepNum{});
 	static void *pack(CkReductionMsg *);
 	static CkReductionMsg *unpack(void *in);
 
@@ -411,7 +411,7 @@ private:
 	CkReductionMsg() {}
 
 private:
-	int dataSize;//Length of array below, in bytes
+	size_t dataSize; //Length of data array, in bytes
 	int sourceFlag;/*Flag:
 		0 indicates this is a placeholder message (meaning: nothing to report)
 		-1 indicates this is a single (non-reduced) contribution.
@@ -439,9 +439,9 @@ private:
 
 
 #define CK_REDUCTION_CONTRIBUTE_METHODS_DECL \
-  void contribute(int dataSize,const void *data,CkReduction::reducerType type, \
+  void contribute(size_t dataSize,const void *data,CkReduction::reducerType type, \
 	CMK_REFNUM_TYPE userFlag=(CMK_REFNUM_TYPE)-1); \
-  void contribute(int dataSize,const void *data,CkReduction::reducerType type, \
+  void contribute(size_t dataSize,const void *data,CkReduction::reducerType type, \
 	const CkCallback &cb,CMK_REFNUM_TYPE userFlag=(CMK_REFNUM_TYPE)-1); \
   template <typename T> \
   void contribute(const std::vector<T> &data,CkReduction::reducerType type,            \
@@ -797,9 +797,9 @@ public:
 //Define methods used to contribute to the given reduction type.
 //  Data is copied, not deleted.
 /*#define CK_REDUCTION_CONTRIBUTE_METHODS_DECL \
-  void contribute(int dataSize,const void *data,CkReduction::reducerType type, \
+  void contribute(size_t dataSize,const void *data,CkReduction::reducerType type, \
 	CMK_REFNUM_TYPE userFlag=-1); \
-  void contribute(int dataSize,const void *data,CkReduction::reducerType type, \
+  void contribute(size_t dataSize,const void *data,CkReduction::reducerType type, \
 	const CkCallback &cb,CMK_REFNUM_TYPE userFlag=-1); \
   void contribute(CkReductionMsg *msg);\*/
 
@@ -807,7 +807,7 @@ public:
     CkIndex_##me::redn_wrapper_##method(NULL)
 
 #define CK_REDUCTION_CONTRIBUTE_METHODS_DEF(me,myRednMgr,myRednInfo,migratable) \
-void me::contribute(int dataSize,const void *data,CkReduction::reducerType type,\
+void me::contribute(size_t dataSize,const void *data,CkReduction::reducerType type,\
 	CMK_REFNUM_TYPE userFlag)\
 {\
 	CkReductionMsg *msg=CkReductionMsg::buildNew(dataSize,data,type);\
@@ -815,7 +815,7 @@ void me::contribute(int dataSize,const void *data,CkReduction::reducerType type,
 	msg->setMigratableContributor(migratable);\
 	myRednMgr->contribute(&myRednInfo,msg);\
 }\
-void me::contribute(int dataSize,const void *data,CkReduction::reducerType type,\
+void me::contribute(size_t dataSize,const void *data,CkReduction::reducerType type,\
 	const CkCallback &cb,CMK_REFNUM_TYPE userFlag)\
 {\
 	CkReductionMsg *msg=CkReductionMsg::buildNew(dataSize,data,type);\
@@ -905,7 +905,7 @@ public:
 	}
 	// TODO: check for same reduction
 	CkCallback cb;	
-	int size;
+	size_t size;
 	char* data;
 	int fragsRecieved;
 	// CkMsgQ<CkReductionMsg> allred_msgs;

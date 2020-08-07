@@ -1796,7 +1796,7 @@ static void req_ccs_connect(void)
     ChMessageHeader_new("req_fw", sizeof(h.hdr) + reqBytes, &h.ch);
 
     const void *bufs[3];
-    int lens[3];
+    size_t lens[3];
     bufs[0] = &h;
     lens[0] = sizeof(h);
     bufs[1] = reqData;

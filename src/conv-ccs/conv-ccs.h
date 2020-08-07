@@ -64,7 +64,7 @@ void CcsRegisterHandlerFn(const char *ccs_handlername, CcsHandlerFn fn, void *us
  */
 void CcsSetMergeFn(const char *name, CmiReduceMergeFn newMerge);
 /* A few standard functions for merging CCS messages */
-#define SIMPLE_REDUCTION(name) void * CcsMerge_##name(int *size,void *local,void **remote,int n)
+#define SIMPLE_REDUCTION(name) void * CcsMerge_##name(size_t *size,void *local,void **remote,int n)
 #define SIMPLE_POLYMORPH_REDUCTION(nameBase) \
   SIMPLE_REDUCTION(nameBase##_int); \
   SIMPLE_REDUCTION(nameBase##_float); \

@@ -32,7 +32,7 @@ void CkFreeSysMsg(void *m)
   CkpvAccess(_msgPool)->put(m);
 }
 
-void* CkAllocMsg(int msgIdx, int msgBytes, int prioBits, GroupDepNum groupDepNum)
+void* CkAllocMsg(int msgIdx, size_t msgBytes, int prioBits, GroupDepNum groupDepNum)
 {
   envelope* env = _allocEnv(ForChareMsg, msgBytes, prioBits, groupDepNum);
   setMemoryTypeMessage(env);
@@ -43,7 +43,7 @@ void* CkAllocMsg(int msgIdx, int msgBytes, int prioBits, GroupDepNum groupDepNum
   return EnvToUsr(env);
 }
 
-void* CkAllocBuffer(void *msg, int bufsize)
+void* CkAllocBuffer(void *msg, size_t bufsize)
 {
   bufsize = CkMsgAlignLength(bufsize);
   envelope *env = UsrToEnv(msg);
@@ -51,7 +51,7 @@ void* CkAllocBuffer(void *msg, int bufsize)
                       env->getPriobits(),
                       GroupDepNum{(int)env->getGroupDepNum()});
   
-  int size = packbuf->getTotalsize();
+  size_t size = packbuf->getTotalsize();
   CmiMemcpy(packbuf, env, sizeof(envelope));
   packbuf->setTotalsize(size);
   packbuf->setPacked(!env->isPacked());
@@ -77,7 +77,7 @@ void* CkCopyMsg(void **pMsg)
     srcMsg = _msgTable[msgidx]->pack(srcMsg);
     UsrToEnv(srcMsg)->setPacked(1);
   }
-  int size = UsrToEnv(srcMsg)->getTotalsize();
+  size_t size = UsrToEnv(srcMsg)->getTotalsize();
   envelope *newenv = (envelope *) CmiAlloc(size);
   CmiMemcpy(newenv, UsrToEnv(srcMsg), size);
   //memcpy(newenv, UsrToEnv(srcMsg), size);
@@ -115,7 +115,7 @@ void* CkPriorityPtr(void *msg)
   return UsrToEnv(msg)->getPrioPtr();
 }
 
-CkMarshallMsg *CkAllocateMarshallMsgNoninline(int size,const CkEntryOptions *opts)
+CkMarshallMsg *CkAllocateMarshallMsgNoninline(size_t size,const CkEntryOptions *opts)
 {
 	//Allocate the message
 	CkMarshallMsg *m=new (size,opts->getPriorityBits(),GroupDepNum{(int)opts->getGroupDepNum()}) CkMarshallMsg;

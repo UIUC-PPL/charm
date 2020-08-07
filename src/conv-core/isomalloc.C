@@ -662,7 +662,7 @@ static void CmiAddressSpaceRegionPup(pup_er cpup, void * data)
   p | region->e;
 }
 
-static void * CmiAddressSpaceRegionMerge(int * size, void * data, void ** contributions, int count)
+static void * CmiAddressSpaceRegionMerge(size_t * size, void * data, void ** contributions, int count)
 {
   auto local = (CmiAddressSpaceRegion *)data;
 

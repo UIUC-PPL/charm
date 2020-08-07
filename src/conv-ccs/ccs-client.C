@@ -216,7 +216,7 @@ int CcsNodeSize(CcsServer *svr,int node)
 }
 
 int CcsSendRequestGeneric(CcsServer *svr, const char *hdlrID, int pe, int *pes, int size, const void *msg, int timeout) {
-  const void *bufs[4]; int lens[4]; int nBuffers=0;
+  const void *bufs[4]; size_t lens[4]; int nBuffers=0;
   CcsMessageHeader hdr;/*CCS request header*/
     struct { /*CCS Authentication header*/
       unsigned char type[4];

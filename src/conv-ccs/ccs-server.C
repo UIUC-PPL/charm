@@ -70,7 +70,7 @@ static void CcsServer_writeReply(SOCKET fd,
 			 CcsSecAttr *attr,
 			 int replyLen,char *reply)
 {
-  const void *bufs[3]; int lens[3]; int nBuffers=0;
+  const void *bufs[3]; size_t lens[3]; int nBuffers=0;
   struct { /*Authentication header*/
     SHA1_hash_t hash;
   } aheader;

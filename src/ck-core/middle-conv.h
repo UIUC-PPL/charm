@@ -56,11 +56,11 @@ namespace Converse {
 static inline int CkMyPe() { return CmiMyPe(); }
 static inline int CkNumPes() { return CmiNumPes(); }
 
-static inline void CmiSyncSend(int x, int y, char *z) 
+static inline void CmiSyncSend(int x, size_t y, char *z)
 {
   if (ConverseDeliver(x)) CmiSyncSendFn(x, y, z);
 }
-static inline void CmiSyncSendAndFree(int x, int y, char *z)
+static inline void CmiSyncSendAndFree(int x, size_t y, char *z)
 {
   if (ConverseDeliver(x)) CmiFreeSendFn(x, y, z);
 }

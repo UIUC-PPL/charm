@@ -601,7 +601,8 @@ LBVectorMigrateMsg* HybridBaseLB::VectorStrategy(LDStats* stats)
 #if CMK_LBDB_ON
   LBVectorMigrateMsg* msg;
   if (statsStrategy == SHRINK_NULL) {
-    msg = new(0,0) LBVectorMigrateMsg;
+    //msg = new(0,0) LBVectorMigrateMsg;
+    msg = new LBVectorMigrateMsg;
     msg->n_moves = 0;
     msg->level = currentLevel;
   }

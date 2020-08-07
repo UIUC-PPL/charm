@@ -96,7 +96,7 @@ void CmiIssueRget(NcpyOperationInfo *ncpyOpInfo) {
 void CmiIssueRput(NcpyOperationInfo *ncpyOpInfo) {
 
   int ncpyOpInfoSize = ncpyOpInfo->ncpyOpInfoSize;
-  int size = ncpyOpInfo->srcSize;
+  size_t size = ncpyOpInfo->srcSize;
   int destPe = ncpyOpInfo->destPe;
 
   // Send a ConverseRdmaMsg to the other PE sending the array

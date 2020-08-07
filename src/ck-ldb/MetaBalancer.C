@@ -39,7 +39,7 @@ CkReductionMsg* lbDataCollection(int nMsg, CkReductionMsg** msgs) {
   for (int i = 1; i < nMsg; i++) {
     CkAssert(msgs[i]->getSize() == STATS_COUNT*sizeof(double));
     if (msgs[i]->getSize() != STATS_COUNT*sizeof(double)) {
-      CkPrintf("Error!!! Reduction not correct. Msg size is %d\n",
+      CkPrintf("Error!!! Reduction not correct. Msg size is %zu\n",
           msgs[i]->getSize());
       CkAbort("Incorrect Reduction size in MetaBalancer\n");
     }

@@ -19,12 +19,12 @@ extern "C" {
 extern void * (*CpdDebugGetAllocationTree)(int*);
 extern void (*CpdDebug_pupAllocationPoint)(pup_er p, void *data);
 extern void (*CpdDebug_deleteAllocationPoint)(void *ptr);
-extern void * (*CpdDebug_MergeAllocationTree)(int *size, void *data, void **remoteData, int numRemote);
+extern void * (*CpdDebug_MergeAllocationTree)(size_t *size, void *data, void **remoteData, int numRemote);
 
 extern void * (*CpdDebugGetMemStat)(void);
 extern void (*CpdDebug_pupMemStat)(pup_er p, void *data);
 extern void (*CpdDebug_deleteMemStat)(void *ptr);
-extern void * (*CpdDebug_mergeMemStat)(int *size, void *data, void **remoteData, int numRemote);
+extern void * (*CpdDebug_mergeMemStat)(size_t *size, void *data, void **remoteData, int numRemote);
 
 extern int cmiArgDebugFlag; // Value is 0, unless reset in ConverseCommonInit
 extern char ** memoryBackup;

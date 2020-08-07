@@ -5,9 +5,9 @@
 #define CONVERSE_MACHINE_BROADCAST_C_
 #include "spanningTree.h"
 
-CmiCommHandle CmiSendNetworkFunc(int destPE, int size, char *msg, int mode);
+CmiCommHandle CmiSendNetworkFunc(int destPE, size_t size, char *msg, int mode);
 
-static void handleOneBcastMsg(int size, char *msg) {
+static void handleOneBcastMsg(size_t size, char *msg) {
     CmiAssert(CMI_BROADCAST_ROOT(msg)!=0);
 #if CMK_OFFLOAD_BCAST_PROCESS
     if (CMI_BROADCAST_ROOT(msg)>0) {
@@ -51,7 +51,7 @@ static void processBcastQs(void) {
 }
 
 // Method to forward the received proc message to my child nodes
-static INLINE_KEYWORD void forwardProcBcastMsg(int size, char *msg) {
+static INLINE_KEYWORD void forwardProcBcastMsg(size_t size, char *msg) {
 #if CMK_BROADCAST_SPANNING_TREE
   SendSpanningChildrenProc(size, msg);
 #elif CMK_BROADCAST_HYPERCUBE
@@ -59,7 +59,7 @@ static INLINE_KEYWORD void forwardProcBcastMsg(int size, char *msg) {
 #endif
 }
 
-static INLINE_KEYWORD void processProcBcastMsg(int size, char *msg) {
+static INLINE_KEYWORD void processProcBcastMsg(size_t size, char *msg) {
     /* Since this function is only called on intermediate nodes,
      * the rank of this msg should be 0.
      */
@@ -79,7 +79,7 @@ static INLINE_KEYWORD void processProcBcastMsg(int size, char *msg) {
 
 #if CMK_NODE_QUEUE_AVAILABLE
 // Method to forward the received node message to my child nodes
-static INLINE_KEYWORD void forwardNodeBcastMsg(int size, char *msg) {
+static INLINE_KEYWORD void forwardNodeBcastMsg(size_t size, char *msg) {
 #if CMK_BROADCAST_SPANNING_TREE
   SendSpanningChildrenNode(size, msg);
 #elif CMK_BROADCAST_HYPERCUBE
@@ -88,11 +88,11 @@ static INLINE_KEYWORD void forwardNodeBcastMsg(int size, char *msg) {
 }
 
 // API to forward node bcast msg
-void CmiForwardNodeBcastMsg(int size, char *msg) {
+void CmiForwardNodeBcastMsg(size_t size, char *msg) {
   forwardNodeBcastMsg(size, msg);
 }
 
-static INLINE_KEYWORD void processNodeBcastMsg(int size, char *msg) {
+static INLINE_KEYWORD void processNodeBcastMsg(size_t size, char *msg) {
     // Forward regular messages, do not forward ncpy bcast messages as those messages
     // are forwarded separately after the completion of the payload transfer
 #if CMK_ONESIDED_IMPL
@@ -112,18 +112,18 @@ static INLINE_KEYWORD void processNodeBcastMsg(int size, char *msg) {
 #endif
 
 // API to forward proc bcast msg
-void CmiForwardProcBcastMsg(int size, char *msg) {
+void CmiForwardProcBcastMsg(size_t size, char *msg) {
   forwardProcBcastMsg(size, msg);
 }
 
 #if CMK_SMP
 // API to forward message to peer PEs
-void CmiForwardMsgToPeers(int size, char *msg) {
+void CmiForwardMsgToPeers(size_t size, char *msg) {
   SendToPeers(size, msg);
 }
 #endif
 
-static void SendSpanningChildren(int size, char *msg, int rankToAssign, int startNode) {
+static void SendSpanningChildren(size_t size, char *msg, int rankToAssign, int startNode) {
 #if CMK_BROADCAST_SPANNING_TREE
     int i, oldRank;
     char *newmsg;
@@ -166,7 +166,7 @@ static void SendSpanningChildren(int size, char *msg, int rankToAssign, int star
 #endif
 }
 
-static void SendHyperCube(int size,  char *msg, int rankToAssign, int startNode) {
+static void SendHyperCube(size_t size,  char *msg, int rankToAssign, int startNode) {
 #if CMK_BROADCAST_HYPERCUBE
     int i, cnt, tmp, relDist, oldRank;
     const int dims=CmiNodesDim;
@@ -210,7 +210,7 @@ static void SendHyperCube(int size,  char *msg, int rankToAssign, int startNode)
 #endif
 }
 
-static void SendSpanningChildrenProc(int size, char *msg) {
+static void SendSpanningChildrenProc(size_t size, char *msg) {
     int startnode = CMI_BROADCAST_ROOT(msg)-1;
     SendSpanningChildren(size, msg, 0, startnode);
 #if CMK_SMP
@@ -225,7 +225,7 @@ static void SendSpanningChildrenProc(int size, char *msg) {
 }
 
 /* send msg along the hypercube in broadcast. (Sameer) */
-static void SendHyperCubeProc(int size, char *msg) {
+static void SendHyperCubeProc(size_t size, char *msg) {
     int startpe = CMI_BROADCAST_ROOT(msg)-1;
     int startnode = CmiNodeOf(startpe);
 #if CMK_SMP
@@ -245,11 +245,11 @@ static void SendHyperCubeProc(int size, char *msg) {
 }
 
 #if CMK_NODE_QUEUE_AVAILABLE
-static void SendSpanningChildrenNode(int size, char *msg) {
+static void SendSpanningChildrenNode(size_t size, char *msg) {
     int startnode = -CMI_BROADCAST_ROOT(msg)-1;
     SendSpanningChildren(size, msg, DGRAM_NODEMESSAGE, startnode);
 }
-static void SendHyperCubeNode(int size, char *msg) {
+static void SendHyperCubeNode(size_t size, char *msg) {
     int startnode = -CMI_BROADCAST_ROOT(msg)-1;
     SendHyperCube(size, msg, DGRAM_NODEMESSAGE, startnode);
 }
@@ -257,7 +257,7 @@ static void SendHyperCubeNode(int size, char *msg) {
 
 #if USE_COMMON_SYNC_BCAST
 /* Functions regarding broadcat op that sends to every one else except me */
-void CmiSyncBroadcastFn1(int size, char *msg) {
+void CmiSyncBroadcastFn1(size_t size, char *msg) {
     int i, mype;
 
 #if CMI_QD
@@ -293,12 +293,12 @@ void CmiSyncBroadcastFn1(int size, char *msg) {
     /*CmiPrintf("In  SyncBroadcast broadcast\n");*/
 }
 
-void CmiSyncBroadcastFn(int size, char *msg) {
+void CmiSyncBroadcastFn(size_t size, char *msg) {
     char *newmsg = msg;
     CmiSyncBroadcastFn1(size, newmsg);
 }
 
-void CmiFreeBroadcastFn(int size, char *msg) {
+void CmiFreeBroadcastFn(size_t size, char *msg) {
     CmiSyncBroadcastFn1(size,msg);
     CmiFree(msg);
 }
@@ -308,7 +308,7 @@ void CmiFreeBroadcastFn(int size, char *msg) {
 
 #if USE_COMMON_ASYNC_BCAST
 /* FIXME: should use spanning or hypercube, but luckily async is never used */
-CmiCommHandle CmiAsyncBroadcastFn(int size, char *msg) {
+CmiCommHandle CmiAsyncBroadcastFn(size_t size, char *msg) {
     /*CmiPrintf("In  AsyncBroadcast broadcast\n");*/
     CmiAbort("CmiAsyncBroadcastFn should never be called");
     return 0;
@@ -316,25 +316,25 @@ CmiCommHandle CmiAsyncBroadcastFn(int size, char *msg) {
 #endif
 
 /* Functions regarding broadcat op that sends to every one */
-void CmiSyncBroadcastAllFn(int size, char *msg) {
+void CmiSyncBroadcastAllFn(size_t size, char *msg) {
     char *newmsg = msg;
     CmiSyncSendFn(CmiMyPe(), size, newmsg) ;
     CmiSyncBroadcastFn1(size, newmsg);
 }
 
-void CmiFreeBroadcastAllFn(int size, char *msg) {
+void CmiFreeBroadcastAllFn(size_t size, char *msg) {
     CmiSyncBroadcastFn1(size, msg);
     CmiSendSelf(msg);
 }
 
-CmiCommHandle CmiAsyncBroadcastAllFn(int size, char *msg) {
+CmiCommHandle CmiAsyncBroadcastAllFn(size_t size, char *msg) {
     CmiSendSelf(CopyMsg(msg, size));
     return CmiAsyncBroadcastFn(size, msg);
 }
 
 #if CMK_NODE_QUEUE_AVAILABLE
 #if USE_COMMON_SYNC_BCAST
-void CmiSyncNodeBroadcastFn(int size, char *msg) {
+void CmiSyncNodeBroadcastFn(size_t size, char *msg) {
     int mynode = CmiMyNode();
     int i;
 #if CMI_QD
@@ -354,30 +354,30 @@ void CmiSyncNodeBroadcastFn(int size, char *msg) {
 #endif
 }
 
-void CmiFreeNodeBroadcastFn(int size, char *msg) {
+void CmiFreeNodeBroadcastFn(size_t size, char *msg) {
     CmiSyncNodeBroadcastFn(size, msg);
     CmiFree(msg);
 }
 #endif
 
 #if USE_COMMON_ASYNC_BCAST
-CmiCommHandle CmiAsyncNodeBroadcastFn(int size, char *msg) {
+CmiCommHandle CmiAsyncNodeBroadcastFn(size_t size, char *msg) {
     CmiSyncNodeBroadcastFn(size, msg);
     return 0;
 }
 #endif
 
-void CmiSyncNodeBroadcastAllFn(int size, char *msg) {
+void CmiSyncNodeBroadcastAllFn(size_t size, char *msg) {
     CmiSyncNodeSendFn(CmiMyNode(), size, msg);
     CmiSyncNodeBroadcastFn(size, msg);
 }
 
-CmiCommHandle CmiAsyncNodeBroadcastAllFn(int size, char *msg) {
+CmiCommHandle CmiAsyncNodeBroadcastAllFn(size_t size, char *msg) {
     CmiSendNodeSelf(CopyMsg(msg, size));
     return CmiAsyncNodeBroadcastFn(size, msg);
 }
 
-void CmiFreeNodeBroadcastAllFn(int size, char *msg) {
+void CmiFreeNodeBroadcastAllFn(size_t size, char *msg) {
     CmiSyncNodeBroadcastFn(size, msg);
     /* Since it's a node-level msg, the msg could be executed on any other
      * procs on the same node. This means, the push of this msg to the
@@ -390,7 +390,7 @@ void CmiFreeNodeBroadcastAllFn(int size, char *msg) {
 }
 #endif
 
-void CmiWithinNodeBroadcastFn(int size, char* msg) {
+void CmiWithinNodeBroadcastFn(size_t size, char* msg) {
   CMI_DEST_RANK(msg) = CmiMyRank();
 #if CMK_ONESIDED_IMPL
   if(CMI_ZC_MSGTYPE(msg) != CMK_ZC_BCAST_RECV_MSG)
@@ -403,17 +403,17 @@ void CmiWithinNodeBroadcastFn(int size, char* msg) {
 
 #if ! CMK_MULTICAST_LIST_USE_COMMON_CODE
 
-void CmiSyncListSendFn(int npes, const int *pes, int len, char *msg)
+void CmiSyncListSendFn(int npes, const int *pes, size_t len, char *msg)
 {
     LrtsSyncListSendFn(npes, pes, len, msg);
 }
 
-CmiCommHandle CmiAsyncListSendFn(int npes, const int *pes, int len, char *msg)
+CmiCommHandle CmiAsyncListSendFn(int npes, const int *pes, size_t len, char *msg)
 {
     return LrtsAsyncListSendFn(npes, pes, len, msg);
 }
 
-void CmiFreeListSendFn(int npes, const int *pes, int len, char *msg)
+void CmiFreeListSendFn(int npes, const int *pes, size_t len, char *msg)
 {
     LrtsFreeListSendFn(npes, pes, len, msg);
 }

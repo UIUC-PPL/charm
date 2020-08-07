@@ -52,7 +52,7 @@ typedef struct {
 /* the window size needs to be Cmi_window_size + sizeof(unsigned int) bytes) */
 typedef struct { DgramHeader head; char window[1024]; } DgramAck;
 
-unsigned char computeCheckSum(unsigned char *data, int len);
+unsigned char computeCheckSum(unsigned char *data, size_t len);
 
 #define DgramHeaderMake(ptr, dstrank_, srcpe_, magic_, seqno_, root_) { \
    DgramHeader *header = (DgramHeader *)(ptr);	\

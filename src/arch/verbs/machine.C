@@ -914,10 +914,10 @@ static int sendone_abort_fn(SOCKET skt,int code,const char *msg) {
 }
 
 static void ctrl_sendone_nolock(const char *type,
-				const char *data1,int dataLen1,
-				const char *data2,int dataLen2)
+				const char *data1,size_t dataLen1,
+				const char *data2,size_t dataLen2)
 {
-  const void *bufs[3]; int lens[3]; int nBuffers=0;
+  const void *bufs[3]; size_t lens[3]; int nBuffers=0;
   ChMessageHeader hdr;
   skt_abortFn oldAbort=skt_set_abort(sendone_abort_fn);
   MACHSTATE1(2,"ctrl_sendone_nolock { type=%s", type);
@@ -935,8 +935,8 @@ static void ctrl_sendone_nolock(const char *type,
 }
 
 static void ctrl_sendone_locking(const char *type,
-				const char *data1,int dataLen1,
-				const char *data2,int dataLen2)
+				const char *data1,size_t dataLen1,
+				const char *data2,size_t dataLen2)
 {
   LOCK_IF_AVAILABLE();
   ctrl_sendone_nolock(type,data1,dataLen1,data2,dataLen2);

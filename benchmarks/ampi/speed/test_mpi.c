@@ -20,12 +20,12 @@ struct mpiComm
   struct isendReq
   {
     void* data;
-    int len;
+    size_t len;
     MPI_Request req;
   } isend[maxIsend];
 };
 
-void mpi_bsend_fn(void* data, int len, int dest, msg_comm* comm)
+void mpi_bsend_fn(void* data, size_t len, int dest, msg_comm* comm)
 {
   mpiComm* c = (mpiComm*)comm;
   MPI_Bsend(data, len, MPI_BYTE, dest, 0, c->comm);
@@ -50,7 +50,7 @@ void mpi_isend_poll(msg_comm* comm)
   }
 }
 
-void mpi_isend_fn(void* data, int len, int dest, msg_comm* comm)
+void mpi_isend_fn(void* data, size_t len, int dest, msg_comm* comm)
 {
   int n;
   mpiComm* c = (mpiComm*)comm;
@@ -65,7 +65,7 @@ void mpi_isend_fn(void* data, int len, int dest, msg_comm* comm)
   MPI_Isend(data, len, MPI_BYTE, dest, 0, c->comm, &c->isend[n].req);
 }
 
-void mpi_recv_fn(void* data, int len, int src, msg_comm* comm)
+void mpi_recv_fn(void* data, size_t len, int src, msg_comm* comm)
 {
   mpiComm* c = (mpiComm*)comm;
   MPI_Status sts;

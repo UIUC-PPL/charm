@@ -130,7 +130,7 @@ static void checkArr(int *arr,int tryNo,int n)
 	}
 }
 static CkMarshallMsg *makeMsg(int tryNo,int n) {
-	int len=n*sizeof(int);
+	size_t len=n*sizeof(int);
 	CkMarshallMsg *msg=new (&len,0) CkMarshallMsg;
 	fillArr(tryNo,n,(int *)msg->msgBuf);
 	return msg;

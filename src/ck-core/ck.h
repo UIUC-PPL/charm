@@ -250,7 +250,7 @@ void CkMessageWatcherInit(char **argv,CkCoreState *ck);
 extern void _processHandler(void *converseMsg,CkCoreState *ck);
 extern void _processBocInitMsg(CkCoreState *ck,envelope *msg);
 extern void _processNodeBocInitMsg(CkCoreState *ck,envelope *msg);
-extern void _infoFn(void *msg, CldPackFn *pfn, int *len,
+extern void _infoFn(void *msg, CldPackFn *pfn, size_t *len,
                     int *queueing, int *priobits, UInt **prioptr);
 extern void CkCreateLocalGroup(CkGroupID groupID, int eIdx, envelope *env);
 extern void CkCreateLocalNodeGroup(CkGroupID groupID, int eIdx, envelope *env);

@@ -2903,7 +2903,7 @@ void CkLocMgr::emigrate(CkLocRec *rec,int toPe)
 	{
 		PUP::sizer p(PUP::er::IS_MIGRATION);
 		pupElementsFor(p,rec,CkElementCreation_migrate);
-		bufSize=p.size(); 
+		bufSize=p.size();
 	}
 #if CMK_ERROR_CHECKING
 	if (bufSize > std::numeric_limits<int>::max()) {

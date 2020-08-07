@@ -74,7 +74,7 @@ char *ALIGN_32(char *p) {
 
 #if CMK_ERROR_CHECKING
 static int checksum_flag = 0;
-unsigned char computeCheckSum(unsigned char *data, int len);
+unsigned char computeCheckSum(unsigned char *data, size_t len);
 
 #define CMI_SET_CHECKSUM(msg, len)      \
   if (checksum_flag)  {   \

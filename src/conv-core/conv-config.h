@@ -4,6 +4,9 @@
 #ifndef __UIUC_CHARM_CONV_CONFIG_H
 #define __UIUC_CHARM_CONV_CONFIG_H
 
+/* for size_t */
+#include <stddef.h>
+
 /* 
  Include the automatically determined options.
   conv-autoconfig.h is written by the configure script.

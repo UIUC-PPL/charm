@@ -13,7 +13,7 @@ TestController *mainChare;
 
 
 /// Converse reduction merge function triggered at each vertex along the reduction spanning tree
-void* convRedn_sum (int *size, void *local, void **remote, int count)
+void* convRedn_sum (size_t *size, void *local, void **remote, int count)
 {
     CkReductionMsg *localMsg = CkReductionMsg::unpack( EnvToUsr( (envelope*)local ) );
     double *dataBuf          = reinterpret_cast<double*>( localMsg->getData() );

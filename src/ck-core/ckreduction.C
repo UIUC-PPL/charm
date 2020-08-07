@@ -1160,10 +1160,10 @@ void CkReductionMgr::Barrier_RecvMsg(CkReductionMsg *m)
 
 //"Constructor"-- builds and returns a new CkReductionMsg.
 //  the "data" array you specify will be copied into this object.
-CkReductionMsg *CkReductionMsg::buildNew(int NdataSize,const void *srcData,
+CkReductionMsg *CkReductionMsg::buildNew(size_t NdataSize,const void *srcData,
     CkReduction::reducerType reducer/*=CkReduction::invalid*/, CkReductionMsg *buf/*=NULL*/)
 {
-  int len[1] = { NdataSize };
+  size_t len[1] = { NdataSize };
   CkReductionMsg *ret = buf ? buf : new(len,0) CkReductionMsg();
 
   ret->dataSize=NdataSize;
@@ -1179,10 +1179,10 @@ CkReductionMsg *CkReductionMsg::buildNew(int NdataSize,const void *srcData,
 
 // Charm kernel message runtime support:
 void *
-CkReductionMsg::alloc(int msgnum,size_t size,int *sz,int priobits,GroupDepNum groupDepNum)
+CkReductionMsg::alloc(int msgnum,size_t size,size_t *sz,int priobits,GroupDepNum groupDepNum)
 {
-  int totalsize=ARM_DATASTART+(*sz);
-  DEBR(("CkReductionMsg::Allocating %d store; %d bytes total\n",*sz,totalsize));
+  size_t totalsize=ARM_DATASTART+(*sz);
+  DEBR(("CkReductionMsg::Allocating %zu store; %zu bytes total\n",*sz,totalsize));
   CkReductionMsg *ret = (CkReductionMsg *)
     CkAllocMsg(msgnum,totalsize,priobits,groupDepNum);
   ret->data=(void *)(&ret->dataStorage);
@@ -1192,8 +1192,7 @@ CkReductionMsg::alloc(int msgnum,size_t size,int *sz,int priobits,GroupDepNum gr
 void *
 CkReductionMsg::pack(CkReductionMsg* in)
 {
-  DEBR(("CkReductionMsg::pack %d %d %d %d\n",in->sourceFlag,in->redNo,in->gcount,in->dataSize));
-  //CkPrintf("CkReductionMsg::pack %d %d %d %d\n",in->sourceFlag,in->redNo,in->gcount,in->dataSize);
+  DEBR(("CkReductionMsg::pack %d %d %d %zu\n",in->sourceFlag,in->redNo,in->gcount,in->dataSize));
   in->data = NULL;
   return (void*) in;
 }
@@ -1201,8 +1200,7 @@ CkReductionMsg::pack(CkReductionMsg* in)
 CkReductionMsg* CkReductionMsg::unpack(void *in)
 {
   CkReductionMsg *ret = (CkReductionMsg *)in;
-  DEBR(("CkReductionMsg::unpack %d %d %d %d\n",ret->sourceFlag,ret->redNo,ret->gcount,ret->dataSize));
-  //CkPrintf("CkReductionMsg::unpack %d %d %d %d\n",ret->sourceFlag,ret->redNo,ret->gcount,ret->dataSize);
+  DEBR(("CkReductionMsg::unpack %d %d %d %zu\n",ret->sourceFlag,ret->redNo,ret->gcount,ret->dataSize));
   ret->data=(void *)(&ret->dataStorage);
   return ret;
 }
@@ -1246,7 +1244,7 @@ static CkReductionMsg *name(int nMsg,CkReductionMsg **msg)\
 {\
   RED_DEB(("/ PE_%d: " #name " invoked on %d messages\n",CkMyPe(),nMsg));\
   int m,i;\
-  int nElem=msg[0]->getLength()/sizeof(dataType);\
+  size_t nElem=msg[0]->getLength()/sizeof(dataType);\
   dataType *ret=(dataType *)(msg[0]->getData());\
   for (m=1;m<nMsg;m++)\
   {\
@@ -1374,7 +1372,8 @@ static CkReductionMsg *concat_fn(int nMsg,CkReductionMsg **msg)
 {
   RED_DEB(("/ PE_%d: reduction_concat invoked on %d messages\n",CkMyPe(),nMsg));
   //Figure out how big a message we'll need
-  int i,retSize=0;
+  int i;
+  size_t retSize=0;
   for (i=0;i<nMsg;i++)
       retSize+=msg[i]->getSize();
 
@@ -1403,12 +1402,12 @@ terminated by a dummy reduction_set_element with a sourceElement of -1.
 */
 
 //This rounds an integer up to the nearest multiple of sizeof(double)
-static const int alignSize=sizeof(double);
-static int SET_ALIGN(int x) {return ~(alignSize-1)&((x)+alignSize-1);}
+static const size_t alignSize=sizeof(double);
+static size_t SET_ALIGN(size_t x) {return ~(alignSize-1)&((x)+alignSize-1);}
 
 //This gives the size (in bytes) of a reduction_set_element
-static int SET_SIZE(int dataSize)
-{return SET_ALIGN(sizeof(int)+dataSize);}
+static size_t SET_SIZE(size_t dataSize)
+{return SET_ALIGN(sizeof(size_t)+dataSize);}
 
 //This returns a pointer to the next reduction_set_element in the list
 static CkReduction::setElement *SET_NEXT(CkReduction::setElement *cur)
@@ -1423,15 +1422,16 @@ static CkReductionMsg *set_fn(int nMsg,CkReductionMsg **msg)
 {
   RED_DEB(("/ PE_%d: reduction_set invoked on %d messages\n",CkMyPe(),nMsg));
   //Figure out how big a message we'll need
-  int i,retSize=0;
+  int i;
+  size_t retSize=0;
   for (i=0;i<nMsg;i++) {
     if (!msg[i]->isFromUser())
     //This message is composite-- it will just be copied over (less terminating -1)
-      retSize+=(msg[i]->getSize()-sizeof(int));
+      retSize+=(msg[i]->getSize()-sizeof(size_t));
     else //This is a message from an element-- it will be wrapped in a reduction_set_element
       retSize+=SET_SIZE(msg[i]->getSize());
   }
-  retSize+=sizeof(int);//Leave room for terminating -1.
+  retSize+=sizeof(size_t);//Leave room for terminating -1.
 
   RED_DEB(("|- composite set reduction message will be %d bytes\n",retSize));
 
@@ -1443,7 +1443,7 @@ static CkReductionMsg *set_fn(int nMsg,CkReductionMsg **msg)
   for (i=0;i<nMsg;i++)
     if (!msg[i]->isFromUser())
     {//This message is composite-- just copy it over (less terminating -1)
-                        int messageBytes=msg[i]->getSize()-sizeof(int);
+                        size_t messageBytes=msg[i]->getSize()-sizeof(size_t);
                         RED_DEB(("|\tc msg[%d] is %d bytes\n",i,msg[i]->getSize()));
                         memcpy((void *)cur,(void *)msg[i]->getData(),messageBytes);
                         cur=(CkReduction::setElement *)(((char *)cur)+messageBytes);
@@ -1489,7 +1489,7 @@ CkReduction::statisticsElement::statisticsElement(double initialValue)
 // Technical Report STAN-CS-79-773, Department of Computer Science, Stanford University.
 static CkReductionMsg* statistics_fn(int nMsgs, CkReductionMsg** msg)
 {
-  int nElem = msg[0]->getLength() / sizeof(CkReduction::statisticsElement);
+  size_t nElem = msg[0]->getLength() / sizeof(CkReduction::statisticsElement);
   CkReduction::statisticsElement* ret = (CkReduction::statisticsElement*)(msg[0]->getData());
   for (int m = 1; m < nMsgs; m++)
   {
@@ -1615,7 +1615,7 @@ CkReductionMsg* CkReduction::tupleReduction_fn(int num_messages, CkReductionMsg*
       CmiAbort("num_reductions mismatch in CkReduction::tupleReduction");
   }
 
-  DEB_TUPLE(("tupleReduction {\n  num_messages=%d,\n  num_reductions=%d,\n  length=%d\n",
+  DEB_TUPLE(("tupleReduction {\n  num_messages=%d,\n  num_reductions=%d,\n  length=%zu\n",
            num_messages, num_reductions, messages[0]->getLength()));
 
   std::vector<CkReduction::tupleElement> return_data(num_reductions);
@@ -1637,7 +1637,7 @@ CkReductionMsg* CkReduction::tupleReduction_fn(int num_messages, CkReductionMsg*
     {
       CkReduction::tupleElement* reductions = (CkReduction::tupleElement*)(tuple_data[message_idx]);
       CkReduction::tupleElement& element = reductions[reduction_idx];
-      DEB_TUPLE(("    msg %d, sf=%d, length=%d : { dataSize=%d, data=%p, reducer=%d },\n",
+      DEB_TUPLE(("    msg %d, sf=%d, length=%zu : { dataSize=%zu, data=%p, reducer=%d },\n",
                  message_idx, messages[message_idx]->sourceFlag, messages[message_idx]->getLength(), element.dataSize, element.data, element.reducer));
 
       reducerType = element.reducer;
@@ -1657,7 +1657,7 @@ CkReductionMsg* CkReduction::tupleReduction_fn(int num_messages, CkReductionMsg*
     // run the reduction and copy the result back to our data structure
     const auto& reducerFp = CkReduction::reducerTable()[reducerType].fn;
     CkReductionMsg* result = reducerFp(num_messages, simulated_messages.data());
-    DEB_TUPLE(("    result_len=%d\n  },\n", result->getLength()));
+    DEB_TUPLE(("    result_len=%zu\n  },\n", result->getLength()));
     return_data[reduction_idx] = CkReduction::tupleElement(result->getLength(), result->getData(), reducerType);
     // reducers are allowed to reuse the zeroth message's memory, so it is not safe to delete this
     // all the time, and, even if it is, deletion must be deferred until after processing is complete.

@@ -100,11 +100,11 @@ public:
 };
 
 /*********************** Empty comm *********************/
-static void empty_send_fn(void* data, int len, int dest, msg_comm* comm)
+static void empty_send_fn(void* data, size_t len, int dest, msg_comm* comm)
 {
   msg_send_complete(comm, data, len);
 }
-static void empty_recv_fn(void* data, int len, int src, msg_comm* comm)
+static void empty_recv_fn(void* data, size_t len, int src, msg_comm* comm)
 {
   msg_recv_complete(comm, data, len);
 }
@@ -150,7 +150,7 @@ void convCommTest(int isLocal)
 struct conv_msg_header
 {
   char conv_hdr[CmiMsgHeaderSizeBytes];
-  int len;
+  size_t len;
   double data;
   /* user data goes here */
 };
@@ -163,7 +163,7 @@ struct conv_msg_comm : public msg_comm
   int master; /* marker: I'm responsible for saying it's over */
 };
 
-static void conv_send_fn(void* data, int len, int dest, conv_msg_comm* comm)
+static void conv_send_fn(void* data, size_t len, int dest, conv_msg_comm* comm)
 {
   if (verbose >= 8) CmiPrintf("Processor %d send\n", CmiMyPe());
   int mlen = sizeof(conv_msg_header) + len;
@@ -174,7 +174,7 @@ static void conv_send_fn(void* data, int len, int dest, conv_msg_comm* comm)
   CmiSyncSendAndFree(comm->send_pe, mlen, (char*)m);
   msg_send_complete(comm, data, len);
 }
-static void conv_recv_fn(void* data, int len, int src, msg_comm* comm) { /* ignored */ }
+static void conv_recv_fn(void* data, size_t len, int src, msg_comm* comm) { /* ignored */ }
 static void conv_recv(conv_msg_header* m, conv_msg_comm* comm)
 {
   if (verbose >= 8) CmiPrintf("Processor %d recv\n", CmiMyPe());
@@ -233,7 +233,7 @@ static void conv_kicker(void* startMsg)
 class myMsg : public CMessage_myMsg
 {
 public:
-  int len;
+  size_t len;
   char* data;
 };
 
@@ -273,13 +273,13 @@ public:
   }
 };
 
-static void marshal_send_fn(void* data, int len, int dest, msg_comm* comm)
+static void marshal_send_fn(void* data, size_t len, int dest, msg_comm* comm)
 {
   ((helloComm*)comm)->hp[dest].recvMarshal(len, (char*)data);
   msg_send_complete(comm, data, len);
 }
 
-static void message_send_fn(void* data, int len, int dest, msg_comm* comm)
+static void message_send_fn(void* data, size_t len, int dest, msg_comm* comm)
 {
   myMsg* m = new (&len, 0) myMsg;
   m->len = len;
@@ -288,7 +288,7 @@ static void message_send_fn(void* data, int len, int dest, msg_comm* comm)
   msg_send_complete(comm, data, len);
 }
 
-static void ignore_recv_fn(void* data, int len, int dest, msg_comm* comm)
+static void ignore_recv_fn(void* data, size_t len, int dest, msg_comm* comm)
 {
   /* Charm decides when *it* wants you to recv, so this is useless */
 }

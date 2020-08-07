@@ -27,7 +27,7 @@ static void initForCms(int argc, char *argv[])
 }
 
 static void
-cms_infoFn(void *msg, CldPackFn * pfn, int *len,
+cms_infoFn(void *msg, CldPackFn * pfn, size_t *len,
 	   int *queueing, int *priobits, unsigned int **prioptr)
 {
     *pfn = 0;

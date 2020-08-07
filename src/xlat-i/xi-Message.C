@@ -7,12 +7,18 @@ namespace xi {
 static const char* CIMsgClassAnsi =
     "{\n"
     "  public:\n"
+    "    struct size_t_wrap {\n"
+    "      size_t size;\n"
+    "      template <typename T, typename = typename std::enable_if<std::is_integral<T>::value>::type>\n"
+    "      size_t_wrap(T s) : size{(size_t)s} { };\n"
+    "      operator size_t() const { return size; }\n"
+    "    };\n"
     "    static int __idx;\n"
     "    void* operator new(size_t, void*p) { return p; }\n"
     "    void* operator new(size_t);\n"
-    "    void* operator new(size_t, int*, const int);\n"
-    "    void* operator new(size_t, int*, const int, const GroupDepNum);\n"
-    "    void* operator new(size_t, int*);\n"
+    "    void* operator new(size_t, size_t*, const int);\n"
+    "    void* operator new(size_t, size_t*, const int, const GroupDepNum);\n"
+    "    void* operator new(size_t, size_t*);\n"
     "#if CMK_MULTIPLE_DELETE\n"
     "    void operator delete(void*p, void*){dealloc(p);}\n"
     "    void operator delete(void*p){dealloc(p);}\n"
@@ -21,7 +27,7 @@ static const char* CIMsgClassAnsi =
     "    void operator delete(void*p, int*){dealloc(p);}\n"
     "#endif\n"
     "    void operator delete(void*p, size_t){dealloc(p);}\n"
-    "    static void* alloc(int,size_t, int*, int, GroupDepNum);\n"
+    "    static void* alloc(int,size_t, size_t*, int, GroupDepNum);\n"
     "    static void dealloc(void *p);\n";
 
 Message::Message(int l, NamedType* t, MsgVarList* mv) : type(t), mvlist(mv) {
@@ -43,15 +49,15 @@ void Message::genAllocDecl(XStr& str) {
   num = numArrays();
   if (num > 0) {
     str << "    void *operator new(size_t";
-    for (i = 0; i < num; i++) str << ", int";
+    for (i = 0; i < num; i++) str << ", size_t_wrap";
     str << ");\n";
   }
   str << "    void *operator new(size_t, ";
-  for (i = 0; i < num; i++) str << "int, ";
+  for (i = 0; i < num; i++) str << "size_t_wrap, ";
   str << "const int);\n";
   str << "    void *operator new(size_t, ";
   for(i=0;i<num;i++)
-    str << "int, ";
+    str << "size_t_wrap, ";
   str << "const int, const GroupDepNum);\n";
   str << "#if CMK_MULTIPLE_DELETE\n";
   if (num > 0) {
@@ -83,6 +89,7 @@ void Message::genDecls(XStr& str) {
   XStr ptype;
   ptype << proxyPrefix() << type;
   if (type->isTemplated()) return;
+  str << "#include <type_traits>\n";
   str << GroupDepNumStruct;
   str << "/* DECLS: ";
   print(str);
@@ -154,23 +161,23 @@ void Message::genDefs(XStr& str) {
     // new (size_t)
     str << tspec << "void *" << ptype << "::operator new(size_t s){\n";
     str << "  return " << mtype << "::alloc(__idx, s, 0, 0, GroupDepNum{});\n}\n";
-    // new (size_t, int*)
-    str << tspec << "void *" << ptype << "::operator new(size_t s, int* sz){\n";
+    // new (size_t, size_t*)
+    str << tspec << "void *" << ptype << "::operator new(size_t s, size_t* sz){\n";
     str << "  return " << mtype << "::alloc(__idx, s, sz, 0, GroupDepNum{});\n}\n";
-    // new (size_t, int*, priobits)
-    str << tspec << "void *" << ptype << "::operator new(size_t s, int* sz,";
+    // new (size_t, size_t*, priobits)
+    str << tspec << "void *" << ptype << "::operator new(size_t s, size_t* sz,";
     str << "const int pb){\n";
     str << "  return " << mtype << "::alloc(__idx, s, sz, pb, GroupDepNum{});\n}\n";
-    // new (size_t, int *, priobits, groupDepNum)
-    str << tspec << "void *" << ptype << "::operator new(size_t s, int* sz,";
+    // new (size_t, size_t*, priobits, groupDepNum)
+    str << tspec << "void *" << ptype << "::operator new(size_t s, size_t* sz,";
     str << "const int pb, const GroupDepNum groupDepNum){\n";
     str << "  return " << mtype << "::alloc(__idx, s, sz, pb, groupDepNum);\n}\n";
-    // new (size_t, int, int, ..., int)
+    // new (size_t, size_t, size_t, ..., int)
     if (numArray > 0) {
       str << tspec << "void *" << ptype << "::operator new(size_t s";
-      for (i = 0; i < numArray; i++) str << ", int sz" << i;
+      for (i = 0; i < numArray; i++) str << ", size_t_wrap sz" << i;
       str << ") {\n";
-      str << "  int sizes[" << numArray << "];\n";
+      str << "  size_t sizes[" << numArray << "];\n";
       for (i = 0; i < numArray; i++) str << "  sizes[" << i << "] = sz" << i << ";\n";
       str << "  return " << mtype << "::alloc(__idx, s, sizes, 0, GroupDepNum{});\n";
       str << "}\n";
@@ -179,10 +186,10 @@ void Message::genDefs(XStr& str) {
     // degenerates to  new(size_t, priobits)  if no varsize
     std::vector<MsgVar*> arrayVars;
     str << tspec << "void *" << ptype << "::operator new(size_t s, ";
-    for (i = 0; i < numArray; i++) str << "int sz" << i << ", ";
+    for (i = 0; i < numArray; i++) str << "size_t_wrap sz" << i << ", ";
     str << "const int p) {\n";
     if (numArray > 0) {
-      str << "  int sizes[" << numArray << "];\n";
+      str << "  size_t sizes[" << numArray << "];\n";
       for (i = 0, count = 0, ml = mvlist; i < num; i++, ml = ml->next) {
         mv = ml->msg_var;
         if (mv->isArray()) {
@@ -200,10 +207,10 @@ void Message::genDefs(XStr& str) {
     arrayVars.clear();
     str << tspec << "void *"<< ptype << "::operator new(size_t s, ";
     for(i=0;i<numArray;i++)
-      str << "int sz" << i << ", ";
+      str << "size_t_wrap sz" << i << ", ";
     str << "const int p, const GroupDepNum groupDepNum) {\n";
     if (numArray>0) {
-      str << "  int sizes[" << numArray << "];\n";
+      str << "  size_t sizes[" << numArray << "];\n";
       for(i=0, count=0, ml=mvlist ;i<num; i++, ml=ml->next) {
         mv = ml->msg_var;
         if (mv->isArray()) {
@@ -216,9 +223,9 @@ void Message::genDefs(XStr& str) {
     str << "  return " << mtype << "::alloc(__idx, s, " << (numArray>0?"sizes":"0") << ", p, groupDepNum);\n";
     str << "}\n";
 
-    // alloc(int, size_t, int*, priobits, groupDepNum)
+    // alloc(int, size_t, size_t*, priobits, groupDepNum)
     str << tspec << "void* " << ptype;
-    str << "::alloc(int msgnum, size_t sz, int *sizes, int pb, GroupDepNum groupDepNum) {\n";
+    str << "::alloc(int msgnum, size_t sz, size_t *sizes, int pb, GroupDepNum groupDepNum) {\n";
     str << "  CkpvAccess(_offsets)[0] = ALIGN_DEFAULT(sz);\n";
     for (count = 0; count < numArray; count++) {
       mv = arrayVars[count];
@@ -272,7 +279,7 @@ void Message::genDefs(XStr& str) {
       }
     }
     if (numCond > 0) {
-      str << "  int impl_off[" << numCond + 1 << "];\n";
+      str << "  size_t impl_off[" << numCond + 1 << "];\n";
       str << "  impl_off[0] = UsrToEnv(msg)->getUsersize();\n";
       for (i = 0, count = 0, ml = mvlist; i < num; i++, ml = ml->next) {
         mv = ml->msg_var;
