@@ -2979,7 +2979,7 @@ static const char *funclist[] = {"AMPI_Abort", "AMPI_Add_error_class", "AMPI_Add
 "AMPI_Win_set_name", "AMPI_Win_start", "AMPI_Win_test", "AMPI_Win_unlock",
 "AMPI_Win_wait", "AMPI_Exit" /*AMPI extensions:*/, "AMPI_Migrate",
 "AMPI_Load_start_measure", "AMPI_Load_stop_measure",
-"AMPI_Load_set_value", "AMPI_Migrate_to_pe", "AMPI_Set_migratable",
+"AMPI_Load_set_value", "AMPI_Load_set_phase", "AMPI_Migrate_to_pe", "AMPI_Set_migratable",
 "AMPI_Register_pup", "AMPI_Get_pup_data",
 "AMPI_Register_about_to_migrate", "AMPI_Register_just_migrated",
 "AMPI_Iget", "AMPI_Iget_wait", "AMPI_Iget_free", "AMPI_Iget_data",
