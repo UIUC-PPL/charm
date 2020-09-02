@@ -478,10 +478,13 @@ void TreeLB::objMovedIn(bool waitBarrier)
 
   // fprintf(stderr, "[%d] TreeLB::objMovedIn\n", CkMyPe());
 
-  int level = 0;
-  CkAssert(numLevels > 0 && awaitingLB[level]);
-  load_received[level] += 1;
-  checkLoadExchanged(level);
+  const int level = 0;
+
+  if (numLevels > 0 && awaitingLB[level])
+  {
+    load_received[level] += 1;
+    checkLoadExchanged(level);
+  }
 }
 
 void TreeLB::migrateObjects(const IDM& mig_order)
