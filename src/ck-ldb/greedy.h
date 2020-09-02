@@ -106,6 +106,8 @@ class GreedyRefine : public Strategy<O, P, S>
     }
   }
 
+  template <typename U = O,
+            typename std::enable_if<std::is_same<U, Obj<1>>::value, int>::type* = nullptr>
   void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution, bool objsSorted)
   {
     float M = calcGreedyMaxload(objs, procs, objsSorted);
@@ -134,7 +136,38 @@ class GreedyRefine : public Strategy<O, P, S>
     }
   }
 
- private:
+  template <typename U = O,
+            typename std::enable_if<!std::is_same<U, Obj<1>>::value, int>::type* = nullptr>
+  void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution,
+             bool objsSorted)
+  {
+    float M = calcGreedyMaxload(objs, procs, objsSorted);
+    if (CkMyPe() == 0 && _lb_args.debug() > 0)
+      CkPrintf("[%d] GreedyRefine: greedy maxload is %f, tolerance set to %f\n", CkMyPe(),
+               M, tolerance);
+
+    M *= tolerance;
+
+    // need custom heap that allows removal of elements from any position
+    ProcHeap<P> procHeap(procs);
+    P p;
+    for (const auto& o : objs)
+    {
+      // TODO improve the case where the proc is not in my list of processors (because
+      // it belongs to a foreing domain). procHeap API should return an error?
+      P& oldPe = procHeap.getProc(ptr(o)->oldPe);
+      if ((oldPe.id >= 0) && (oldPe.getLoad() + ptr(o)->getLoad() <= M))
+        p = oldPe;
+      else
+        p = procHeap.top();
+      procHeap.remove(p);
+      solution.assign(o, p);
+      procHeap.push(p);
+      M = std::max(M, ptr(p)->getLoad());
+    }
+  }
+
+private:
   float tolerance = 1;  // tolerance above greedy maxload (not average load!)
 };
 
