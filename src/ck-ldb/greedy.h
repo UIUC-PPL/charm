@@ -72,7 +72,27 @@ public:
 template <typename O, typename P>
 struct GreedySolution
 {
+  std::array<float, O::dimension> maxload;
+
+  GreedySolution()
+  {
+    maxload.fill(0);
+  }
+
   inline void assign(const O& o, P& p)
+  {
+    ptr(p)->assign(o);
+    for (int i = 0; i < O::dimension; i++)
+    {
+      maxload[i] = std::max(maxload[i], ptr(p)->getLoad(i));
+    }
+  }
+};
+
+template <typename P>
+struct GreedySolution<Obj<1>, P>
+{
+  inline void assign(const Obj<1>& o, P& p)
   {
     ptr(p)->assign(o);
     maxload = std::max(maxload, ptr(p)->getLoad());
@@ -82,7 +102,9 @@ struct GreedySolution
 
 // NOTE: this will modify order of objects in 'objs' if objsSorted is false
 template <typename O, typename P>
-float calcGreedyMaxload(std::vector<O>& objs, std::vector<P>& procs, bool objsSorted)
+typename std::conditional<(O::dimension > 1), std::array<float, O::dimension>,
+                          float>::type
+calcGreedyMaxload(std::vector<O>& objs, std::vector<P>& procs, bool objsSorted)
 {
   GreedySolution<O, P> greedy_sol;
   Greedy<O, P, GreedySolution<O, P>> greedy;
@@ -96,7 +118,10 @@ float calcGreedyMaxload(std::vector<O>& objs, std::vector<P>& procs, bool objsSo
 template <typename O, typename P, typename S>
 class GreedyRefine : public Strategy<O, P, S>
 {
- public:
+private:
+  float tolerance = 1;  // tolerance above greedy maxload (not average load!)
+
+public:
   GreedyRefine(json& config)
   {
     const auto& option = config.find("tolerance");
@@ -106,16 +131,23 @@ class GreedyRefine : public Strategy<O, P, S>
     }
   }
 
-  template <typename U = O,
-            typename std::enable_if<std::is_same<U, Obj<1>>::value, int>::type* = nullptr>
   void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution, bool objsSorted)
   {
-    float M = calcGreedyMaxload(objs, procs, objsSorted);
+    auto M = calcGreedyMaxload(objs, procs, objsSorted);
     if (CkMyPe() == 0 && _lb_args.debug() > 0)
-      CkPrintf("[%d] GreedyRefine: greedy maxload is %f, tolerance set to %f\n", CkMyPe(),
-               M, tolerance);
+    {
+      CkPrintf("[%d] GreedyRefine: greedy maxload is:", CkMyPe());
+      for (const auto& value : M)
+      {
+        CkPrintf(" %f", value);
+      }
+      CkPrintf(", tolerance set to %f\n", tolerance);
+    }
 
-    M *= tolerance;
+    for (auto& value : M)
+    {
+      value *= tolerance;
+    }
 
     // need custom heap that allows removal of elements from any position
     ProcHeap<P> procHeap(procs);
@@ -125,50 +157,61 @@ class GreedyRefine : public Strategy<O, P, S>
       // TODO improve the case where the proc is not in my list of processors (because
       // it belongs to a foreing domain). procHeap API should return an error?
       P& oldPe = procHeap.getProc(ptr(o)->oldPe);
-      if ((oldPe.id >= 0) && (oldPe.getLoad() + ptr(o)->getLoad() <= M))
+      if ((oldPe.id >= 0) && (oldPe.getLoad() + ptr(o)->getLoad() <= M[0]))
         p = oldPe;
       else
         p = procHeap.top();
       procHeap.remove(p);
       solution.assign(o, p);
       procHeap.push(p);
-      M = std::max(M, ptr(p)->getLoad());
+      M[0] = std::max(M[0], ptr(p)->getLoad());
     }
   }
+};
 
-  template <typename U = O,
-            typename std::enable_if<!std::is_same<U, Obj<1>>::value, int>::type* = nullptr>
-  void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution,
-             bool objsSorted)
-  {
-    float M = calcGreedyMaxload(objs, procs, objsSorted);
-    if (CkMyPe() == 0 && _lb_args.debug() > 0)
-      CkPrintf("[%d] GreedyRefine: greedy maxload is %f, tolerance set to %f\n", CkMyPe(),
-               M, tolerance);
-
-    M *= tolerance;
-
-    // need custom heap that allows removal of elements from any position
-    ProcHeap<P> procHeap(procs);
-    P p;
-    for (const auto& o : objs)
-    {
-      // TODO improve the case where the proc is not in my list of processors (because
-      // it belongs to a foreing domain). procHeap API should return an error?
-      P& oldPe = procHeap.getProc(ptr(o)->oldPe);
-      if ((oldPe.id >= 0) && (oldPe.getLoad() + ptr(o)->getLoad() <= M))
-        p = oldPe;
-      else
-        p = procHeap.top();
-      procHeap.remove(p);
-      solution.assign(o, p);
-      procHeap.push(p);
-      M = std::max(M, ptr(p)->getLoad());
-    }
-  }
-
+template <typename P, typename S>
+class GreedyRefine<Obj<1>, P, S> : public Strategy<Obj<1>, P, S>
+{
 private:
   float tolerance = 1;  // tolerance above greedy maxload (not average load!)
+
+public:
+  GreedyRefine(json& config)
+  {
+    const auto& option = config.find("tolerance");
+    if (option != config.end())
+    {
+      tolerance = *option;
+    }
+  }
+
+  void solve(std::vector<Obj<1>>& objs, std::vector<P>& procs, S& solution, bool objsSorted)
+  {
+    auto M = calcGreedyMaxload(objs, procs, objsSorted);
+    if (CkMyPe() == 0 && _lb_args.debug() > 0)
+      CkPrintf("[%d] GreedyRefine: greedy maxload is %f, tolerance set to %f\n", CkMyPe(),
+               M, tolerance);
+
+    M *= tolerance;
+
+    // need custom heap that allows removal of elements from any position
+    ProcHeap<P> procHeap(procs);
+    P p;
+    for (const auto& o : objs)
+    {
+      // TODO improve the case where the proc is not in my list of processors (because
+      // it belongs to a foreing domain). procHeap API should return an error?
+      P& oldPe = procHeap.getProc(ptr(o)->oldPe);
+      if ((oldPe.id >= 0) && (oldPe.getLoad() + ptr(o)->getLoad() <= M))
+        p = oldPe;
+      else
+        p = procHeap.top();
+      procHeap.remove(p);
+      solution.assign(o, p);
+      procHeap.push(p);
+      M = std::max(M, ptr(p)->getLoad());
+    }
+  }
 };
 
 }  // namespace TreeStrategy

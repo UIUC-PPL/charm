@@ -38,7 +38,19 @@ class RefineA : public Strategy<O, P, S>
 
   void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution, bool objsSorted)
   {
-    float M = calcGreedyMaxload(objs, procs, objsSorted);
+    float M;
+    if constexpr (O::dimension > 1)
+    {
+      M = 0;
+      auto maxes = calcGreedyMaxload(objs, procs, objsSorted);
+      for (const auto& value : maxes)
+        M += value;
+    }
+    else
+    {
+      M = calcGreedyMaxload(objs, procs, objsSorted);
+    }
+
     if (CkMyPe() == 0 && _lb_args.debug() > 0)
       CkPrintf("[%d] RefineA: greedy maxload is %f\n", CkMyPe(), M);
 
@@ -178,7 +190,19 @@ class RefineB : public Strategy<O, P, S>
 
   void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution, bool objsSorted)
   {
-    float M = calcGreedyMaxload(objs, procs, objsSorted);
+    float M;
+    if constexpr (O::dimension > 1)
+    {
+      M = 0;
+      auto maxes = calcGreedyMaxload(objs, procs, objsSorted);
+      for (const auto& value : maxes)
+        M += value;
+    }
+    else
+    {
+      M = calcGreedyMaxload(objs, procs, objsSorted);
+    }
+
     if (CkMyPe() == 0 && _lb_args.debug() > 0)
       CkPrintf("[%d] RefineB: greedy maxload is %f\n", CkMyPe(), M);
 
