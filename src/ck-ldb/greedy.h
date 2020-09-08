@@ -214,6 +214,74 @@ public:
   }
 };
 
+template <typename O, typename P, typename S>
+class GreedyNorm : public Strategy<O, P, S>
+{
+private:
+  float p = 2;
+
+  // Calculates p-norm of vector x
+  float norm(const std::array<float, O::dimension>& x) const
+  {
+    float result = 0;
+    for (const auto& element : x)
+      result += pow(element, p);
+    return pow(result, 1/p);
+  }
+
+public:
+  GreedyNorm(json& config)
+  {
+    const auto& option = config.find("p");
+    if (option != config.end())
+    {
+      p = *option;
+    }
+  }
+
+  void solve(std::vector<O>& objs, std::vector<P>& procs, S& solution, bool objsSorted)
+  {
+    // Sorts by maxload in vector
+    if (!objsSorted) std::sort(objs.begin(), objs.end(), CmpLoadGreater<O>());
+
+    for (const auto& o : objs)
+    {
+      auto minNorm = std::numeric_limits<float>::max();
+      P* minProc = nullptr;
+      for (auto& p : procs)
+      {
+        auto temp = o.load;
+        for (int i = 0; i < O::dimension; i++)
+        {
+          temp[i] += p.load[i];
+        }
+        const auto tempNorm = norm(temp);
+        if (tempNorm < minNorm)
+        {
+          minNorm = tempNorm;
+          minProc = &p;
+        }
+      }
+      solution.assign(&o, minProc);  // update solution (assumes solution updates processor load)
+    }
+  }
+};
+
+template <typename P, typename S>
+class GreedyNorm<Obj<1>, P, S> : public Strategy<Obj<1>, P, S>
+{
+private:
+  Greedy<Obj<1>, P, S> greedy;
+public:
+  GreedyNorm(json&) {}
+
+  void solve(std::vector<Obj<1>>& objs, std::vector<P>& procs, S& solution,
+             bool objsSorted)
+  {
+    greedy.solve(objs, procs, solution, objsSorted);
+  }
+};
+
 }  // namespace TreeStrategy
 
 #endif /* GREEDY_H */
