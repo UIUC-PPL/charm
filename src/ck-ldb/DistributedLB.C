@@ -440,7 +440,7 @@ void DistributedLB::MapObjsToPe(minHeap *objs, CkVec<int> &obj_no,
       if (rand_pe == -1) break;
       p_id = pe_no[rand_pe];
       p_load = loads[rand_pe];
-      if (p_load + obj->load < transfer_threshold) {
+      if ((p_load + obj->load < transfer_threshold) && (CkMyPe() != p_id)) {
         success = true;
       }
       kMaxTrials--;
