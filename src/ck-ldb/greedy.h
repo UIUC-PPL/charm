@@ -25,14 +25,33 @@ class Greedy : public Strategy<O, P, S>
       heaps.push_back(ProcHeap<P>(procs, i));
     }
 
+    std::array<float, O::dimension> averageLoad;
+
+    for (const auto& o : objs)
+    {
+      for (int i = 0; i < O::dimension; i++)
+      {
+        averageLoad[i] += o.load[i];
+      }
+    }
+
+    for (int i = 0; i < O::dimension; i++)
+    {
+      averageLoad[i] /= objs.size();
+    }
+
     for (const auto& o : objs)
     {
       int maxdimension = 0;
+      float maxfactor = 0;
       CkPrintf("Obj %d, dimension %d\n", o.id, O::dimension);
       for (int i = 0; i < O::dimension; i++)
       {
-        if (o.load[i] > o.load[maxdimension])
+        if (o.load[i] / averageLoad[i] > maxfactor)
+        {
+          maxfactor = o.load[i] / averageLoad[i];
           maxdimension = i;
+        }
         CkPrintf(" %f", o.load[i]);
       }
       CkPrintf("\n");
