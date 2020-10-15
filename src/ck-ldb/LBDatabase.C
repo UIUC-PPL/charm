@@ -313,3 +313,13 @@ void LBDatabase::EstObjLoad(const LDObjHandle &_h, double cputime)
   obj->setTiming(cputime);
 #endif
 }
+
+void LBDatabase::EstObjLoad(const LDObjHandle &_h, double cputime, int phase)
+{
+#if CMK_LBDB_ON
+  LBObj *const obj = LbObj(_h);
+
+  CmiAssert(obj != NULL);
+  obj->setTiming(cputime);
+#endif
+}

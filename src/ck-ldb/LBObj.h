@@ -80,6 +80,15 @@ public:
 #endif
   }
 
+  inline void setTiming(LBRealType cputime, int phase)
+  {
+    if (data.vectorLoad.size() < phase + 1)
+    {
+      data.vectorLoad.resize(phase + 1);
+    }
+    data.vectorLoad[phase] = cputime;
+  }
+
   inline LDOMHandle &parentOM() { return data.handle.omhandle; }
   inline const LDObjHandle &GetLDObjHandle() const { return data.handle; }
   inline void SetMigratable(bool mig) { data.migratable = mig; }

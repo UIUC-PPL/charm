@@ -90,6 +90,7 @@ public:
   virtual void ResumeFromSync(void);
   virtual void UserSetLBLoad(void);  /// user define this when setLBLoad is true
   void setObjTime(double cputime);
+  void setObjTime(double time, int phase);
   double getObjTime();
   const std::vector<LBRealType> getObjVectorLoad() const;
 #if CMK_LB_USER_DATA

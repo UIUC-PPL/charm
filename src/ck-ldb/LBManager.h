@@ -332,6 +332,11 @@ class LBManager : public CBase_LBManager
   {
     lbdb_obj->EstObjLoad(h, cpuload);
   }
+  void EstObjLoad(const LDObjHandle& h, double cpuload, int phase)
+  {
+    lbdb_obj->EstObjLoad(h, cpuload, phase);
+  }
+
   void BackgroundLoad(LBRealType* walltime, LBRealType* cputime)
   {
     lbdb_obj->BackgroundLoad(walltime, cputime);
