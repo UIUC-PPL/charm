@@ -320,6 +320,6 @@ void LBDatabase::EstObjLoad(const LDObjHandle &_h, double cputime, int phase)
   LBObj *const obj = LbObj(_h);
 
   CmiAssert(obj != NULL);
-  obj->setTiming(cputime);
+  obj->setTiming(cputime, phase);
 #endif
 }
