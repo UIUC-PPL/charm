@@ -33,7 +33,6 @@ f90main.decl.h f90main.def.h: f90main.ci.stamp
 mpi_main.decl.h mpi_main.def.h: mpi-mainmodule.ci.stamp
 PathHistory.decl.h PathHistory.def.h: pathHistory.ci.stamp
 TraceAutoPerf.decl.h TraceAutoPerf.def.h: picsautoperf.ci.stamp
-TraceTau.decl.h TraceTau.def.h: trace-Tau.ci.stamp
 TraceControlPoints.decl.h TraceControlPoints.def.h: trace-controlPoints.ci.stamp
 TraceProjections.decl.h TraceProjections.def.h: trace-projections.ci.stamp
 TraceSimple.decl.h TraceSimple.def.h: trace-simple.ci.stamp

@@ -40,7 +40,6 @@ CkpvDeclare(int, traceOnPe);
 CkpvDeclare(char*, traceRoot);
 CkpvDeclare(char*, partitionRoot);
 CkpvDeclare(int, traceRootBaseLength);
-CkpvDeclare(char*, selective);
 CkpvDeclare(bool, verbose);
 bool outlierAutomatic;
 bool findOutliers;
@@ -146,33 +145,6 @@ static void traceCommonInit(char **argv)
     strcat(CkpvAccess(traceRoot), argv[0]);
   }
   CkpvAccess(traceRootBaseLength)  +=  strlen(subdir);
-	/* added for TAU trace module. */
-  char *cwd;
-  CkpvInitialize(char*, selective);
-  if (CmiGetArgStringDesc(argv, "+selective", &temproot, "TAU's selective instrumentation file")) {
-    // Trying to decide if the traceroot path is absolute or not. If it is not
-    // then create an absolute pathname for it.
-    if (temproot[0] != PATHSEP) {
-      cwd = GETCWD(NULL,0);
-      root = (char *)malloc(strlen(cwd)+strlen(temproot)+2);
-      strcpy(root, cwd);
-      strcat(root, PATHSEPSTR);
-      strcat(root, temproot);
-    } else {
-      root = (char *)malloc(strlen(temproot)+1);
-      strcpy(root,temproot);
-    }
-    CkpvAccess(selective) = (char *) malloc(strlen(root)+1);
-    _MEMCHECK(CkpvAccess(selective));
-    strcpy(CkpvAccess(selective), root);
-    if (CkMyPe() == 0) 
-      CmiPrintf("Trace: selective: %s\n", CkpvAccess(selective));
-  }
-  else {
-    CkpvAccess(selective) = (char *) malloc(3);
-    _MEMCHECK(CkpvAccess(selective));
-    strcpy(CkpvAccess(selective), "");
-  }
 
   outlierAutomatic = true;
   findOutliers = false;

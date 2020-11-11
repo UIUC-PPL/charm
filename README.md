@@ -191,7 +191,6 @@ and run
 * `charm++`  The basic Charm++ language
 * `AMPI`     An implementation of MPI on top of Charm++
 * `LIBS`    Charm++, AMPI, and other libraries built on top of them
-* `Tau`      TAU's performance profiling/tracing
 
 `<version>` is described above in the "How to choose a `<version>`" section.
 

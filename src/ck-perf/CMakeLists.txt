@@ -1,4 +1,4 @@
-set(ckperf-h-sources trace-Tau.h trace-TauBOC.h
+set(ckperf-h-sources
     trace-controlPoints.h trace-controlPointsBOC.h trace-counter.h trace-common.h
     trace-memory.h trace-projections.h trace-projectionsBOC.h trace-projector.h
     trace-simple.h trace-simpleBOC.h trace-summary.h trace-summaryBOC.h
