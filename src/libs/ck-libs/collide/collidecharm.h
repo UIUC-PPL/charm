@@ -7,6 +7,7 @@
 
 #include "charm++.h"
 #include "collide_util.h"
+struct collideStats; // forward declaration for collideStats
 #include "collidecharm.decl.h"
 
 /********************** collideClient *****************

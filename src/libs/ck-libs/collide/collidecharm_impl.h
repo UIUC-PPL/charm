@@ -7,6 +7,7 @@
 
 #include "collide_serial.h"
 #include "collide_buffers.h"
+struct collideStats; // forward declaration for collideStats
 #include "collidecharm.decl.h"
 #include "collidecharm.h"
 
@@ -132,6 +133,33 @@ class syncReductionMgr : public CBase_syncReductionMgr
   void childDone(int stepCount);
 };
 
+/********************** statsCollector *****************
+ Prints stats like the number of voxels created.
+  */
+class statsCollector : public CBase_statsCollector {
+  public:
+  statsCollector() {}
+  statsCollector(CkMigrateMessage *m) {}
+  void voxelCountDone(int result) { // Reduction target method used to print the voxel count
+    CkPrintf("Collision Detection Library Stats - Number of voxels created = %d\n", result);
+  }
+};
+
+/********************** collideStats *****************
+ * Wraps together variables required for printing stats
+ */
+struct collideStats {
+  bool printVoxCount; // Boolean stores if the CD library has to print voxel count
+  CProxy_statsCollector statsCollProxy; // Proxy to stats collector, used for reduction
+
+  void pup(PUP::er &p) {
+    p | printVoxCount;
+    p | statsCollProxy;
+  }
+};
+
+
+
 /*********************** collideMgr **********************
   A group that synchronizes the Collision detection process.
   A single Collision operation consists of:
@@ -155,6 +183,7 @@ class collideMgr : public CBase_collideMgr
   CProxy_collideVoxel voxelProxy;
   CollideGrid3d gridMap; //Shape of 3D voxel grid
   CProxy_collideClient client; //Collision client group
+  collideStats statObj;
 
   int nContrib;//Number of registered contributors
   int contribCount;//Number of contribute calls given this step
@@ -171,7 +200,8 @@ class collideMgr : public CBase_collideMgr
   public:
   collideMgr(const CollideGrid3d &gridMap,
       const CProxy_collideClient &client,
-      const CProxy_collideVoxel &voxels);
+      const CProxy_collideVoxel &voxels,
+      const collideStats &statObj);
 
   //Maintain contributor registration count
   void registerContributor(int chunkNo);
@@ -210,7 +240,8 @@ class collideVoxel : public CBase_collideVoxel
   void add(objListMsg *msg);
   void startCollision(int step,
       const CollideGrid3d &gridMap,
-      const CProxy_collideClient &client);
+      const CProxy_collideClient &client,
+      const collideStats &statObj);
 };
 
 

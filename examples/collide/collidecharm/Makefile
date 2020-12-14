@@ -26,3 +26,4 @@ hello_cb.o: hello.C
 test: all
 	$(call run, ./hello_fn +p4 10 )
 	$(call run, ./hello_cb +p4 10 )
+	$(call run, ./hello_cb +p4 10 +printVoxCount)

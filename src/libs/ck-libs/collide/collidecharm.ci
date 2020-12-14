@@ -9,24 +9,32 @@ module collidecharm {
     entry void reductionDone(CkReductionMsg *m);
   };
 
+  chare [migratable] statsCollector {
+    entry statsCollector();
+    entry [reductiontarget] void voxelCountDone(int result);
+  };
+
   group syncReductionMgr {
     entry syncReductionMgr();
     entry void childProd(int stepCount);
     entry void childDone(int stepCount);
   };
+
   group collideMgr : syncReductionMgr {
     entry collideMgr(CollideGrid3d gridMap,
         CProxy_collideClient client,
-        CkArrayID cells);
+        CkArrayID cells,
+        collideStats statObj);
     entry void voxelMessageRecvd(void);
   };
 
   array [3D] collideVoxel {
-    entry collideVoxel(void);
+    entry collideVoxel();
     entry [createhere] void add(objListMsg *);
     //    entry [createhome] void add(objListMsg *);
     entry void startCollision(int step,
         CollideGrid3d gridMap,
-        CProxy_collideClient client);
+        CProxy_collideClient client,
+        collideStats statObj);
   };
 };

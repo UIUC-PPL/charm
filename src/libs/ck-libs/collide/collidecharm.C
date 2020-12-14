@@ -50,10 +50,19 @@ CkGroupID CollideSerialClient(CkCallback clientCb)
 CollideHandle CollideCreate(const CollideGrid3d &gridMap,
     CkGroupID clientGroupID)
 {
+
+  char **argv = CkGetArgv();
+
+  collideStats statsObj;
+  statsObj.printVoxCount = CmiGetArgFlag(argv, "+printVoxCount");
+
+  if(statsObj.printVoxCount)
+    statsObj.statsCollProxy = CProxy_statsCollector::ckNew();
+
   CProxy_collideVoxel voxels=CProxy_collideVoxel::ckNew();
   voxels.doneInserting();
   CProxy_collideClient client(clientGroupID);
-  return CProxy_collideMgr::ckNew(gridMap,client,voxels);
+  return CProxy_collideMgr::ckNew(gridMap,client,voxels, statsObj);
 }
 
 /// Register with this collider group.
@@ -401,9 +410,10 @@ static const char * voxName(const CkIndex3D &idx,char *buf) {
 
 collideMgr::collideMgr(const CollideGrid3d &gridMap_,
     const CProxy_collideClient &client_,
-    const CProxy_collideVoxel &voxels)
+    const CProxy_collideVoxel &voxels,
+    const collideStats &statObj_)
   :thisproxy(thisgroup), voxelProxy(voxels),
-  gridMap(gridMap_), client(client_), aggregator(gridMap,this)
+  gridMap(gridMap_), client(client_), aggregator(gridMap,this), statObj(statObj_)
 {
   steps=0;
   nContrib=0;
@@ -498,7 +508,7 @@ void collideMgr::reductionFinished(void)
 {
   CM_STATUS("collideMgr::reductionFinished");
   //Broadcast Collision start:
-  voxelProxy.startCollision(steps,gridMap,client);
+  voxelProxy.startCollision(steps,gridMap,client,statObj);
 }
 
 
@@ -603,9 +613,16 @@ void collideVoxel::collide(const bbox3d &territory,CollisionList &dest)
 
 void collideVoxel::startCollision(int step,
     const CollideGrid3d &gridMap,
-    const CProxy_collideClient &client)
+    const CProxy_collideClient &client,
+    const collideStats &statObj)
 {
   CC_STATUS("startCollision "<<step<<" on "<<msgs.length()<<" messages {");
+
+  if(statObj.printVoxCount) {
+    int myCount = 1;
+    CkCallback countCb(CkReductionTarget(statsCollector, voxelCountDone), statObj.statsCollProxy);
+    contribute(sizeof(int), &myCount, CkReduction::sum_int, countCb);
+  }
 
   bbox3d territory(gridMap.grid2world(0,rSeg1d(thisIndex.x,thisIndex.x+1)),
       gridMap.grid2world(1,rSeg1d(thisIndex.y,thisIndex.y+1)),
