@@ -297,11 +297,11 @@ PUP::xlater::xlater(const PUP::machineInfo &src,PUP::er &fromData)
 	convertSize[Tpointer]=src.pointerBytes;
 }
 
-void PUP::xlater::pup_buffer(void *&ptr,size_t n,size_t itemSize,dataType t) {
+void PUP::xlater::pup_buffer_async(void *&ptr,size_t n,size_t itemSize,dataType t) {
   bytes(ptr, n, itemSize, t);
 }
 
-void PUP::xlater::pup_buffer(void *&ptr,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+void PUP::xlater::pup_buffer_async(void *&ptr,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
   bytes(ptr, n, itemSize, t);
 }
 

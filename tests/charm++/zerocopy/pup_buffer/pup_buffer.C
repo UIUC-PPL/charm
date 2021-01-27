@@ -76,9 +76,9 @@ class arr : public CBase_arr {
       p|numNonAtSync;
 
       if(iteration % 2 == 0) // Test pup_buffer custom
-        p.pup_buffer(buffer, SIZE, buff_allocate, buff_deallocate);
+        p.pup_buffer_async(buffer, SIZE, buff_allocate, buff_deallocate);
       else // Test pup_buffer default
-        p.pup_buffer(buffer, SIZE);
+        p.pup_buffer_async(buffer, SIZE);
 
       PUParray(p, counts, 4);
     }

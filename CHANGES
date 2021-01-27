@@ -58,7 +58,7 @@ Charm++ Features & Fixes:
 
 - Support for variable sized messages in TRAM.
 
-- Added a pup_buffer API with zero copy functionality.
+- Added a pup_buffer_async API with zero copy functionality.
 
 - Array broadcasts are now node aware, avoiding unnecessary
   duplication of messages. Expedited nokeep array broadcasts are also
