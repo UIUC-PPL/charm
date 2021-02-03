@@ -1157,16 +1157,16 @@ class PELevel : public LevelLogic
     myObjs.clear();
     LBRealType nonMigratableLoad = 0;
     int dimension = -1;
-    for (int i = 0; i < nobjs; i++)
+    for (const auto& obj : allLocalObjs)
     {
-      if (allLocalObjs[i].migratable)
+      if (obj.migratable)
       {
-        myObjs.emplace_back(allLocalObjs[i]);
-        dimension = std::max(dimension, (int)myObjs[i].vectorLoad.size());
+        myObjs.emplace_back(obj);
+        dimension = std::max(dimension, (int)obj.vectorLoad.size());
       }
       else
       {
-        nonMigratableLoad += allLocalObjs[i].wallTime;
+        nonMigratableLoad += obj.wallTime;
       }
     }
     nobjs = myObjs.size();
