@@ -90,24 +90,22 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
         memcpy(newMsg->speeds + pe_cnt, msg->speeds, sizeof(float) * msg_npes);
       // memcpy(newMsg->obj_start + pe_cnt, msg->obj_start, sizeof(int)*msg_npes);
       const auto msgDimension = msg->dimension;
+
       for (int j = 0; j < msg_npes; j++)
       {
-        int index = j * (1 + dimension) + load_cnt;
-        const int peStart = msg->obj_start[j];
-        newMsg->obj_start[pe_cnt + j] = index;
+        newMsg->obj_start[pe_cnt++] = load_cnt;
 
-        for (int k = 0; k < 1 + msgDimension; k++)
+        // Copy this PE's objects to the new message, padding the dimension as necessary
+        for (auto k = msg->obj_start[j]; k < msg->obj_start[j + 1]; k += 1 + msgDimension)
         {
-          newMsg->oloads[index++] = msg->oloads[k + peStart];
-        }
-        for (int k = 1 + msgDimension; k < 1 + dimension; k++)
-        {
-          newMsg->oloads[index++] = 0;
+          const auto* const oldObjStart = msg->oloads + k;
+          auto* const newObjStart = newMsg->oloads + load_cnt;
+          std::copy(oldObjStart, oldObjStart + 1 + msgDimension, newObjStart);
+          // If msgDimension < dimension, then pad with 0
+          std::fill(newObjStart + 1 + msgDimension, newObjStart + 1 + dimension, 0);
+          load_cnt += 1 + dimension;
         }
       }
-
-      load_cnt += msg->nObjs * (1 + dimension);
-      pe_cnt += msg_npes;
     }
     newMsg->obj_start[pe_cnt] = load_cnt;
 
