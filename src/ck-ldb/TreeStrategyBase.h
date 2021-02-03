@@ -195,7 +195,7 @@ class Proc<N, false, multi>
   {
     id = _id;
     // TODO: implement vector bgload
-    std::copy_n(_bgload, N, this->bgload);
+    std::fill_n(this->bgload, N, *_bgload);
   }
 
   inline float getLoad() const { return this->totalload; }
