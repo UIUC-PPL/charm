@@ -24,6 +24,14 @@ void LBObj::Clear(void)
   {
     data.vectorLoad.clear();
   }
+
+  if (data.wallTime > 0.0)
+  {
+    lastWallTime = data.wallTime;
+#if CMK_LB_CPUTIMER
+    lastCpuTime = data.cpuTime;
+#endif
+  }
   data.wallTime = 0.;
 #if CMK_LB_CPUTIMER
   data.cpuTime = 0.;

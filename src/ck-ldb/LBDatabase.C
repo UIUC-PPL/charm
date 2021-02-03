@@ -235,16 +235,7 @@ void LBDatabase::ClearLoads(void)
     LBObj *obj = objs[i].obj;
     if (obj)
     {
-      if (obj->data.wallTime > 0.0) {
-        obj->lastWallTime = obj->data.wallTime;
-#if CMK_LB_CPUTIMER
-        obj->lastCpuTime = obj->data.cpuTime;
-#endif
-      }
-      obj->data.wallTime = 0.0;
-#if CMK_LB_CPUTIMER
-      obj->data.cpuTime = 0.0;
-#endif
+      obj->Clear();
     }
   }
   delete commTable;
