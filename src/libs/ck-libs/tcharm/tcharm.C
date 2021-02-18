@@ -197,9 +197,11 @@ TCharm::TCharm(TCharmInitMsg *initMsg_)
   {
     if (tcharm_nomig) { /*Nonmigratable version, for debugging*/
       tid=CthCreate((CthVoidFn)startTCharmThread,initMsg,initMsg->opts.stackSize);
+      TCHARM_Element_Setup(thisIndex, initMsg->numElements, CmiIsomallocContext{});
     } else {
       CmiIsomallocContext heapContext = CmiIsomallocContextCreate(thisIndex, initMsg->numElements);
       tid = CthCreateMigratable((CthVoidFn)startTCharmThread,initMsg,initMsg->opts.stackSize, heapContext);
+      TCHARM_Element_Setup(thisIndex, initMsg->numElements, heapContext);
       if (heapContext.opaque != nullptr)
         CmiIsomallocContextEnableRandomAccess(heapContext);
     }
