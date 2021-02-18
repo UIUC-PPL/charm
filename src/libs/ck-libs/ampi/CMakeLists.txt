@@ -7,7 +7,7 @@ set(ampi-h-sources ampi.h ampi-interoperate.h ampif.h ampiimpl.h ddt.h ampi_func
 
 add_library(ampi-compat compat_ampi.c
        compat_ampim.C compat_ampifm.C compat_ampicm.C
-       compat_ampicpp.C compat_ampins.C)
+       compat_ampicpp.C compat_ampins.C compat_ampirs.C)
 
 
 # fsglobals/pipglobals

@@ -3063,5 +3063,6 @@ int AMPI_Main_Dispatch(ampi_mainstruct, int argc, char ** argv);
 
 /* For internal AMPI use only: semantics subject to change. */
 CLINKAGE void AMPI_Node_Setup(int numranks);
+CLINKAGE void AMPI_Rank_Setup(int myrank, int numranks, CmiIsomallocContext ctx);
 
 #endif // _AMPIIMPL_H
