@@ -445,8 +445,7 @@ public:
   static void __entryMethod(void *impl_msg, void *impl_obj_void) {
     //fprintf(stderr, "ArrayElemExt:: Entry method invoked\n");
     ArrayElemExt *e = static_cast<ArrayElemExt *>(impl_obj_void);
-    CkMarshallMsg *impl_msg_typed = (CkMarshallMsg *)impl_msg;
-    char *impl_buf = impl_msg_typed->msgBuf;
+    char *impl_buf = ck::get_message_buffer((ck::marshall_msg)impl_msg);
     PUP::fromMem implP(impl_buf);
     int msgSize; implP|msgSize;
     int ep; implP|ep;

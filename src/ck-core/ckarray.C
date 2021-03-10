@@ -461,8 +461,7 @@ ArrayElemExt::ArrayElemExt(void *impl_msg)
   int chareIdx = ckGetChareType();
   ctorEpIdx = _chareTable[chareIdx]->getDefaultCtor();
   //printf("Constructor of ArrayElemExt, aid=%d, chareIdx=%d, ctorEpIdx=%d\n", ((CkGroupID)thisArrayID).idx, chareIdx, ctorEpIdx);
-  CkMarshallMsg *impl_msg_typed = (CkMarshallMsg *)impl_msg;
-  char *impl_buf = impl_msg_typed->msgBuf;
+  char *impl_buf = ck::get_message_buffer((ck::marshall_msg)impl_msg);
   PUP::fromMem implP(impl_buf);
   implP|usesAtSync;
   int msgSize; implP|msgSize;
@@ -1301,8 +1300,7 @@ void CkArrayBroadcaster::deliver(CkArrayMessage *bcast,
     for (int i=0; i < numInts; i++) validIndexes[j++] = index[i];
     numValidElements++;
   }
-
-  char *msg_buf = ((CkMarshallMsg *)bcast)->msgBuf;
+  char *msg_buf = ck::get_message_buffer((ck::marshall_msg)bcast);
   PUP::fromMem implP(msg_buf);
   int msgSize; implP|msgSize;
   int ep; implP|ep;
