@@ -17,6 +17,5 @@ jobs:
       # TODO: this should build tests with "-charm-shared". See #2735 on why this is not done currently.
     - name: test
       run: make -C mpi-linux-x86_64-smp/tmp test TESTOPTS="+setcpuaffinity"
-    # Disabled due to several hangs and segfaults.
-    #- name: testp
-    #  run: make -C mpi-linux-x86_64-smp/tmp testp P=4 TESTOPTS="+setcpuaffinity ++ppn 2"
+    - name: testp
+      run: make -C mpi-linux-x86_64-smp/tmp testp P=4 TESTOPTS="+setcpuaffinity ++ppn 2"
