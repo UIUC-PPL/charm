@@ -3,8 +3,9 @@
 
 #ifdef __cplusplus
 #include "ckmarshall.h"
+#else
+#include "pup.h"
 #endif
-#include "CkFutures.decl.h"
 
 /**
 \addtogroup CkFutures
@@ -20,6 +21,8 @@ typedef struct _CkFuture {
 } CkFuture;
 PUPbytes(CkFuture)
 
+#include "CkFutures.decl.h"
+
 /* forward declare */
 struct CkArrayID;
 
@@ -30,6 +33,7 @@ extern "C" {
 CkFuture CkCreateFuture(void);
 void  CkSendToFuture(CkFuture fut, void *msg);
 void* CkWaitFuture(CkFuture futNum);
+CkFuture CkLocalizeFuture(const CkFuture &fut);
 void CkReleaseFuture(CkFuture futNum);
 int CkProbeFuture(CkFuture futNum);
 
@@ -87,9 +91,6 @@ namespace {
     }
 
     T get() const {
-      if (!is_local()) {
-        reject_non_local();
-      }
       return unmarshall_value(static_cast<CkMarshallMsg*>(CkWaitFuture(handle_)));
     }
 
@@ -106,9 +107,7 @@ namespace {
     bool is_ready() const { return CkProbeFuture(handle_); }
     bool is_local() const { return handle_.pe == CkMyPe(); }
     void release() {
-      if (!is_local()) {
-        reject_non_local();
-      } else if (is_ready()) {
+      if (handle_.pe == CkMyPe() && is_ready()) {
         delete (CkMarshallMsg *)CkWaitFuture(handle_);
       }
       CkReleaseFuture(handle_);

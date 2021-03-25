@@ -2,11 +2,17 @@ module CkFutures {
   // temporarily All system messages are here
   message CkQdMsg;
   message FutureInitMsg;
+  message FuturePairMsg {
+    CkFuture first;
+    CkFuture second;
+  };
 
   group [migratable] FutureBOC {
     entry FutureBOC(FutureInitMsg *);
     entry void SetFuture(FutureInitMsg *);
     entry void SetSema(FutureInitMsg *);
+    entry void ReqFuture(FuturePairMsg *);
+    entry void RelFuture(FuturePairMsg *);
   };
 
   mainchare FutureMain {

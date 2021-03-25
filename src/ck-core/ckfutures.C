@@ -26,6 +26,16 @@ in remote process control.
 #include "ckarray.h"
 #include "ckfutures.h"
 
+CkGroupID _fbocID;
+
+struct FuturePairMsg : public CMessage_FuturePairMsg {
+  CkFuture first;
+  CkFuture second;
+  FuturePairMsg(const CkFuture &first_) : first(first_) {}
+  FuturePairMsg(const CkFuture &first_, const CkFuture &second_)
+      : first(first_), second(second_){};
+};
+
 struct FutureRequest {
   virtual void fulfill(const CkFutureID& id, void* value) = 0;
 };
@@ -77,7 +87,7 @@ class FutureToFuture: public FutureRequest {
   CkFuture fut; 
   bool fulfilled;
  public:
-  FutureToFuture(CkFuture fut_) : fut(fut_), fulfilled(false) {}
+  FutureToFuture(const CkFuture& fut_) : fut(fut_), fulfilled(false) {}
 
   virtual void fulfill(const CkFutureID&, void* value) override {
     // If we have not been fulfilled, forward the value
@@ -342,7 +352,13 @@ std::vector<void*> CkWaitAllIDs(const std::vector<CkFutureID>& ids) {
 
 void CkReleaseFuture(CkFuture fut)
 {
-  CkReleaseFutureID(fut.id);
+  if (fut.pe == CkMyPe()) {
+    CkReleaseFutureID(fut.id);
+  } else {
+    auto fBOC = CProxy_FutureBOC(_fbocID);
+    auto msg = new FuturePairMsg(fut);
+    fBOC[fut.pe].RelFuture(msg);
+  }
 }
 
 int CkProbeFuture(CkFuture fut)
@@ -350,9 +366,20 @@ int CkProbeFuture(CkFuture fut)
   return CkProbeFutureID(fut.id);
 }
 
-void *CkWaitFuture(CkFuture fut)
-{
-  return CkWaitFutureID(fut.id);
+CkFuture CkLocalizeFuture(const CkFuture &fut) {
+  auto ours = CkCreateFuture();
+  auto fBOC = CProxy_FutureBOC(_fbocID);
+  auto msg = new FuturePairMsg(fut, ours);
+  fBOC[fut.pe].ReqFuture(msg);
+  return ours;
+}
+
+void *CkWaitFuture(CkFuture fut) {
+  const auto isRemote = fut.pe != CkMyPe();
+  const auto local = isRemote ? CkLocalizeFuture(fut) : fut;
+  auto value = CkWaitFutureID(local.id);
+  if (isRemote) CkReleaseFuture(local);
+  return value;
 }
 
 void CkWaitVoidFuture(CkFutureID handle)
@@ -372,8 +399,6 @@ void _futuresModuleInit(void)
   CpvInitialize(CkSemaPool *, semapool);
   CpvAccess(semapool) = new CkSemaPool();
 }
-
-CkGroupID _fbocID;
 
 class FutureInitMsg : public CMessage_FutureInitMsg {
   public: int x ;
@@ -501,6 +526,28 @@ public:
     int idx;
     idx = UsrToEnv((void *)m)->getRef();
     CpvAccess(semapool)->signal(idx,(void*)m);
+  }
+  void ReqFuture(FuturePairMsg* msg) { 
+    const auto& ours = msg->first;
+    const auto& theirs = msg->second;
+    CkAssert(ours.pe == CkMyPe());
+    auto req = std::make_shared<FutureToFuture>(theirs);
+    auto fs = &(CpvAccess(futurestate));
+    if (fs->is_ready(ours.id)) {
+      req->fulfill(ours.id, (*fs)[ours.id]);
+    } else {
+      fs->request(ours.id, req);
+    }
+    delete msg;
+  }
+  // this should be used only in conjunction with
+  // future-to-future requests, otherwise it may
+  // leak the pointer held on the remote side
+  void RelFuture(FuturePairMsg* msg) {
+    const auto& ours = msg->first;
+    CkAssert(ours.pe == CkMyPe());
+    CkReleaseFutureID(ours.id);
+    delete msg;
   }
 };
 
