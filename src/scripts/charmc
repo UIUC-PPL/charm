@@ -49,6 +49,8 @@ OVERRIDE_LD=""
 OVERRIDE_LDXX=""
 #Generic options, passed to everything
 OPTS=""
+# Additional options specified by the user
+OPTS_EXTRA=""
 #Specific options
 #charm internal flag, only pass to c and cxx, not f90
 OPTS_CPP_INTERNAL="-D__CHARMC__=1"
@@ -944,7 +946,7 @@ do
 
 	-*|+*)
 #		Warning "passing unrecognized option $arg to all compilers and linkers"
-		OPTS="$OPTS  $arg"
+		OPTS_EXTRA+=" $arg"
 		;;
 	*.*)
 		[ -n "$VERBOSE" ] && echo "Adding file $arg..."
@@ -955,7 +957,7 @@ do
 	*)
 #		printUsage  "Error: Unrecognized argument $arg"
 #		Warning "passing unrecognized option $arg to all compilers and linkers"
-		OPTS="$OPTS  $arg"
+		OPTS_EXTRA+=" $arg"
 		;;
 	esac
 done
@@ -1383,10 +1385,10 @@ then
 fi
 
 #Add generic options to the compiler- and linker-options
-OPTS_CC="$OPTS $TAU_DEFS $TAU_INCLUDE $OPTS_CC"
-OPTS_CXX="$OPTS $TAU_DEFS $TAU_INCLUDE $OPTS_CXX"
-OPTS_F90="$OPTS $OPTS_F90"
-OPTS_LD="$OPTS $OPTS_LD"
+OPTS_CC="$OPTS $TAU_DEFS $TAU_INCLUDE $OPTS_CC $OPTS_EXTRA"
+OPTS_CXX="$OPTS $TAU_DEFS $TAU_INCLUDE $OPTS_CXX $OPTS_EXTRA"
+OPTS_F90="$OPTS $OPTS_F90 $OPTS_EXTRA"
+OPTS_LD="$OPTS $OPTS_LD $OPTS_EXTRA"
 
 # There's really no analog for this in the Bourne shell:
 #  -------- C Shell ------> onintr failure
