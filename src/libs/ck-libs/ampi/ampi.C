@@ -11454,6 +11454,14 @@ CLINKAGE int AMPI_Load_set_phase(int phase)
   return MPI_SUCCESS;
 }
 
+CLINKAGE int AMPI_Load_set_value_for_phase(double value, int phase)
+{
+  AMPI_API("AMPI_Load_set_value_for_phase", value, phase);
+  ampiParent *ptr = getAmpiParent();
+  ptr->setObjTime(value, phase);
+  return MPI_SUCCESS;
+}
+
 void _registerampif(void) {
   _registerampi();
 }

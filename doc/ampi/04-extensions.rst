@@ -13,6 +13,7 @@ are only available in Fortran.
    AMPI_Migrate          AMPI_Register_pup            AMPI_Get_pup_data
    AMPI_Migrate_to_pe    AMPI_Set_migratable
    AMPI_Load_set_value   AMPI_Load_set_phase
+   AMPI_Load_set_value_for_phase
    AMPI_Load_start_measure             AMPI_Load_stop_measure
    AMPI_Iget             AMPI_Iget_wait               AMPI_Iget_data
    AMPI_Iget_free        AMPI_Type_is_contiguous

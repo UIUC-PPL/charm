@@ -320,6 +320,7 @@ FLINKAGE {
 #define ampi_load_reset_measure FTN_NAME( AMPI_LOAD_RESET_MEASURE, ampi_load_reset_measure )
 #define ampi_load_set_value FTN_NAME( AMPI_LOAD_SET_VALUE, ampi_load_set_value )
 #define ampi_load_set_phase FTN_NAME( AMPI_LOAD_SET_PHASE, ampi_load_set_phase )
+#define ampi_load_set_value_for_phase FTN_NAME( AMPI_LOAD_SET_VALUE_FOR_PHASE, ampi_load_set_value_for_phase )
 #define ampi_migrate_to_pe FTN_NAME( AMPI_MIGRATE_TO_PE , ampi_migrate_to_pe )
 #define ampi_set_migratable FTN_NAME ( AMPI_SET_MIGRATABLE , ampi_set_migratable )
 #define ampi_register_pup FTN_NAME( AMPI_REGISTER_PUP , ampi_register_pup )
@@ -2181,6 +2182,11 @@ void ampi_load_set_value(double *value, int *ierr) noexcept
 void ampi_load_set_phase(int *phase, int *ierr) noexcept
 {
   *ierr = AMPI_Load_set_phase(*phase);
+}
+
+void ampi_load_set_value_for_phase(double *value, int *phase, int *ierr) noexcept
+{
+  *ierr = AMPI_Load_set_value_for_phase(*value, *phase);
 }
 
 void ampi_migrate_to_pe(int *dest, int *ierr) noexcept
