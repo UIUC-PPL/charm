@@ -2205,11 +2205,6 @@ double CkLocRec::getObjTime()
 void CkLocRec::setObjTime(double cputime, int phase) {
   lbmgr->EstObjLoad(ldHandle, cputime, phase);
 }
-double CkLocRec::getObjTime() {
-        LBRealType walltime, cputime;
-        lbmgr->GetObjLoad(ldHandle, walltime, cputime);
-        return walltime;
-}
 const std::vector<LBRealType> CkLocRec::getObjVectorLoad() const {
   return lbmgr->GetObjVectorLoad(ldHandle);
 }
