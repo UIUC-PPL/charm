@@ -2915,6 +2915,36 @@ the above load balancing strategies, including ScotchLB, which relies
 on the external graph partitioning library SCOTCH specified in Section
 :numref:`lbStrategy`.
 
+In order to retrain the Random Forest model in Metabalancer, the training
+dataset needs to be generated. Following 28 features are to be used:
+
+- *pe_imbalance*: max_pe_load/avg_pe_load
+- *pe_load_std_frac*: PE load standard deviation
+- *pe_with_bg_imb*: max_pe_load/avg_pe_load including background load
+- *bg_load_frac*: Ratio of background load to PE load
+- *avg_utilization*: Average PE utilization (load/total load including idle time)
+- *min_utilization*: Minimum PE utilization
+- *max_utilization*: Maximum PE utilization
+- *avg_obj_load*: average load of objects
+- *min_obj_load*: minimum object load
+- *max_obj_load*: maximum object load
+- *objects_per_PE*: total_objs / pe_count
+- *total_Kbytes - total communication Kbytes*
+- *total_Kmsgs*: total communication messages
+- *outside_bytes_frac*: total_outside_pe_Kbytes / total_Kbytes
+- *outside_msgs_frac*: total_outside_pe_Kmsgs / total_Kmsgs
+- *internal_bytes_frac*
+- *(total_Kbytes - total_outsidepeKbytes) / total_Kmsgs*
+- *avg_comm_neighbors*
+- *mslope*: rate of max load change/max load
+- *aslope*: rate of avg load change/avg load
+- *avg_hops*: Average hops per message
+- *avg_hop_Kbytes*: Average hop bytes per message
+- *comm_comp_ratio*: communication/computation cost ratio
+
+To retrain the model, applications with different characteristics that represent real applications can be run and the above features should be output and used as training dataset. The model can be generated from the random forest code available at https://github.com/karpathy/Random-Forest-Matlab.  The model files need to be copied to folder ``charm/src/ck-ldb/rf_model`` in gzip format. The metabalancer code includes test code that reads in the model and finds the optimal load balancer for an application at runtime.
+
+
 .. _lbarray:
 
 Load Balancing Chare Arrays
