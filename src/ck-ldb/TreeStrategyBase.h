@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <random>
 
+using LoadFloatType = float;
+
 namespace TreeStrategy
 {
 template <typename T, bool is_ptr = std::is_pointer<T>::value>
@@ -85,13 +87,13 @@ T* ptr(T* obj)
 
 struct obj_1_data
 {
-  float load;
+  LoadFloatType load;
 };
 template <int N>
 struct obj_N_data
 {
-  float totalload;
-  std::array<float, N> load = {};
+  LoadFloatType totalload;
+  std::array<LoadFloatType, N> load = {};
 };
 
 template <int N, bool multi = (N > 1)>
@@ -103,7 +105,7 @@ class Obj : public std::conditional<multi, obj_N_data<N>, obj_1_data>::type
 
   static constexpr auto dimension = N;
 
-  inline void populate(int _id, float* _load, int _oldPe)
+  inline void populate(int _id, LoadFloatType* _load, int _oldPe)
   {
     id = _id;
     oldPe = _oldPe;
@@ -117,16 +119,30 @@ class Obj : public std::conditional<multi, obj_N_data<N>, obj_1_data>::type
     }
   }
 
-  inline float getLoad() const { return this->totalload; }
-  inline float getLoad(int dim) const
+  inline const LoadFloatType& getLoad() const { return this->totalload; }
+  inline LoadFloatType& getLoad() { return this->totalload; }
+  inline const LoadFloatType& getLoad(int dim) const
   {
     CkAssert(dim < dimension);
     return this->load[dim];
   }
+  inline LoadFloatType& getLoad(int dim)
+  {
+    CkAssert(dim < dimension);
+    return this->load[dim];
+  }
+  const LoadFloatType& operator[](size_t dim) const
+  {
+    return getLoad(dim);
+  }
+  LoadFloatType& operator[](size_t dim)
+  {
+    return getLoad(dim);
+  }
 };
 
 template <>
-inline void Obj<1>::populate(int _id, float* _load, int _oldPe)
+inline void Obj<1>::populate(int _id, LoadFloatType* _load, int _oldPe)
 {
   id = _id;
   load = *_load;
@@ -134,14 +150,28 @@ inline void Obj<1>::populate(int _id, float* _load, int _oldPe)
 }
 
 template <>
-inline float Obj<1>::getLoad() const
+inline const LoadFloatType& Obj<1>::getLoad() const
 {
   return load;
 }
 
 template <>
-inline float Obj<1>::getLoad(int) const
+inline LoadFloatType& Obj<1>::getLoad()
 {
+  return load;
+}
+
+template <>
+inline const LoadFloatType& Obj<1>::getLoad(int dim) const
+{
+  CkAssert(dim < dimension);
+  return getLoad();
+}
+
+template <>
+inline LoadFloatType& Obj<1>::getLoad(int dim)
+{
+  CkAssert(dim < dimension);
   return getLoad();
 }
 
@@ -156,29 +186,38 @@ inline float Obj<1>::getLoad(int) const
 template <int N, bool rateAware, bool multi = (N > 1)>
 class Proc
 {
- public:
-  void populate(int _id, float* _bgload, float* _speed);
-  float getLoad() const;         // returns current load of processor
-  float getLoad(int dim) const;  // returns current load of processor
-  void assign(const Obj<N>* o);  // add object loads to this processor's loads
-  void assign(const Obj<N>& o);  // add object loads to this processor's loads
-  void unassign(const Obj<N>* o);  // remove object loads from this processor's loads
-  void unassign(const Obj<N>& o);  // remove object loads from this processor's loads
+public:
+  void populate(int _id, LoadFloatType* _bgload, LoadFloatType* _speed);
+  // returns current load of processor
+  const LoadFloatType& getLoad() const;
+  LoadFloatType& getLoad();
+  const LoadFloatType& getLoad(int dim) const;
+  LoadFloatType& getLoad(int dim);
+  const LoadFloatType& operator[](size_t dim) const;
+  LoadFloatType& operator[](size_t dim);
 
-  void resetLoad();              // sets processor loads to background loads
+  // add object loads to this processor's loads
+  void assign(const Obj<N>* o);
+  void assign(const Obj<N>& o);
+  // remove object loads from this processor's loads
+  void unassign(const Obj<N>* o);
+  void unassign(const Obj<N>& o);
+
+  void resetLoad();  // sets processor loads to background loads
+  bool operator==(const Proc& element) const;
 };
 
 template <int N>
 struct proc_N_data
 {
-  std::array<float, N> load = {};
-  std::array<float, N> bgload = {};
-  float totalload = 0;
+  std::array<LoadFloatType, N> load = {};
+  std::array<LoadFloatType, N> bgload = {};
+  LoadFloatType totalload = 0;
 };
 struct proc_1_data
 {
-  float load = 0;
-  float bgload = 0;
+  LoadFloatType load = 0;
+  LoadFloatType bgload = 0;
 };
 
 // --------- Proc rateAware=false specializations ---------
@@ -191,20 +230,29 @@ class Proc<N, false, multi>
   int id = -1;
   static constexpr auto dimension = N;
 
-  inline void populate(int _id, float* _bgload, float* _speed)
+  inline void populate(int _id, LoadFloatType* _bgload, LoadFloatType* _speed)
   {
     id = _id;
     // TODO: implement vector bgload
     std::fill_n(this->bgload.begin(), N, *_bgload);
   }
 
-  inline float getLoad() const { return this->totalload; }
+  inline const LoadFloatType& getLoad() const { return this->totalload; }
+  inline LoadFloatType& getLoad() { return this->totalload; }
 
-  inline float getLoad(int dim) const
+  inline const LoadFloatType& getLoad(int dim) const
   {
     CkAssert(dim < dimension);
     return this->load[dim];
   }
+  inline LoadFloatType& getLoad(int dim)
+  {
+    CkAssert(dim < dimension);
+    return this->load[dim];
+  }
+
+  const LoadFloatType& operator[](size_t dim) const { return getLoad(dim); }
+  LoadFloatType& operator[](size_t dim) { return getLoad(dim); }
 
   inline void assign(const Obj<N>* o)
   {
@@ -226,7 +274,6 @@ class Proc<N, false, multi>
   }
   inline void unassign(const Obj<N>& o) { unassign(&o); }
 
-  
   inline void resetLoad()
   {
     this->totalload = 0;
@@ -236,21 +283,33 @@ class Proc<N, false, multi>
       this->totalload += this->bgload[i];
     }
   }
+
+  bool operator==(const Proc& element) const { return id == element.id; };
 };
 
 template <>
-void Proc<1, false>::populate(int _id, float* _bgload, float* _speed)
+void Proc<1, false>::populate(int _id, LoadFloatType* _bgload, LoadFloatType* _speed)
 {
   id = _id;
   this->bgload = *_bgload;
 }
 template <>
-float Proc<1, false>::getLoad() const
+const LoadFloatType& Proc<1, false>::getLoad() const
 {
   return this->load;
 }
 template <>
-float Proc<1, false>::getLoad(int) const
+LoadFloatType& Proc<1, false>::getLoad()
+{
+  return this->load;
+}
+template <>
+const LoadFloatType& Proc<1, false>::getLoad(int) const
+{
+  return getLoad();
+}
+template <>
+LoadFloatType& Proc<1, false>::getLoad(int)
 {
   return getLoad();
 }
@@ -281,22 +340,31 @@ class Proc<N, true, multi>
  public:
   int id = -1;
   static constexpr auto dimension = N;
-  std::array<float, N> speed;
+  std::array<LoadFloatType, N> speed;
 
-  inline void populate(int _id, float* _bgload, float* _speed)
+  inline void populate(int _id, LoadFloatType* _bgload, LoadFloatType* _speed)
   {
     id = _id;
     std::copy_n(_bgload, N, this->bgload.begin());
     std::copy_n(_speed, N, this->speed.begin());
   }
 
-  inline float getLoad() const { return this->totalload; }
+  inline const LoadFloatType& getLoad() const { return this->totalload; }
+  inline LoadFloatType& getLoad() { return this->totalload; }
 
-  inline float getLoad(int dim) const
+  inline const LoadFloatType& getLoad(int dim) const
   {
     CkAssert(dim < dimension);
     return this->load[dim];
   }
+  inline LoadFloatType& getLoad(int dim)
+  {
+    CkAssert(dim < dimension);
+    return this->load[dim];
+  }
+
+  const LoadFloatType& operator[](size_t dim) const { return getLoad(dim); }
+  LoadFloatType& operator[](size_t dim) { return getLoad(dim); }
 
   inline void assign(const Obj<N>* o)
   {
@@ -318,7 +386,6 @@ class Proc<N, true, multi>
   }
   inline void unassign(const Obj<N>& o) { unassign(&o); }
 
-  
   inline void resetLoad()
   {
     this->totalload = 0;
@@ -328,22 +395,34 @@ class Proc<N, true, multi>
       this->totalload += this->bgload[i];
     }
   }
+
+  bool operator==(const Proc& element) const { return id == element.id; };
 };
 
 template <>
-void Proc<1, true>::populate(int _id, float* _bgload, float* _speed)
+void Proc<1, true>::populate(int _id, LoadFloatType* _bgload, LoadFloatType* _speed)
 {
   id = _id;
   this->bgload = *_bgload;
   speed[0] = _speed[0];
 }
 template <>
-float Proc<1, true>::getLoad() const
+const LoadFloatType& Proc<1, true>::getLoad() const
 {
   return this->load;
 }
 template <>
-float Proc<1, true>::getLoad(int) const
+LoadFloatType& Proc<1, true>::getLoad()
+{
+  return this->load;
+}
+template <>
+const LoadFloatType& Proc<1, true>::getLoad(int) const
+{
+  return getLoad();
+}
+template <>
+LoadFloatType& Proc<1, true>::getLoad(int)
 {
   return getLoad();
 }
