@@ -3,6 +3,7 @@
 
 #include "TreeStrategyBase.h"
 #include "greedy.h"
+#include "kd.h"
 #include "refine.h"
 
 namespace TreeStrategy
@@ -13,14 +14,15 @@ namespace TreeStrategy
 // The second parameter is whether or not the constructor takes a json& config argument
 // (which some strategies to accept additional parameters from the config file)
 #define FOREACH_STRATEGY(STRATEGY) \
-  STRATEGY(GreedyNorm, true)      \
+  STRATEGY(GreedyNorm, true)       \
   STRATEGY(Greedy, false)          \
   STRATEGY(GreedyRefine, true)     \
   STRATEGY(RefineA, false)         \
   STRATEGY(RefineB, false)         \
   STRATEGY(Random, false)          \
   STRATEGY(Dummy, false)           \
-  STRATEGY(Rotate, false)
+  STRATEGY(Rotate, false)          \
+  STRATEGY(Kd, false)
 
 #define STRINGIFYLB(_name, _) #_name,
 const auto LBNames = {FOREACH_STRATEGY(STRINGIFYLB)};
