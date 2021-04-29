@@ -37,6 +37,13 @@ public:
 
 protected:
   int rootPE = 0;
+  bool useCommMsgs,useCommBytes;
+
+  void loadCommConfig(const json& config)
+  {
+    useCommMsgs = getProperty("use_comm_msgs", false, config);
+    useCommBytes = getProperty("use_comm_bytes", false, config);
+  }
 
   void reset(uint8_t num_levels, std::vector<LevelLogic*>& logic,
              std::vector<int>& comm_parent, std::vector<std::vector<int>>& comm_children,
@@ -81,6 +88,7 @@ private:
 public:
   PE_Root_Tree(json& config)
   {
+    loadCommConfig(config);
     if (!config.contains("root"))
       CkAbort("TreeLB: Configuration must include \"root\" section.\n");
     const auto& root_config = config.at("root");
@@ -110,7 +118,7 @@ public:
     LBManager* lbmgr = CProxy_LBManager(_lbmgr).ckLocalBranch();
 
     // PE level (level 0)
-    logic[0] = new PELevel(lbmgr);
+    logic[0] = new PELevel(lbmgr, useCommMsgs, useCommBytes);
 
     int parent, num_children;
     int* children;
@@ -164,6 +172,7 @@ private:
 public:
   PE_Node_Root_Tree(json& config)
   {
+    loadCommConfig(config);
     // Load configuration for process level
     if (!config.contains("process"))
     {
@@ -211,7 +220,7 @@ public:
     LBManager* lbmgr = CProxy_LBManager(_lbmgr).ckLocalBranch();
 
     // PE level (level 0)
-    logic[0] = new PELevel(lbmgr);
+    logic[0] = new PELevel(lbmgr, useCommMsgs, useCommBytes);
 
     // set up comm-tree between levels 0 and 1
     if (mype == level1root)
@@ -318,6 +327,7 @@ private:
 public:
   PE_Node_NodeSet_Root_Tree(json& config)
   {
+    loadCommConfig(config);
     // Load configuration for process level
     if (!config.contains("process"))
       CkAbort("TreeLB: Configuration must include \"process\" section.\n");
@@ -387,7 +397,7 @@ public:
     LBManager* lbmgr = CProxy_LBManager(_lbmgr).ckLocalBranch();
 
     // PE level (level 0)
-    logic[0] = new PELevel(lbmgr);
+    logic[0] = new PELevel(lbmgr, useCommMsgs, useCommBytes);
 
     // set up comm-tree between levels 0 and 1
     if (mype == level1root)
