@@ -42,6 +42,7 @@ void * CmiIsomallocContextCalloc(CmiIsomallocContext ctx, size_t nelem, size_t s
 void * CmiIsomallocContextRealloc(CmiIsomallocContext ctx, void * ptr, size_t size);
 void CmiIsomallocContextFree(CmiIsomallocContext ctx, void * ptr);
 size_t CmiIsomallocContextGetLength(CmiIsomallocContext ctx, void * ptr);
+void CmiIsomallocContextProtect(CmiIsomallocContext ctx, void * addr, size_t len, int prot);
 
 void * CmiIsomallocContextPermanentAlloc(CmiIsomallocContext ctx, size_t size);
 void * CmiIsomallocContextPermanentAllocAlign(CmiIsomallocContext ctx, size_t align, size_t size);
