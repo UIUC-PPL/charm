@@ -59,6 +59,7 @@ Substantially rewritten by Evan Ramos in 2019.
 #include <sys/personality.h>
 #endif
 
+#include <unordered_map>
 #include <utility>
 
 template <typename T>
@@ -932,12 +933,12 @@ static void CmiIsomallocInitExtent(char ** argv)
 struct isommap
 {
   isommap(uint8_t * s, uint8_t * e)
-    : start{s}, end{e}, allocated_extent{s}, use_rdma{1}, lock{CmiCreateLock()}
+    : start{s}, end{e}, allocated_extent{s}, use_rdma{1}, lock{CmiCreateLock()}, use_recording{0}
   {
     IMP_DBG("[%d][%p] isommap::isommap(%p, %p)\n", CmiMyPe(), this, s, e);
   }
   isommap(PUP::reconstruct pr)
-    : lock{CmiCreateLock()}
+    : lock{CmiCreateLock()}, use_recording{0}
   {
     IMP_DBG("[%d][%p] isommap::isommap(PUP::reconstruct)\n", CmiMyPe(), this);
   }
@@ -1090,6 +1091,11 @@ struct isommap
     use_rdma = enable;
   }
 
+  void EnableRecording(int enable)
+  {
+    use_recording = enable;
+  }
+
   // canonical data
   uint8_t * start, * end, * allocated_extent;
   int use_rdma;
@@ -1102,6 +1108,10 @@ struct isommap
    * but it is here as a safeguard for a multithreaded case such as AMPI+OpenMP.
    */
   CmiNodeLock lock;
+
+  // transient data, resets after migration
+  int use_recording;
+  std::unordered_map<uintptr_t, std::pair<size_t, size_t>> heap_record;
 };
 
 /************** dlmalloc mempool ***************/
@@ -2588,6 +2598,12 @@ void CmiIsomallocEnableRDMA(CmiIsomallocContext ctx, int enable)
   pool->backend.EnableRDMA(enable);
 }
 
+void CmiIsomallocContextEnableRecording(CmiIsomallocContext ctx, int enable)
+{
+  auto pool = (Mempool *)ctx.opaque;
+  pool->backend.EnableRecording(enable);
+}
+
 CmiIsomallocRegion CmiIsomallocContextGetUsedExtent(CmiIsomallocContext ctx)
 {
   auto pool = (Mempool *)ctx.opaque;
@@ -2596,26 +2612,78 @@ CmiIsomallocRegion CmiIsomallocContextGetUsedExtent(CmiIsomallocContext ctx)
 
 void * CmiIsomallocContextMalloc(CmiIsomallocContext ctx, size_t size)
 {
+  CmiMemoryIsomallocDisablePush();
+
   auto pool = (Mempool *)ctx.opaque;
-  return pool->alloc(size);
+  auto ret = pool->alloc(size);
+
+  if (ret != nullptr && pool->backend.use_recording)
+  {
+    auto & rec = pool->backend.heap_record;
+    rec[(uintptr_t)ret] = std::make_pair(size, size_t{});
+  }
+
+  CmiMemoryIsomallocDisablePop();
+
+  return ret;
 }
 
 void * CmiIsomallocContextMallocAlign(CmiIsomallocContext ctx, size_t align, size_t size)
 {
+  CmiMemoryIsomallocDisablePush();
+
   auto pool = (Mempool *)ctx.opaque;
-  return pool->alloc(size, isomalloc_internal_validate_align(align));
+  size_t real_align = isomalloc_internal_validate_align(align);
+  auto ret = pool->alloc(size, real_align);
+
+  if (ret != nullptr && pool->backend.use_recording)
+  {
+    auto & rec = pool->backend.heap_record;
+    rec[(uintptr_t)ret] = std::make_pair(size, real_align);
+  }
+
+  CmiMemoryIsomallocDisablePop();
+
+  return ret;
 }
 
 void * CmiIsomallocContextCalloc(CmiIsomallocContext ctx, size_t nelem, size_t size)
 {
+  CmiMemoryIsomallocDisablePush();
+
   auto pool = (Mempool *)ctx.opaque;
-  return pool->calloc(nelem, size);
+  auto ret = pool->calloc(nelem, size);
+
+  if (ret != nullptr && pool->backend.use_recording)
+  {
+    auto & rec = pool->backend.heap_record;
+    rec[(uintptr_t)ret] = std::make_pair(nelem*size, size_t{});
+  }
+
+  CmiMemoryIsomallocDisablePop();
+
+  return ret;
 }
 
 void * CmiIsomallocContextRealloc(CmiIsomallocContext ctx, void * ptr, size_t size)
 {
+  CmiMemoryIsomallocDisablePush();
+
   auto pool = (Mempool *)ctx.opaque;
-  return pool->realloc(ptr, size);
+  auto ret = pool->realloc(ptr, size);
+
+  if (ret != nullptr && pool->backend.use_recording)
+  {
+    auto & rec = pool->backend.heap_record;
+    auto iter = rec.find((uintptr_t)ptr);
+    if (iter != rec.end())
+      rec.erase(iter);
+    rec[(uintptr_t)ret] = std::make_pair(size, size_t{});
+  }
+
+  CmiMemoryIsomallocDisablePop();
+
+  return ret;
 }
 
 void CmiIsomallocContextFree(CmiIsomallocContext ctx, void * ptr)
@@ -2623,8 +2691,20 @@ void CmiIsomallocContextFree(CmiIsomallocContext ctx, void * ptr)
   if (ptr == nullptr)
     return;
 
+  CmiMemoryIsomallocDisablePush();
+
   auto pool = (Mempool *)ctx.opaque;
   pool->free(ptr);
+
+  if (pool->backend.use_recording)
+  {
+    auto & rec = pool->backend.heap_record;
+    auto iter = rec.find((uintptr_t)ptr);
+    if (iter != rec.end())
+      rec.erase(iter);
+  }
+
+  CmiMemoryIsomallocDisablePop();
 }
 
 size_t CmiIsomallocContextGetLength(CmiIsomallocContext ctx, void * ptr)
@@ -2664,6 +2744,20 @@ void CmiIsomallocContextProtect(CmiIsomallocContext ctx, void * addr, size_t len
 
   auto pool = (Mempool *)ctx.opaque;
   pool->backend.protect(addr, len, prot);
+
+  CmiMemoryIsomallocDisablePop();
+}
+
+void CmiIsomallocGetRecordedHeap(CmiIsomallocContext ctx, std::vector<std::tuple<uintptr_t, size_t, size_t>> & heap_vector)
+{
+  CmiMemoryIsomallocDisablePush();
+
+  auto pool = (Mempool *)ctx.opaque;
+  auto & rec = pool->backend.heap_record;
+  heap_vector.reserve(rec.size());
+  for (const auto & entry : rec)
+    heap_vector.emplace_back(entry.first, entry.second.first, entry.second.second);
+  rec.clear();
 
   CmiMemoryIsomallocDisablePop();
 }
