@@ -199,7 +199,8 @@ TCharm::TCharm(TCharmInitMsg *initMsg_)
       tid=CthCreate((CthVoidFn)startTCharmThread,initMsg,initMsg->opts.stackSize);
       TCHARM_Element_Setup(thisIndex, initMsg->numElements, CmiIsomallocContext{});
     } else {
-      CmiIsomallocContext heapContext = CmiIsomallocContextCreate(thisIndex, initMsg->numElements);
+      // add one to numElements so that pieglobals can have some scratch space
+      CmiIsomallocContext heapContext = CmiIsomallocContextCreate(thisIndex, initMsg->numElements+1);
       tid = CthCreateMigratable((CthVoidFn)startTCharmThread,initMsg,initMsg->opts.stackSize, heapContext);
       TCHARM_Element_Setup(thisIndex, initMsg->numElements, heapContext);
       if (heapContext.opaque != nullptr)

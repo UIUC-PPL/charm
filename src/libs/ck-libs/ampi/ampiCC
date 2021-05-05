@@ -86,6 +86,11 @@ do
      GLOBALS_SHARED='1'
      GLOBALS_FUNCPTR='1'
      ;;
+  -pieglobals)
+     GLOBALS='pie'
+     GLOBALS_SHARED='1'
+     GLOBALS_FUNCPTR='1'
+     ;;
 
   -c)
      EXPLICIT_COMPILATION='true'
