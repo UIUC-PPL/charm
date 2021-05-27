@@ -1,4 +1,4 @@
-set(ckperf-h-sources trace-Tau.h trace-TauBOC.h
+set(ckperf-h-sources trace-Tau.h trace-TauBOC.h trace-commSummary.h trace-commSummaryBOC.h
     trace-controlPoints.h trace-controlPointsBOC.h trace-counter.h trace-common.h
     trace-memory.h trace-projections.h trace-projectionsBOC.h trace-projector.h
     trace-simple.h trace-simpleBOC.h trace-summary.h trace-summaryBOC.h
@@ -28,6 +28,9 @@ if(CMK_TRACE_ENABLED)
 
     add_library(trace-simple trace-simple.C)
     add_dependencies(trace-simple ck)
+
+    add_library(trace-commSummary trace-commSummary.C)
+    add_dependencies(trace-commSummary ck)
 
     add_library(trace-counter trace-counter.C)
     add_dependencies(trace-counter ck)

@@ -1,0 +1,9 @@
+module TraceCommSummary
+{
+  mainchare TraceCommSummaryInit { entry TraceCommSummaryInit(CkArgMsg * m); };
+
+  initnode void initTraceCommSummaryBOC();
+  readonly CkGroupID traceCommSummaryGID;
+
+  group[migratable] TraceCommSummaryBOC { entry TraceCommSummaryBOC(void); };
+};
