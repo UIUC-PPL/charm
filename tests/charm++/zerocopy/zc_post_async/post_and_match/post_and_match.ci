@@ -1,0 +1,41 @@
+mainmodule post_and_match
+{
+
+  readonly CProxy_arr arrProxy;
+  readonly CProxy_grp grpProxy;
+  readonly CProxy_nodegrp ngProxy;
+  readonly CProxy_tester chareProxy;
+
+  mainchare main
+  {
+    entry main(CkArgMsg *);
+  };
+
+  chare tester {
+    entry tester();
+    entry void p2pDone();
+    entry [reductiontarget] void bcastPostDone();
+    entry [reductiontarget] void bcastDone();
+  };
+
+  array [1D] arr{
+    entry arr();
+    entry void readyToPost();
+    entry void postBuffers();
+    entry void recv_zerocopy(nocopypost int buffer[size], size_t size, bool isBcast);
+  };
+
+  group grp{
+    entry grp();
+    entry void readyToPost();
+    entry void postBuffers();
+    entry void recv_zerocopy(nocopypost int buffer1[size1], size_t size1, nocopypost int buffer2[size2], size_t size2, bool isBcast);
+  };
+
+  nodegroup nodegrp{
+    entry nodegrp();
+    entry void readyToPost();
+    entry void postBuffers();
+    entry void recv_zerocopy(nocopypost int buffer[size], size_t size, bool isBcast);
+  };
+}
