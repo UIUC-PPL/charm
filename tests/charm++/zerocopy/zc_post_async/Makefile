@@ -1,20 +1,10 @@
 DIRS = \
-  large_bcast \
-  zerocopy_with_qd \
-  direct_api \
-  zc_post_modify_size \
-  dereg_and_nodereg \
-  bcast_nonzero_root \
-  pup_buffer \
-  zc_post_async \
-#  large_p2p \ # not running as a part of make test since test requires over 4 GB of memory which causes failures during CI
-
-NONSCALEDIRS = \
-  large_p2p \
+  post_and_match \
+  bcast_subset_async \
 
 TESTDIRS = $(DIRS)
 
-TESTPDIRS = $(filter-out $(NONSCALEDIRS),$(TESTDIRS))
+TESTPDIRS = $(DIRS)
 
 all: $(foreach i,$(DIRS),build-$i)
 

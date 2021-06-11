@@ -1,0 +1,40 @@
+mainmodule zc_post_async
+{
+
+  readonly CProxy_arr arrProxy;
+  readonly CProxy_grp grpProxy;
+  readonly CProxy_nodegrp ngProxy;
+  readonly CProxy_tester chareProxy;
+
+  mainchare main
+  {
+    entry main(CkArgMsg *);
+  };
+
+  chare tester {
+    entry tester();
+    entry [reductiontarget] void bcastPostDone();
+    entry [reductiontarget] void bcastDone();
+  };
+
+  array [1D] arr{
+    entry arr();
+    entry void readyToPost();
+    entry void postBuffers();
+    entry void recv_zerocopy(nocopypost int buffer[size], size_t size);
+  };
+
+  group grp{
+    entry grp();
+    entry void readyToPost();
+    entry void postBuffers();
+    entry void recv_zerocopy(nocopypost int buffer1[size1], size_t size1, nocopypost int buffer2[size2], size_t size2);
+  };
+
+  nodegroup nodegrp{
+    entry nodegrp();
+    entry void readyToPost();
+    entry void postBuffers();
+    entry void recv_zerocopy(nocopypost int buffer[size], size_t size);
+  };
+}
