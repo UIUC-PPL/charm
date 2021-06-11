@@ -48,5 +48,9 @@ mainmodule megaZCPingpong{
     entry void zerocopyEMRecvApi1(nocopypost char msg[size], int size);
     entry void zerocopyEMRecvApi2(nocopypost char msg[size], int size);
     entry void zerocopyEMRecvApi3(nocopypost char msg[size], int size);
+
+    entry void zerocopyEMRecvApiMatchAndPost1(nocopypost char msg[size], int size);
+    entry void zerocopyEMRecvApiMatchAndPost2(nocopypost char msg[size], int size);
+    entry void zerocopyEMRecvApiMatchAndPost3(nocopypost char msg[size], int size);
   };
 }

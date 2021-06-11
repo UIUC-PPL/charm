@@ -21,6 +21,10 @@ mainmodule ping_all
     entry [reductiontarget] void recv_zc_post_done2();
     entry [reductiontarget] void recv_zc_post_done3();
 
+    entry [reductiontarget] void recv_zc_match_and_post_done1();
+    entry [reductiontarget] void recv_zc_match_and_post_done2();
+    entry [reductiontarget] void recv_zc_match_and_post_done3();
+
     entry void done();
   }
 
@@ -54,5 +58,14 @@ mainmodule ping_all
 
     // charm++ zero copy message recv api for parameters marked "nocopypost" (PREREG mode)
     entry [exclusive] void recv_zc_post3(nocopypost char msg[size], size_t size, int iter, bool warmUp, int iterations);
+
+    // charm++ zero copy message recv api for parameters marked "nocopypost" (UNREG mode)
+    entry [exclusive] void recv_zc_match_and_post1(nocopypost char msg[size], size_t size, int iter, bool warmUp, int iterations);
+
+    // charm++ zero copy message recv api for parameters marked "nocopypost" (REG mode)
+    entry [exclusive] void recv_zc_match_and_post2(nocopypost char msg[size], size_t size, int iter, bool warmUp, int iterations);
+
+    // charm++ zero copy message recv api for parameters marked "nocopypost" (PREREG mode)
+    entry [exclusive] void recv_zc_match_and_post3(nocopypost char msg[size], size_t size, int iter, bool warmUp, int iterations);
   }
 }

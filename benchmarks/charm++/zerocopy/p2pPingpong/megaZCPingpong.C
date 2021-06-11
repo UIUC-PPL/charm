@@ -40,11 +40,11 @@ class main : public CBase_main {
 
     if(printFormat == 0) { // csv print format
 
-      CkPrintf("Size (Bytes),Iterations,Regular Send(us),ZC EM Send UNREG mode(us),ZC EM Send REG Mode (us),ZC EM Send PREREG Mode(us),Regular Recv with Copy(us),ZC EM Send with Copy(us),ZC Direct UNREG(us),ZC Direct REG(us),ZC Direct PREREG(us),ZC Direct (Reg/Dereg),ZC Post Recv UNREG(us),ZC Post Recv REG(us),ZC Post Recv PREREG(us),Reg Time(us),Dereg Time(us),Reg + Dereg Time 1(us),Reg + Dereg Time 2(us)\n");
+      CkPrintf("Size (Bytes),Iterations,Regular Send(us),ZC EM Send UNREG mode(us),ZC EM Send REG Mode (us),ZC EM Send PREREG Mode(us),Regular Recv with Copy(us),ZC EM Send with Copy(us),ZC Direct UNREG(us),ZC Direct REG(us),ZC Direct PREREG(us),ZC Direct (Reg/Dereg),ZC Post Recv UNREG(us),ZC Post Recv REG(us),ZC Post Recv PREREG(us), ZC Match and Post Recv UNREG(us), ZC Match and Post Recv REG(us), ZC Match and Post Recv PREREG(us), Reg Time(us),Dereg Time(us),Reg + Dereg Time 1(us),Reg + Dereg Time 2(us)\n");
 
     } else { // regular print format
 
-      CkPrintf("Size (bytes)\t\tIterations\t||\tRegular Send\tZC EM Send1\tZC EM Send 2\tZC EM Send 3\t||\tRegular Recv with Copy\tZC EM Send with Copy\tZC Direct1\tZC Direct2\tZC Direct3\tZC Direct (Reg/Dereg)\tZC EM Recv1\tZC EM Recv2\tZC EM Recv3\t||\tReg time\tDereg time\tReg+Dereg 1\tReg+Dereg 2\n");
+      CkPrintf("Size (bytes)\t\tIterations\t||\tRegular Send\tZC EM Send1\tZC EM Send 2\tZC EM Send 3\t||\tRegular Recv with Copy\tZC EM Send with Copy\tZC Direct1\tZC Direct2\tZC Direct3\tZC Direct (Reg/Dereg)\tZC EM Recv1\tZC EM Recv2\tZC EM Recv3\tZC EM MP Recv1\tZC EM MP Recv2\tZC EM MP Recv3||\tReg time\tDereg time\tReg+Dereg 1\tReg+Dereg 2\n");
 
     }
 
@@ -79,11 +79,14 @@ class Ping1 : public CBase_Ping1 {
   double reg_send_time, zc_em_send_time1, zc_em_send_time2, zc_em_send_time3;
   double reg_recv_time, zc_direct_time1, zc_direct_time2, zc_direct_time3, zc_direct_time4;
   double zc_em_recv_time, zc_recv_time1, zc_recv_time2, zc_recv_time3;
+  double zc_recv_mp_time1, zc_recv_mp_time2, zc_recv_mp_time3;
 
   double time1, time2, time3;
   double regTime, deregTime, regDeregSumTime, regDeregSumTime2;
 
   int directCounter;
+
+  int tag1 = 200;
 
   public:
     Ping1() {
@@ -470,32 +473,116 @@ class Ping1 : public CBase_Ping1 {
         if(niter==iterations) {
           end_time = CkWallTimer();
           zc_recv_time3 = 1.0e6*(end_time-start_time)/iterations;
-          if(warmUp == false) {
 
-            if(printFormat == 0) { // csv print format
+          niter = 0;
+          start_time = CkWallTimer();
+          thisProxy[1].zerocopyEMRecvApiMatchAndPost1(CkSendBuffer(nocopySrcBuffer, CK_BUFFER_UNREG), size);
 
-              CkPrintf("%d,%d,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf\n", size, iterations, reg_send_time/2, zc_em_send_time1/2, zc_em_send_time2/2, zc_em_send_time3/2, reg_recv_time/2, zc_em_recv_time/2, zc_direct_time1/2, zc_direct_time2/2, zc_direct_time3/2, zc_direct_time4/2, zc_recv_time1/2, zc_recv_time2/2, zc_recv_time3/2, regTime/iterations, deregTime/iterations, (regTime + deregTime)/iterations, zc_direct_time4 - zc_direct_time2);
-            }
-            else { // regular print format
-
-              if(size < 1 << 24) {
-
-                CkPrintf("%d\t\t\t%d\t\t||\t%lf\t%lf\t%lf\t%lf\t||\t%lf\t\t%lf\t\t%lf\t%lf\t%lf\t%lf\t\t%lf\t%lf\t%lf\t||\t%lf\t%lf\t%lf\t%lf\n", size, iterations, reg_send_time/2, zc_em_send_time1/2, zc_em_send_time2/2, zc_em_send_time3/2, reg_recv_time/2, zc_em_recv_time/2, zc_direct_time1/2, zc_direct_time2/2, zc_direct_time3/2, zc_direct_time4/2, zc_recv_time1/2, zc_recv_time2/2, zc_recv_time3/2, regTime/iterations, deregTime/iterations, (regTime + deregTime)/iterations, zc_direct_time4 - zc_direct_time2);
-
-              } else { //using different print format for larger numbers for aligned output
-
-                CkPrintf("%d\t\t%d\t\t||\t%lf\t%lf\t%lf\t%lf\t||\t%lf\t\t%lf\t\t%lf\t%lf\t%lf\t%lf\t\t%lf\t%lf\t%lf\t||\t%lf\t%lf\t%lf\t%lf\n", size, iterations, reg_send_time/2, zc_em_send_time1/2, zc_em_send_time2/2, zc_em_send_time3/2, reg_recv_time/2, zc_em_recv_time/2, zc_direct_time1/2, zc_direct_time2/2,  zc_direct_time3/2, zc_direct_time4/2, zc_recv_time1/2, zc_recv_time2/2, zc_recv_time3/2, regTime/iterations, deregTime/iterations, (regTime + deregTime)/iterations, zc_direct_time4 - zc_direct_time2);
-
-              }
-            }
-          }
-          niter=0;
-          mainProxy.maindone();
         } else {
           thisProxy[1].zerocopyEMRecvApi3(CkSendBuffer(nocopySrcBufferReg, CK_BUFFER_PREREG), size);
         }
       } else {
         thisProxy[0].zerocopyEMRecvApi3(CkSendBuffer(nocopySrcBufferReg, CK_BUFFER_PREREG), size);
+      }
+    }
+
+    void zerocopyEMRecvApiMatchAndPost1(char *&msg, int &size, CkNcpyBufferPost *ncpyPost) {
+      ncpyPost[0].regMode = CK_BUFFER_UNREG;
+
+      CkMatchBuffer(ncpyPost, 0, tag1);
+      CkPostBuffer(nocopyDestBuffer, size, tag1);
+    }
+
+    void zerocopyEMRecvApiMatchAndPost1(char *msg, int size) {
+      if(thisIndex==0) {
+        niter++;
+        if(niter==iterations) {
+          end_time = CkWallTimer();
+          zc_recv_mp_time1 = 1.0e6*(end_time-start_time)/iterations;
+
+          niter = 0;
+
+          start_time = CkWallTimer();
+          thisProxy[1].zerocopyEMRecvApiMatchAndPost2(CkSendBuffer(nocopySrcBuffer, CK_BUFFER_REG), size);
+
+        } else {
+          thisProxy[1].zerocopyEMRecvApiMatchAndPost1(CkSendBuffer(nocopySrcBuffer, CK_BUFFER_UNREG), size);
+        }
+      } else {
+        thisProxy[0].zerocopyEMRecvApiMatchAndPost1(CkSendBuffer(nocopySrcBuffer, CK_BUFFER_UNREG), size);
+      }
+    }
+
+    void zerocopyEMRecvApiMatchAndPost2(char *&msg, int &size, CkNcpyBufferPost *ncpyPost) {
+      ncpyPost[0].regMode = CK_BUFFER_REG;
+
+      CkMatchBuffer(ncpyPost, 0, tag1);
+      CkPostBuffer(nocopyDestBuffer, size, tag1);
+    }
+
+    void zerocopyEMRecvApiMatchAndPost2(char *msg, int size) {
+      if(thisIndex==0) {
+        niter++;
+        if(niter==iterations) {
+          end_time = CkWallTimer();
+          zc_recv_mp_time2 = 1.0e6*(end_time-start_time)/iterations;
+
+          niter = 0;
+
+          start_time = CkWallTimer();
+          thisProxy[1].zerocopyEMRecvApiMatchAndPost3(CkSendBuffer(nocopySrcBufferReg, CK_BUFFER_PREREG), size);
+
+        } else {
+          thisProxy[1].zerocopyEMRecvApiMatchAndPost2(CkSendBuffer(nocopySrcBuffer, CK_BUFFER_REG), size);
+        }
+      } else {
+        thisProxy[0].zerocopyEMRecvApiMatchAndPost2(CkSendBuffer(nocopySrcBuffer, CK_BUFFER_REG), size);
+      }
+    }
+
+    void zerocopyEMRecvApiMatchAndPost3(char *&msg, int &size, CkNcpyBufferPost *ncpyPost) {
+      ncpyPost[0].regMode = CK_BUFFER_PREREG;
+
+      CkMatchBuffer(ncpyPost, 0, tag1);
+      CkPostBuffer(nocopyDestBufferReg, size, tag1);
+    }
+
+    // Send and Recv for ZC Entry Method API
+    void zerocopyEMRecvApiMatchAndPost3(char *msg, int size) {
+      if(thisIndex==0) {
+        niter++;
+        if(niter==iterations) {
+          end_time = CkWallTimer();
+          zc_recv_mp_time3 = 1.0e6*(end_time-start_time)/iterations;
+          if(warmUp == false) {
+            printOutput();
+          }
+          niter=0;
+          mainProxy.maindone();
+        } else {
+          thisProxy[1].zerocopyEMRecvApiMatchAndPost3(CkSendBuffer(nocopySrcBufferReg, CK_BUFFER_PREREG), size);
+        }
+      } else {
+        thisProxy[0].zerocopyEMRecvApiMatchAndPost3(CkSendBuffer(nocopySrcBufferReg, CK_BUFFER_PREREG), size);
+      }
+    }
+
+    void printOutput() {
+      if(printFormat == 0) { // csv print format
+
+        CkPrintf("%d,%d,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf\n", size, iterations, reg_send_time/2, zc_em_send_time1/2, zc_em_send_time2/2, zc_em_send_time3/2, reg_recv_time/2, zc_em_recv_time/2, zc_direct_time1/2, zc_direct_time2/2, zc_direct_time3/2, zc_direct_time4/2, zc_recv_time1/2, zc_recv_time2/2, zc_recv_time3/2, zc_recv_mp_time1/2, zc_recv_mp_time2/2, zc_recv_mp_time3/2, regTime/iterations, deregTime/iterations, (regTime + deregTime)/iterations, zc_direct_time4 - zc_direct_time2);
+      }
+      else { // regular print format
+
+        if(size < 1 << 24) {
+
+          CkPrintf("%d\t\t\t%d\t\t||\t%lf\t%lf\t%lf\t%lf\t||\t%lf\t\t%lf\t\t%lf\t%lf\t%lf\t%lf\t\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t||\t%lf\t%lf\t%lf\t%lf\n", size, iterations, reg_send_time/2, zc_em_send_time1/2, zc_em_send_time2/2, zc_em_send_time3/2, reg_recv_time/2, zc_em_recv_time/2, zc_direct_time1/2, zc_direct_time2/2, zc_direct_time3/2, zc_direct_time4/2, zc_recv_time1/2, zc_recv_time2/2, zc_recv_time3/2, zc_recv_mp_time1/2, zc_recv_mp_time2/2, zc_recv_mp_time3/2, regTime/iterations, deregTime/iterations, (regTime + deregTime)/iterations, zc_direct_time4 - zc_direct_time2);
+
+        } else { //using different print format for larger numbers for aligned output
+
+          CkPrintf("%d\t\t%d\t\t||\t%lf\t%lf\t%lf\t%lf\t||\t%lf\t\t%lf\t\t%lf\t%lf\t%lf\t%lf\t\t%lf\t%lf\t%lf\t%lf\t%lf\t%lf\t||\t%lf\t%lf\t%lf\t%lf\n", size, iterations, reg_send_time/2, zc_em_send_time1/2, zc_em_send_time2/2, zc_em_send_time3/2, reg_recv_time/2, zc_em_recv_time/2, zc_direct_time1/2, zc_direct_time2/2,  zc_direct_time3/2, zc_direct_time4/2, zc_recv_time1/2, zc_recv_time2/2, zc_recv_time3/2, zc_recv_mp_time1/2, zc_recv_mp_time2/2, zc_recv_mp_time3/2, regTime/iterations, deregTime/iterations, (regTime + deregTime)/iterations, zc_direct_time4 - zc_direct_time2);
+
+        }
       }
     }
 

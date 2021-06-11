@@ -17,6 +17,7 @@ class main : public CBase_main
   CProxy_LargeDataNodeGroup ngid;
   double start_time, end_time, reg_time1, zcpy_send_time1, zcpy_send_time2, zcpy_send_time3;
   double reg_time2, zcpy_send_with_copy_time, zcpy_recv_time1, zcpy_recv_time2, zcpy_recv_time3;
+  double zcpy_recv_mp_time1, zcpy_recv_mp_time2, zcpy_recv_mp_time3;
   CkCallback doneCb;
   size_t size;
   bool warmUp;
@@ -71,9 +72,9 @@ public:
     doneCb = CkCallback(idx_zerocopySendDone, thisProxy);
 
     if(printFormat == 0) // csv print format
-      CkPrintf("Size (Bytes),Iterations,Regular Bcast(us),ZC EM Bcast Send UNREG mode(us),ZC EM Bcast Send REG Mode (us),ZC EM Bcast Send PREREG Mode(us),Regular Bcast with Copy(us),ZC EM Bcast Send with Copy(us),ZC Bcast Post UNREG(us),ZC Bcast Post REG(us),ZC Bcast Post PREREG(us)\n");
+      CkPrintf("Size (Bytes),Iterations,Regular Bcast(us),ZC EM Bcast Send UNREG mode(us),ZC EM Bcast Send REG Mode (us),ZC EM Bcast Send PREREG Mode(us),Regular Bcast with Copy(us),ZC EM Bcast Send with Copy(us),ZC Bcast Post UNREG(us),ZC Bcast Post REG(us),ZC Bcast Post PREREG(us), ZC Bcast Match and Post UNREG(us),ZC Bcast Match and Post REG(us),ZC Bcast Match and Post PREREG(us)\n");
     else // regular print format
-      CkPrintf("Size (Bytes)\t\tIterations\t||\tRegular Bcast(us)\tZC EM Bcast 1(us)\tZC EM Bcast 2(us)\tZC EM Bcast 2(us)\t||\tRegular Bcast & Copy(us)\tZC EM Bcast Send & Copy(us)\tZC Bcast Post 1(us)\tZC Bcast Post 2(us)\tZC Bcast Post 3(us)\n");
+      CkPrintf("Size (Bytes)\t\tIterations\t||\tRegular Bcast(us)\tZC EM Bcast 1(us)\tZC EM Bcast 2(us)\tZC EM Bcast 2(us)\t||\tRegular Bcast & Copy(us)\tZC EM Bcast Send & Copy(us)\tZC Bcast Post 1(us)\tZC Bcast Post 2(us)\tZC Bcast Post 3(us)\tZC Bcast Match and Post UNREG(us)\tZC Bcast Match and Post REG(us)\tZC Bcast Match and Post PREREG(us)\n");
     CkStartQD(CkCallback(CkIndex_main::start(), mainProxy));
   }
 
@@ -112,6 +113,12 @@ public:
       case 6:   recv_zc_post_done2();
                 break;
       case 7:   recv_zc_post_done3();
+                break;
+      case 8:   recv_zc_match_and_post_done1();
+                break;
+      case 9:   recv_zc_match_and_post_done2();
+                break;
+      case 10:  recv_zc_match_and_post_done3();
                 break;
       default:  CmiAbort("Incorrect mode\n");
                 break;
@@ -265,24 +272,85 @@ public:
         end_time = CkWallTimer();
         zcpy_recv_time3 = 1.0e6*(end_time - start_time)/iterations;
         niter = 0;
+        zc_current_operation = 8;
+        start_time = CkWallTimer();
+        ngid.recv_zc_match_and_post1(CkSendBuffer(buffer, doneCb, CK_BUFFER_UNREG), size, niter, warmUp, iterations);
+      } else {
+        ngid.recv_zc_post3(CkSendBuffer(regBuffer, doneCb, CK_BUFFER_PREREG), size, niter, warmUp, iterations);
+      }
+    }
+  }
 
-        if(warmUp == false) {
-          if(printFormat == 0) // csv print format
-            CkPrintf("%zu,%d,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf\n",size, iterations, reg_time1, zcpy_send_time1, zcpy_send_time2, zcpy_send_time3, reg_time2, zcpy_send_with_copy_time, zcpy_recv_time1, zcpy_recv_time2, zcpy_recv_time3);
-          else { // regular print format
-            if(size < 1 << 24)
-              CkPrintf("%zu\t\t\t%d\t\t||\t%lf\t\t%lf\t\t%lf\t\t%lf\t\t||\t%lf\t\t\t%lf\t\t\t%lf\t\t%lf\t\t%lf\n", size, iterations, reg_time1, zcpy_send_time1, zcpy_send_time2, zcpy_send_time3, reg_time2, zcpy_send_with_copy_time, zcpy_recv_time1, zcpy_recv_time2, zcpy_recv_time3);
-            else
-              CkPrintf("%zu\t\t%d\t\t||\t%lf\t\t%lf\t\t%lf\t\t%lf\t\t||\t%lf\t\t\t%lf\t\t\t%lf\t\t%lf\t\t%lf\n", size, iterations, reg_time1, zcpy_send_time1, zcpy_send_time2, zcpy_send_time3, reg_time2, zcpy_send_with_copy_time, zcpy_recv_time1, zcpy_recv_time2, zcpy_recv_time3);
-          }
-        }
+  void recv_zc_match_and_post_done1() {
+    recv_counter++;
+    if(recv_counter == 2) {
+      recv_counter = 0;
+      niter++; // An iteration of the Zerocopy Bcast Recv API is complete
+      if(niter == iterations) {
+        end_time = CkWallTimer();
+        zcpy_recv_mp_time1 = 1.0e6*(end_time - start_time)/iterations;
+        niter = 0;
+        zc_current_operation = 9;
+        start_time = CkWallTimer();
+        ngid.recv_zc_match_and_post2(CkSendBuffer(buffer, doneCb, CK_BUFFER_REG), size, niter, warmUp, iterations);
+      } else {
+        ngid.recv_zc_match_and_post1(CkSendBuffer(buffer, doneCb, CK_BUFFER_UNREG), size, niter, warmUp, iterations);
+      }
+    }
+  }
+
+  void recv_zc_match_and_post_done2() {
+    recv_counter++;
+    if(recv_counter == 2) {
+      recv_counter = 0;
+      niter++; // An iteration of the Zerocopy Bcast Recv API is complete
+      if(niter == iterations) {
+        end_time = CkWallTimer();
+        zcpy_recv_mp_time2 = 1.0e6*(end_time - start_time)/iterations;
+        niter = 0;
+        zc_current_operation = 10;
+        start_time = CkWallTimer();
+        ngid.recv_zc_match_and_post3(CkSendBuffer(regBuffer, doneCb, CK_BUFFER_PREREG), size, niter, warmUp, iterations);
+      } else {
+        ngid.recv_zc_match_and_post2(CkSendBuffer(buffer, doneCb, CK_BUFFER_REG), size, niter, warmUp, iterations);
+      }
+    }
+  }
+
+  void recv_zc_match_and_post_done3() {
+    recv_counter++;
+    if(recv_counter == 2) {
+      recv_counter = 0;
+      niter++; // An iteration of the Zerocopy Bcast Recv API is complete
+      if(niter == iterations) {
+        end_time = CkWallTimer();
+        zcpy_recv_mp_time3 = 1.0e6*(end_time - start_time)/iterations;
+        niter = 0;
+
+        printOutput();
+
         size = size << 1;
         if(warmUp)
           done();
         else
           mainProxy.start();
       } else {
-        ngid.recv_zc_post3(CkSendBuffer(regBuffer, doneCb, CK_BUFFER_PREREG), size, niter, warmUp, iterations);
+        ngid.recv_zc_match_and_post3(CkSendBuffer(regBuffer, doneCb, CK_BUFFER_PREREG), size, niter, warmUp, iterations);
+      }
+    }
+  }
+
+
+
+  void printOutput() {
+    if(warmUp == false) {
+      if(printFormat == 0) // csv print format
+        CkPrintf("%zu,%d,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf\n",size, iterations, reg_time1, zcpy_send_time1, zcpy_send_time2, zcpy_send_time3, reg_time2, zcpy_send_with_copy_time, zcpy_recv_time1, zcpy_recv_time2, zcpy_recv_time3, zcpy_recv_mp_time1, zcpy_recv_mp_time2, zcpy_recv_mp_time3);
+      else { // regular print format
+        if(size < 1 << 24)
+          CkPrintf("%zu\t\t\t%d\t\t||\t%lf\t\t%lf\t\t%lf\t\t%lf\t\t||\t%lf\t\t\t%lf\t\t\t%lf\t\t%lf\t\t%lf\t\t%lf\t\t%lf\t\t%lf\n", size, iterations, reg_time1, zcpy_send_time1, zcpy_send_time2, zcpy_send_time3, reg_time2, zcpy_send_with_copy_time, zcpy_recv_time1, zcpy_recv_time2, zcpy_recv_time3, zcpy_recv_mp_time1, zcpy_recv_mp_time2, zcpy_recv_mp_time3);
+        else
+          CkPrintf("%zu\t\t%d\t\t||\t%lf\t\t%lf\t\t%lf\t\t%lf\t\t||\t%lf\t\t\t%lf\t\t\t%lf\t\t%lf\t\t%lf\t\t%lf\t\t%lf\t\t%lf\n", size, iterations, reg_time1, zcpy_send_time1, zcpy_send_time2, zcpy_send_time3, reg_time2, zcpy_send_with_copy_time, zcpy_recv_time1, zcpy_recv_time2, zcpy_recv_time3, zcpy_recv_mp_time1, zcpy_recv_mp_time2, zcpy_recv_mp_time3);
       }
     }
   }
@@ -304,6 +372,8 @@ class LargeDataNodeGroup : public CBase_LargeDataNodeGroup {
 
   CkCallback regCb1, zcSendCb1, zcSendCb2, zcSendCb3;
   CkCallback regCb2, zcSendWithCopyCb, zcRecvCb1, zcRecvCb2, zcRecvCb3;
+  CkCallback zcRecvMpCb1, zcRecvMpCb2, zcRecvMpCb3;
+  int tag1;
   char *myBuffer, *regBuffer;
 
 public:
@@ -322,6 +392,12 @@ public:
     zcRecvCb1 = CkCallback(CkReductionTarget(main, recv_zc_post_done1), mainProxy);
     zcRecvCb2 = CkCallback(CkReductionTarget(main, recv_zc_post_done2), mainProxy);
     zcRecvCb3 = CkCallback(CkReductionTarget(main, recv_zc_post_done3), mainProxy);
+
+    zcRecvMpCb1 = CkCallback(CkReductionTarget(main, recv_zc_match_and_post_done1), mainProxy);
+    zcRecvMpCb2 = CkCallback(CkReductionTarget(main, recv_zc_match_and_post_done2), mainProxy);
+    zcRecvMpCb3 = CkCallback(CkReductionTarget(main, recv_zc_match_and_post_done3), mainProxy);
+
+    tag1 = 200;
 
     // allocate a large buffer to receive the sent buffer
     myBuffer = new char[maxSize];
@@ -384,8 +460,37 @@ public:
   void recv_zc_post3(char *msg, size_t size, int iter, bool warmUp, int iterations) {
     contribute(zcRecvCb3);
   }
-};
 
+  void recv_zc_match_and_post1(char *&msg, size_t &size, int iter, bool warmUp, int iterations, CkNcpyBufferPost *ncpyPost) {
+    ncpyPost[0].regMode = CK_BUFFER_UNREG;
+    CkMatchBuffer(ncpyPost, 0, tag1);
+    CkPostBuffer(myBuffer, size, tag1);
+  }
+
+  void recv_zc_match_and_post1(char *msg, size_t size, int iter, bool warmUp, int iterations) {
+    contribute(zcRecvMpCb1);
+  }
+
+  void recv_zc_match_and_post2(char *&msg, size_t &size, int iter, bool warmUp, int iterations, CkNcpyBufferPost *ncpyPost) {
+    ncpyPost[0].regMode = CK_BUFFER_REG;
+    CkMatchBuffer(ncpyPost, 0, tag1);
+    CkPostBuffer(myBuffer, size, tag1);
+  }
+
+  void recv_zc_match_and_post2(char *msg, size_t size, int iter, bool warmUp, int iterations) {
+    contribute(zcRecvMpCb2);
+  }
+
+  void recv_zc_match_and_post3(char *&msg, size_t &size, int iter, bool warmUp, int iterations, CkNcpyBufferPost *ncpyPost) {
+    ncpyPost[0].regMode = CK_BUFFER_PREREG;
+    CkMatchBuffer(ncpyPost, 0, tag1);
+    CkPostBuffer(regBuffer, size, tag1);
+  }
+
+  void recv_zc_match_and_post3(char *msg, size_t size, int iter, bool warmUp, int iterations) {
+    contribute(zcRecvMpCb3);
+  }
+};
 
 #include "ping_all.def.h"
 
