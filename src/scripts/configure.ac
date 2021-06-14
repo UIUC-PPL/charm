@@ -1517,34 +1517,6 @@ EOT
 test_linkc "whether has __executable_start" "yes" "no" ""
 AC_DEFINE_UNQUOTED([CMK_HAS_EXECUTABLE_START], $pass, [whether has __executable_start])
 
-### test if switching TLS register ###
-if test $in64bit = 1
-then
-cat > $t <<EOT
-void switchTLS() {
-  void * m1, * m2;
-  asm volatile ("movq %%fs:0x0, %0\n\t"
-                "movq %1, %%fs:0x0\n\t"
-                : "=&r"(m1)
-                : "r"(m2));
-}
-EOT
-test_cxx "whether switching TLS register (64-bit) is supported" "yes" "no" ""
-AC_DEFINE_UNQUOTED(CMK_TLS_SWITCHING_X86_64, $strictpass, [Allows switching TLS on x86_64.])
-else
-cat > $t <<EOT
-void switchTLS() {
-  void * m1, * m2;
-  asm volatile ("movl %%gs:0x0, %0\n\t"
-                "movl %1, %%gs:0x0\n\t"
-                : "=&r"(m1)
-                : "r"(m2));
-}
-EOT
-test_cxx "whether switching TLS register (32-bit) is supported" "yes" "no" ""
-AC_DEFINE_UNQUOTED(CMK_TLS_SWITCHING_X86, $strictpass, [Allows switching TLS on x86.])
-fi
-
 ### test for dl_iterate_phdr ###
 
 cat > $tc <<EOT

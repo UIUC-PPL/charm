@@ -1527,9 +1527,16 @@ fi
 
 if [ "$TLSGLOBALS" = "1" ]
 then
-    if [ "$CMK_COMPILER_KNOWS_TLSDIRECTSEGREFS" != '1' ] && [ "$CMK_COMPILER" != 'clang' -o "$CMK_MACOSX" != '1' ]
+    if [[ "$CMK_VDIR" = "${CMK_VDIR%x86_64}x86_64" || "$CMK_VDIR" = "${CMK_VDIR%i386}i386" ]]
     then
-      echo "Warning: -tlsglobals may not work with compilers that do not recognize -mno-tls-direct-seg-refs."
+      if [[ "$CMK_COMPILER_KNOWS_TLSDIRECTSEGREFS" != '1' ]] && [[ "$CMK_COMPILER" != 'clang' || "$CMK_MACOSX" != '1' ]]
+      then
+        echo "Warning: -tlsglobals may not work with compilers that do not recognize -mno-tls-direct-seg-refs."
+      fi
+    elif [[ "$CMK_VDIR" != "${CMK_VDIR%arm8}arm8" && "$CMK_VDIR" != "${CMK_VDIR%ppc64le}ppc64le" ]]
+    then
+      echo "Error: -tlsglobals is not supported on $CMK_VDIR"
+      exit 1
     fi
     if [ "$CMK_HAS_ELF_H" != '1' -a "$CMK_MACOSX" != '1' ]
     then

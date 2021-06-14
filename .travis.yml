@@ -22,11 +22,15 @@ jobs:
     arch: arm64
     name: "NetLRTS-Arm64"
     script:
+    - sudo apt-get update
+    - sudo apt-get install -y gfortran
     - ./build all-test netlrts-linux-arm8 -j3 --with-production --enable-error-checking --enable-lbuserdata -g -Werror=vla || exit 1
     - make -C netlrts-linux-arm8/tmp test TESTOPTS="++local"
   - os: linux
     arch: ppc64le
     name: "NetLRTS-Power"
     script:
+    - sudo apt-get update
+    - sudo apt-get install -y gfortran
     - ./build all-test netlrts-linux-ppc64le -j3 --with-production --enable-error-checking --enable-lbuserdata -g -Werror=vla || exit 1
     - make -C netlrts-linux-ppc64le/tmp test TESTOPTS="++local"
