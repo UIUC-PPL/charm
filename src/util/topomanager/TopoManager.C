@@ -14,6 +14,52 @@
 #endif
 #include <algorithm>
 
+std::vector<int> PhyNode::D;
+
+// NOTE: this method is topology-dependent. Current implementation assumes a
+// mesh/torus topology.
+// It also works for scenarios with no topology info. In this case, each physical
+// node is assumed to have 2 neighbors (e.g. host i would have as neighbors i-1 and i+1)
+// Might need to special-case this for other/future topologies
+void PhyNode::calculateNbs(std::vector<int> &dims, std::vector<int> &nbIds) const
+{
+  int nDims = dims.size();
+  for (int i=0; i < nDims; i++) {
+    // dimension i
+    const int &x = coords[i];
+    const int &X = dims[i];
+    if (X == 1) continue;
+    bool isTorus = TopoManager_isTorus(i);
+
+    std::vector<int> nb_coords = coords;
+    int nbId = -1;
+    if ((x+1) >= X) {
+      if (isTorus) {
+        nb_coords[i] = 0;
+        nbId = PhyNode::generateID(nb_coords,nDims);
+      }
+    } else {
+      nb_coords[i] += 1;
+      nbId = PhyNode::generateID(nb_coords,nDims);
+    }
+    if (nbId >= 0) nbIds.push_back(nbId);
+
+    nb_coords = coords;
+    nbId = -1;
+    if (x-1 < 0) {
+      if (isTorus) {
+        nb_coords[i] = X - 1;
+        nbId = PhyNode::generateID(nb_coords,nDims);
+      }
+    } else {
+      nb_coords[i] -= 1;
+      nbId = PhyNode::generateID(nb_coords,nDims);
+    }
+    if ((isTorus) && (nbId == nbIds.back())) nbId = -1;  // already inserted this neighbor above
+    if (nbId >= 0) nbIds.push_back(nbId);
+  }
+}
+
 struct CompareRankDist {
   std::vector<int> peDist;
 
@@ -55,6 +101,12 @@ TopoManager::TopoManager() {
   torusD = torus[3];
   torusE = torus[4];
 
+  PhyNode::D.resize(4);
+  PhyNode::D[3] = dimNE;
+  PhyNode::D[2] = dimND * PhyNode::D[3];
+  PhyNode::D[1] = dimNC * PhyNode::D[2];
+  PhyNode::D[0] = dimNB * PhyNode::D[1];
+
 #elif XT4_TOPOLOGY || XT5_TOPOLOGY || XE6_TOPOLOGY
   dimX = xttm.getDimX();
   dimY = xttm.getDimY();
@@ -72,6 +124,10 @@ TopoManager::TopoManager() {
   torusY = torus[1];
   torusZ = torus[2];
   torusT = torus[3];
+
+  PhyNode::D.resize(2);
+  PhyNode::D[1] = dimNZ;
+  PhyNode::D[0] = dimNY * PhyNode::D[1];
 
 #else
   dimX = CmiNumPes();
@@ -92,9 +148,15 @@ TopoManager::TopoManager() {
   torusY = true;
   torusZ = true;
   torusT = false;
+
+  PhyNode::D.resize(2);
+  PhyNode::D[1] = dimNZ;
+  PhyNode::D[0] = dimNY * PhyNode::D[1];
+
 #endif
 
 
+  allocatedPhyNodes = 0;
   numPes = CmiNumPes();
 }
 
@@ -113,7 +175,12 @@ TopoManager::TopoManager(int NX, int NY, int NZ, int NT) : dimNX(NX), dimNY(NY),
   torusC = true;
   torusD = true;
   torusE = true;
+#else
+  PhyNode::D.resize(2);
+  PhyNode::D[1] = dimZ;
+  PhyNode::D[0] = dimY * PhyNode::D[1];
 #endif
+  allocatedPhyNodes = 0;
   numPes = dimNX * dimNY * dimNZ * dimNT;
 }
 
@@ -307,6 +374,127 @@ int TopoManager::areNeighbors(int pe1, int pe2, int pe3, int distance) const {
     return 1;
   else
     return 0;
+#endif
+}
+
+void TopoManager::getAllocationShape(std::vector<int> &shape) const
+{
+  const int nDims = getNumDims();
+  shape.resize(nDims);
+
+#if CMK_BLUEGENEQ
+  for (int i=0; i < nDims; i++) shape[i] = getDimSize(i);
+#else
+  std::vector< std::vector<bool> > used_coordinates(nDims);
+  for (int i=0; i < nDims; i++) used_coordinates[i].resize(getDimSize(i), false);
+  for (int i=0; i < getDimSize(0); i++) {
+    for (int j=0; j < getDimSize(1); j++) {
+      for (int k=0; k < getDimSize(2); k++) {
+        int coords[4] = {i, j, k, 0};
+        int p = coordinatesToRank(coords[0],coords[1],coords[2],coords[3]);
+        if (p >= 0) {
+          for (int x=0; x < nDims; x++) used_coordinates[x][coords[x]] = true;
+        }
+      }
+    }
+  }
+  for (int i=0; i < nDims; i++) {
+    shape[i] = 0;
+    for (int j=0; j < used_coordinates[i].size(); j++) {
+      if (used_coordinates[i][j]) shape[i]++;
+    }
+  }
+#endif
+}
+
+void TopoManager::buildPhyNodeList()
+{
+  if (phy_nodes.size() > 0) return; // list already built
+
+  const int nDims = getNumDims();
+  std::vector<int> dims(nDims);
+  for (int i=0; i < nDims; i++) dims[i] = getDimSize(i);
+
+#if TMGR_PE_TO_NODE_TABLE
+  peToNode.reserve(numPes);
+#endif
+
+  allocatedPhyNodes = 0;
+  int nCoordinates=1; // total number of unique coordinates in the system
+  for (int i=0; i < nDims; i++) nCoordinates *= dims[i];
+  std::vector<int> coords(nDims+1, 0);
+  phy_nodes.resize(nCoordinates);
+  int totalPes = 0;
+  for (int i=0; i < nCoordinates; i++) {
+#if CMK_BLUEGENEQ
+    int p = coordinatesToRank(coords[0],coords[1],coords[2],coords[3],coords[4],coords[5]);
+#else
+    int p = coordinatesToRank(coords[0],coords[1],coords[2],coords[3]);
+#endif
+    if (p >= 0) { // PE rank 0 in this physical node is allocated to us
+      allocatedPhyNodes++;
+      PhyNode n0(coords,nDims);
+      n0.p = p;
+      int numpes = 1;
+      for (int j=1; j < getDimNT(); j++) {
+        coords[nDims] = j;
+#if CMK_BLUEGENEQ
+        int p_j = coordinatesToRank(coords[0],coords[1],coords[2],coords[3],coords[4],coords[5]);
+#else
+        int p_j = coordinatesToRank(coords[0],coords[1],coords[2],coords[3]);
+#endif
+        if (p_j >= 0) { // PE rank j in this physical node exists / is allocated to us
+          numpes++;
+          CmiAssert(p + j == p_j); // make sure our assumption of consecutive PE numbers holds
+        }
+      }
+      n0.numPes = numpes;
+      totalPes += numpes;
+      phy_nodes[n0.id] = n0;
+#if TMGR_PE_TO_NODE_TABLE
+      for (int j=0; j < numpes; j++) peToNode[p+j] = &phy_nodes[n0.id];
+#endif
+    }
+    // go to next coordinates
+    for (int j=nDims-1; j > -1; j--) {
+      coords[j] = (coords[j]+1) % dims[j];
+      if (coords[j] != 0) break;
+    }
+    coords[nDims] = 0;
+  }
+  CmiAssert(CmiNumPes() == totalPes);
+
+  // populate node adjacency lists
+  // I could avoid this piece of code and do it above if I consider neighbor nodes
+  // with no PEs as valid neighbors
+  // Nodes with no PEs can happen, for example, on Blue Waters
+  for (int i=0; i < phy_nodes.size(); i++) {
+    if (phy_nodes[i].numPes) {  // this phynode is allocated to us
+      PhyNode &n = phy_nodes[i];
+      std::vector<int> nbIds;
+      n.calculateNbs(dims, nbIds);
+      for (int j=0; j < nbIds.size(); j++) {
+        PhyNode &nb = phy_nodes[nbIds[j]];
+        if (nb.numPes) n.nbs.push_back(&nb);
+      }
+    }
+  }
+}
+
+const PhyNode &TopoManager::phyNodeOf(int pe) const {
+#if TMGR_PE_TO_NODE_TABLE
+  // faster implementation, more memory (sizeof(pointer) * CmiNumPes())
+  return *(peToNode[pe]);
+#else
+  // slower implementation, no additional memory
+#if CMK_BLUEGENEQ
+  std::vector<int> coords(6);
+  rankToCoordinates(pe, coords[0], coords[1], coords[2], coords[3], coords[4], coords[5]);
+#else
+  std::vector<int> coords(4);
+  rankToCoordinates(pe, coords[0], coords[1], coords[2], coords[3]);
+#endif
+  return getNode(coords);
 #endif
 }
 
@@ -558,3 +746,14 @@ extern "C" void TopoManager_createPartitions(int scheme, int numparts, int *node
   }
 }
 #endif
+
+extern "C" int TopoManager_isTorus(int dim) {
+#ifndef __TPM_STANDALONE__
+  if(_tmgr == NULL) { TopoManager_reset(); }
+#else
+  if(_tmgr == NULL) { printf("ERROR: TopoManager NOT initialized. Aborting...\n"); exit(1); }
+#endif
+
+  return _tmgr->isTorus(dim);
+}
+

@@ -56,6 +56,8 @@ void TopoManager_getHopsBetweenPeRanks(int pe1, int pe2, int *hops);
 /** topoaware partition using scheme s */
 void TopoManager_createPartitions(int scheme, int numparts, int *nodeMap);
 #endif
+/** indicates if torus property (wrap around edges) exists for the specified dimension */
+int TopoManager_isTorus(int dim);
 
 #if defined(__cplusplus)
 }
@@ -68,6 +70,100 @@ void TopoManager_createPartitions(int scheme, int numparts, int *nodeMap);
 
 
 #include <vector>
+
+#define TMGR_PE_TO_NODE_TABLE 1
+
+class TopoManager;
+
+/***
+ * Physical node in the machine topology
+ */
+class PhyNode {
+public:
+  PhyNode() : id(0), numPes(0), p(-1) {}
+
+  PhyNode(const PhyNode &o) : coords(o.coords), id(o.id), numPes(o.numPes), p(o.p) {}
+
+  /***
+   * Get coordinates of the node in the machine.
+   */
+  inline const std::vector<int> &getCoords() const { return coords; }
+  /***
+   * Uniquely identifies this physical node in TopoManager.
+   * This id *does not* necessarily correspond with the node id in the system,
+   * or in cputopology.
+   */
+  inline int getID() const { return id; }
+  /***
+   * Get number of PEs in the node.
+   */
+  inline int getNumPes() const { return numPes; }
+  /***
+   * Get first PE in the node.
+   */
+  inline int getFirstPe() const { return p; }
+  /***
+   * Get list of neighbor nodes (directly adjacent in the topology).
+   */
+  inline const std::vector<PhyNode*> &getNbs() const { return nbs; }
+
+  inline bool operator==(const PhyNode &o) const {
+    if (this == &o) return true;
+    return (id == o.id);
+  }
+
+private:
+  friend class TopoManager;
+
+  PhyNode(const std::vector<int> &c, int nDims) : coords(nDims), numPes(0), p(-1) {
+    CmiAssert(nDims > 0);
+    CmiAssert(PhyNode::D.size() == (nDims-1));
+    for (int i=0; i < nDims; i++) coords[i] = c[i];
+    id = PhyNode::generateID(coords, nDims);
+  }
+
+  /***
+   * Generates and returns my list of neighboring node ids; result in nbIds
+   */
+  void calculateNbs(std::vector<int> &dims, std::vector<int> &nbIds) const;
+
+  inline static int generateID(std::vector<int> &coords, int nDims) {
+    int id = 0;
+    int i = 0;
+    for (; i < nDims-1; i++) id += coords[i]*PhyNode::D[i];
+    return (id + coords[i]);
+  }
+
+  /***
+   * Coordinates of node in the machine; uniquely identifies the node
+   */
+  std::vector<int> coords;
+  /***
+   * Uniquely identifies this physical node in TopoManager.
+   * This id *does not* necessarily correspond with the node id in the system,
+   * or in cputopology.
+   */
+  int id;
+
+  /***
+   * list of neighboring nodes, according to the machine topology
+   */
+  std::vector<PhyNode*> nbs;
+  /***
+   * number of PEs in node (allocated to this job)
+   * Note that on some machines, like Blue Waters, this number may not be the same
+   * for all nodes.
+   */
+  int numPes;
+  int p;    // rank (global) of first processor in this node
+            // NOTE: processors are assumed to have contiguous ranks within same node
+
+  /***
+   * used to convert N-d coordinates to integer
+   */
+  static std::vector<int> D;
+
+};
 
 class TopoManager {
   public:
@@ -149,6 +245,27 @@ class TopoManager {
     void sortRanksByHops(int *pe, int *pes, int *idx, int n) const;
     int pickClosestRank(int mype, int *pes, int n) const;
     int areNeighbors(int pe1, int pe2, int pe3, int distance) const;
+    /***
+     * This returns the approximate shape of the allocation
+     * (i.e. geometry of the shape that bounds the nodes allocated to this job)
+     * in every situation, even the following cases:
+     * - there are holes (nodes inside the shape that aren't allocated to this job)
+     * - the machine reports dimensions of the whole torus (instead of just the allocated part)
+     */
+    void getAllocationShape(std::vector<int> &shape) const;
+    void buildPhyNodeList();
+    /// could be total number of physical nodes in the machine, or in the allocation, depending on system
+    inline int getNumPhysicalNodes() const { return phy_nodes.size(); }
+    /// number of physical nodes allocated to us
+    inline int getNumAllocPhysicalNodes() const { return allocatedPhyNodes; }
+    inline const PhyNode &getNode(std::vector<int> &coords) const {
+      return phy_nodes[PhyNode::generateID(coords, getNumDims())];
+    }
+    inline const PhyNode &getNode(int id) const {
+      CmiAssert(id >= 0 && id < phy_nodes.size());
+      return phy_nodes[id];
+    }
+    const PhyNode &phyNodeOf(int pe) const;
     void printAllocation(FILE *fp) const;
 
     /** The next 5 functions are only there for backward compatibility
@@ -236,6 +353,26 @@ class TopoManager {
         return ((pe>se) ? se : pe);
     }
 #endif
+    inline bool isTorus(int dim) const {
+#if CMK_BLUEGENEQ
+      switch (dim) {
+        case 0: return torusA;
+        case 1: return torusB;
+        case 2: return torusC;
+        case 3: return torusD;
+        case 4: return true;
+        default: return false;
+      }
+#else
+      switch (dim) {
+        case 0: return torusX;
+        case 1: return torusY;
+        case 2: return torusZ;
+        case 3: return torusT;
+        default: return false;
+      }
+#endif
+    }
   private:
     int dimX;	// dimension of the allocation in X (no. of processors)
     int dimY;	// dimension of the allocation in Y (no. of processors)
@@ -251,6 +388,11 @@ class TopoManager {
     int torusA, torusB, torusC, torusD, torusE;
 #endif
     int procsPerNode;
+    std::vector<PhyNode> phy_nodes;
+    int allocatedPhyNodes;
+#if TMGR_PE_TO_NODE_TABLE
+    std::vector<PhyNode*> peToNode; // pe -> PhyNode
+#endif
 #if CMK_BLUEGENEQ
     BGQTorusManager bgqtm;
 #elif XT4_TOPOLOGY || XT5_TOPOLOGY || XE6_TOPOLOGY
