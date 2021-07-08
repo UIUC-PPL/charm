@@ -120,4 +120,7 @@ enum cmiZCMsgType {
 #define CMK_COMMON_NOCOPY_DIRECT_BYTES 0
 #endif
 
-
+/* GPU-aware communication is not supported by the machine layer by default */
+#ifndef CMK_GPU_COMM
+#define CMK_GPU_COMM 0
+#endif

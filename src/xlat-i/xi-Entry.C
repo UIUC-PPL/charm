@@ -1884,16 +1884,12 @@ void Entry::genCall(XStr& str, const XStr& preCall, bool redn_wrapper, bool uses
       str << "    }\n";
       str << "  } else {\n";
     } else if (param->hasDevice()) {
-      str << "  bool is_inline = true;\n";
-      str << "  if (CMI_ZC_MSGTYPE(env) == CMK_ZC_DEVICE_MSG) {\n";
+      str << "  if (CMI_IS_ZC_DEVICE(env)) {\n";
       genRegularCall(str, preCall, redn_wrapper, usesImplBuf, true);
-      str << "  }\n";
-      str << "  if (is_inline) {\n";
+      str << "  } else {\n";
     }
     genRegularCall(str, preCall, redn_wrapper, usesImplBuf, false);
-    if(param->hasRecvRdma()) {
-      str << "  }\n";
-    } else if (param->hasDevice()) {
+    if(param->hasRecvRdma() || param->hasDevice()) {
       str << "  }\n";
     }
   }
@@ -1974,19 +1970,15 @@ void Entry::genRegularCall(XStr& str, const XStr& preCall, bool redn_wrapper, bo
       if(isRdmaPost) {
         // Allocate an array of rdma pointers
         if (param->hasDevice()) {
-          str << "  void *buffPtrs["<< numRdmaDeviceParams <<"];\n";
-          str << "  int buffSizes["<< numRdmaDeviceParams <<"];\n";
+          str << "    void *buffPtrs["<< numRdmaDeviceParams <<"];\n";
+          str << "    int buffSizes["<< numRdmaDeviceParams <<"];\n";
         } else {
-          str << "  void *buffPtrs["<< numRdmaRecvParams <<"];\n";
-          str << "  int buffSizes["<< numRdmaRecvParams <<"];\n";
+          str << "    void *buffPtrs["<< numRdmaRecvParams <<"];\n";
+          str << "    int buffSizes["<< numRdmaRecvParams <<"];\n";
         }
         param->storePostedRdmaPtrs(str, isSDAGGen);
         if (param->hasDevice()) {
-          // is_inline determines if the regular entry method should be invoked
-          // right after the post entry method or if it should be invoked later
-          // with a message
-          str << "  if(CMI_IS_ZC_DEVICE(env))\n";
-          str << "    is_inline = CkRdmaDeviceIssueRgets(env, ";
+          str << "    CkRdmaDeviceIssueRgets(env, ";
           if (isSDAGGen)
             str << "genClosure->num_device_rdma_fields, ";
           else

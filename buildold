@@ -860,12 +860,13 @@ then
     for i in $BOPTS
     do
       echo '#include "'conv-mach-$i.h'"' >> $ConvHeader
-      if [ $BUILD_CUDA -eq 1 ]; then
-        echo 'CUDA_DIR="'$CUDA_DIR'"'>>$ConvSh
-        echo "CUDA_DIR:=$CUDA_DIR" >> $ConvMak
-      fi
       echo '. $CHARMINC/'"conv-mach-$i.sh" >> $ConvSh
     done
+    if [ $BUILD_CUDA -eq 1 ]; then
+      echo 'CUDA_DIR="'$CUDA_DIR'"' >> $ConvSh
+      echo "CUDA_DIR:=$CUDA_DIR" >> $ConvMak
+      echo "BUILD_CUDA:=$BUILD_CUDA" >> $ConvMak
+    fi
 fi
 
 if test  "$BUILD_SHARED"  = "-build-shared"

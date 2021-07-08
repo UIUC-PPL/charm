@@ -91,3 +91,6 @@
 #define CMK_USE_SIMPLEPMI              1
 #define CMK_USE_PMI2                   0
 #define CMK_USE_PMIX                   0
+
+/* UCX machine layer supports GPU-aware communication */
+#define CMK_GPU_COMM                   1

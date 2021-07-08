@@ -9165,8 +9165,23 @@ where the sender sends a metadata message containing the address of the
 source buffer on the GPU and the receiver posts an Rget from the source
 buffer to the destination buffer (also on the GPU).
 
-To send a GPU buffer using direct GPU messaging, add a ``nocopydevice``
-specifier to the parameter of the receiving entry method in the ``.ci`` file:
+There are currently two implementations for direct GPU messaging:
+(1) CUDA memcpy and IPC based mechanism for intra-node communication
+(inter-node communication reverts back to a host-staging mechanism),
+and (2) UCX-based mechanism that supports both intra-node and inter-node
+communication. When Charm++ is built with the UCX machine layer
+and CUDA support (e.g., ucx-linux-x86_64-cuda), it will automatically use
+the UCX-based mechanism with the direct GPU messaging API.
+Other CUDA-enabled builds will only support
+the first mechanism and limit the use of direct GPU-GPU transfers within
+a single physical node. For inter-node messages, the runtime system will
+revert back to a host-staging mechanism where the GPU buffer is moved to
+host memory before being sent.
+The user APIs for both implementations remain the same, however, as detailed
+in the following.
+
+To send a GPU buffer with the direct GPU messaging feature, add a ``nocopydevice``
+specifier to the corresponding parameter of the receiver's entry method in the ``.ci`` file:
 
 .. code-block:: charmci
 
@@ -9176,7 +9191,7 @@ This entry method should be invoked on the sender by wrapping the
 source buffer with ``CkDeviceBuffer``, whose constructor takes a pointer
 to the source buffer, a Charm++ callback to be invoked once the transfer
 completes (optional), and a CUDA stream associated with the transfer
-(also optional):
+(which is only used internally in the CUDA memcpy and IPC based implementation and is also optional):
 
 .. code-block:: c++
 
@@ -9187,13 +9202,13 @@ completes (optional), and a CUDA stream associated with the transfer
    CkDeviceBuffer(const void* ptr, const CkCallback& cb, cudaStream_t stream);
 
    // Call on sender
-   someProxy.foo(source_buffer, cb, stream);
+   someProxy.foo(size, CkDeviceBuffer(buf, cb, stream));
 
-As with the Zero Copy Entry Method Post API, two entry methods
-(post entry method and regular entry method) must be specified, and the
-post entry method has an additional ``CkDeviceBufferPost`` argument that
-can be used to specify the CUDA stream where the data transfer will be
-enqueued:
+As with the Zero Copy Entry Method Post API, both the post entry method
+and regular entry method must be defined. In the post entry method,
+the user must specify the location of the destination GPU buffer,
+and the ``CkDeviceBufferPost`` parameter can be used to specify the CUDA stream
+where the CUDA data transfer will be enqueued (only used in the CUDA memcpy and IPC based mechanism):
 
 .. code-block:: c++
 
@@ -9205,32 +9220,23 @@ enqueued:
 
    // Regular entry method
    void foo(int size, double* arr) {
-     // Data transfer into arr has been initiated
+     // Data has arrived in the destination GPU buffer
      ...
    }
 
-The specified CUDA stream can be used by the receiver to asynchronously invoke
-GPU operations dependent on the arriving data, without explicitly synchronizing
-with the host. This brings us to an important difference from the host-side
-Zero Copy API: the regular entry method is invoked after the data transfer is
-**initiated**, not after it is complete. It should also be noted that the
-regular entry method can be defined as a SDAG method if so desired.
+As with the host-side Zero Copy API, the regular entry method is executed by the runtime
+system after the GPU buffer has arrived at the destination.
 
-Currently the direct GPU messaging feature is limited to **intra-node** messages.
-Inter-node messages will be transferred using the naive host-staged mechanism
-where the data is first transferred to the host from the source GPU, sent over
-the network, then transferred to the destination GPU.
-
-An optimized mechanism for inter-process communication using CUDA IPC, POSIX shared memory,
+For non-UCX builds, a more optimized mechanism for inter-process communication using CUDA IPC, POSIX shared memory,
 and pre-allocated GPU communication buffers are available through runtime flags.
-This significantly reduces the overhead from creation and opening of CUDA IPC handles,
-especially for relatively small messages. ``+gpushm`` will turn on this optimization
+This significantly reduces the overhead from creating and opening CUDA IPC handles,
+especially for small messages. ``+gpushm`` enables this optimization
 feature, ``+gpucommbuffer [size]`` specifies the size of the communication buffer
 allocated on each GPU (default is 64MB), and ``+gpuipceventpool`` determines the number of
-CUDA IPC events per PE that is used for this feature (default is 16).
+CUDA IPC events per PE (default is 16).
 
-Examples using the direct GPU messaging feature can be found in
-``examples/charm++/cuda/gpudirect``.
+Examples and benchmarks of the direct GPU messaging feature can be found in
+``examples/charm++/cuda/gpudirect`` and ``benchmarks/charm++/cuda/gpudirect``.
 
 Intra-node Persistent GPU Communication
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -73,7 +73,9 @@ public:
   // Callback to be invoked on the sender/receiver
   CkCallback cb;
 
-  CkDeviceBuffer() : CmiDeviceBuffer() {}
+  CkDeviceBuffer() : CmiDeviceBuffer() {
+    cb = CkCallback(CkCallback::ignore);
+  }
 
   explicit CkDeviceBuffer(const void* ptr_) : CmiDeviceBuffer(ptr_, 0) {
     cb = CkCallback(CkCallback::ignore);
@@ -116,10 +118,15 @@ public:
     p|cb;
   }
 
-  friend bool CkRdmaDeviceIssueRgets(envelope *env, int numops, void **arrPtrs, int *arrSizes, CkDeviceBufferPost *postStructs);
+  friend void CkRdmaDeviceIssueRgets(envelope *env, int numops, void **arrPtrs, int *arrSizes, CkDeviceBufferPost *postStructs);
 };
 
-bool CkRdmaDeviceIssueRgets(envelope *env, int numops, void **arrPtrs, int *arrSizes, CkDeviceBufferPost *postStructs);
+#if !CMK_GPU_COMM
+void CkRdmaDeviceRecvHandler(void* data, void* msg);
+#else
+void CkRdmaDeviceRecvHandler(void* data);
+#endif
+void CkRdmaDeviceIssueRgets(envelope *env, int numops, void **arrPtrs, int *arrSizes, CkDeviceBufferPost *postStructs);
 void CkRdmaDeviceOnSender(int dest_pe, int numops, CkDeviceBuffer** buffers);
 
 #endif // CMK_CUDA

@@ -1,7 +1,7 @@
 #include "latency.decl.h"
 #include "hapi.h"
 
-#define MAX_ITERS 10000
+#define MAX_ITERS 1000000
 #define LARGE_MESSAGE_SIZE 8192
 
 /* readonly */ CProxy_Main main_proxy;
@@ -34,7 +34,7 @@ class Main : public CBase_Main {
 
     // Process command line arguments
     int c;
-    while ((c = getopt(m->argc, m->argv, "s:x:i:l:w:")) != -1) {
+    while ((c = getopt(m->argc, m->argv, "s:x:i:l:w:z")) != -1) {
       switch (c) {
         case 's':
           min_size = atoi(optarg);
@@ -51,6 +51,9 @@ class Main : public CBase_Main {
         case 'w':
           warmup_iters = atoi(optarg);
           break;
+        case 'z':
+          zerocopy = true;
+          break;
         default:
           CkPrintf("Unknown command line argument detected");
           CkExit(1);
@@ -65,8 +68,12 @@ class Main : public CBase_Main {
 
     // Print info
     CkPrintf("# Charm++ GPU Latency Test\n"
-        "# Message sizes: %lu - %lu bytes\n# Iterations: %d regular, %d large\n# Warmup: %d\n",
-        min_size, max_size, n_iters_reg, n_iters_large, warmup_iters);
+        "# Message sizes: %lu - %lu bytes\n"
+        "# Iterations: %d regular, %d large\n"
+        "# Warmup: %d\n"
+        "# Zerocopy only: %s\n",
+        min_size, max_size, n_iters_reg, n_iters_large, warmup_iters,
+        zerocopy ? "true" : "false");
 
     // Create block group chare
     block_proxy = CProxy_Block::ckNew();
@@ -77,19 +84,24 @@ class Main : public CBase_Main {
   void initDone() {
     CkPrintf("Starting %s test...\n", zerocopy ? "zerocopy" : "regular");
     cur_size = min_size;
-    testBegin(cur_size, zerocopy);
+    testSetup();
   }
 
-  void testBegin(size_t size, bool zerocopy) {
+  void testSetup() {
+    // Tell chares to memset their GPU data, will reduce back to testStart
+    block_proxy.memset(cur_size);
+  }
+
+  void testStart() {
     // Start ping
-    block_proxy[0].send(size, zerocopy);
+    block_proxy[0].send(cur_size, zerocopy);
   }
 
   void testEnd() {
     cur_size *= 2;
     if (cur_size <= max_size) {
       // Proceed to next message size
-      thisProxy.testBegin(cur_size, zerocopy);
+      thisProxy.testSetup();
     } else {
       if (!zerocopy) {
         // Regular case done, proceed to zerocopy case
@@ -123,6 +135,8 @@ public:
 
   cudaStream_t stream;
   bool stream_created;
+
+  CkDeviceBuffer send_buffer;
 
   Block() {
     memory_allocated = false;
@@ -173,8 +187,19 @@ public:
       stream_created = true;
     }
 
+    // Set up buffer metadata
+    send_buffer = CkDeviceBuffer(d_local_data);
+
     // Reduce back to main
     contribute(CkCallback(CkReductionTarget(Main, initDone), main_proxy));
+  }
+
+  void memset(size_t size) {
+    hapiCheck(cudaMemset(d_local_data, 'a', size));
+    hapiCheck(cudaMemset(d_remote_data, 'b', size));
+
+    // Reduce back to main
+    contribute(CkCallback(CkReductionTarget(Main, testStart), main_proxy));
   }
 
   void send(size_t size, bool zerocopy) {
@@ -186,7 +211,7 @@ public:
       cudaStreamSynchronize(stream);
       thisProxy[peer].receiveReg(size, h_local_data);
     } else {
-      thisProxy[peer].receiveZC(size, CkDeviceBuffer(d_local_data, stream));
+      thisProxy[peer].receiveZC(size, send_buffer);
     }
   }
 
@@ -205,16 +230,11 @@ public:
     // Inform the runtime where the incoming data should be stored
     // and which CUDA stream should be used for the transfer
     data = d_remote_data;
-    devicePost[0].cuda_stream = stream;
+    devicePost[0].cuda_stream = stream; // Not used with UCX
   }
 
-  // Second receive (regular entry method), invoked after the data transfer is initiated
-  // The user can either wait for it to complete or offload other operations
-  // into the stream (that may be dependent on the arriving data)
+  // Second receive (regular entry method), invoked once the data transfers complete
   void receiveZC(size_t size, char* data) {
-    // Wait for data transfer to complete
-    cudaStreamSynchronize(stream);
-
     afterReceive(size, true);
   }
 

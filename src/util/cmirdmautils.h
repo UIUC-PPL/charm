@@ -3,6 +3,7 @@
 
 #include "conv-header.h"
 #include <stdio.h>
+#include <stddef.h>
 
 // Structure that can be used across layers
 typedef struct ncpystruct{
@@ -57,6 +58,35 @@ typedef struct ncpystruct{
   void *refPtr;
 
 }NcpyOperationInfo;
+
+#if CMK_CUDA
+enum DeviceRecvType {
+  DEVICE_RECV_TYPE_CHARM,
+  DEVICE_RECV_TYPE_AMPI,
+  DEVICE_RECV_TYPE_CHARM4PY
+};
+
+typedef struct DeviceRdmaInfo_ {
+  int n_ops; // Number of RDMA operations, i.e. number of buffers being sent
+  int counter; // Used to track the number of completed RDMA operations
+  void* msg; // Charm++ message to be (re-)enqueued after all operations complete
+} DeviceRdmaInfo;
+
+typedef struct DeviceRdmaOp_ {
+  int dest_pe;
+  const void* dest_ptr;
+  size_t size;
+  DeviceRdmaInfo* info;
+  void* src_cb;
+  void* dst_cb;
+  uint64_t tag;
+} DeviceRdmaOp;
+
+typedef struct DeviceRdmaOpMsg_ {
+  char header[CmiMsgHeaderSizeBytes];
+  DeviceRdmaOp op;
+} DeviceRdmaOpMsg;
+#endif // CMK_CUDA
 
 #ifdef __cplusplus
 extern "C" {

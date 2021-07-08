@@ -70,7 +70,7 @@ public:
   Main(CkArgMsg* m) {
     main_proxy = thisProxy;
     block_size = 128;
-    n_iters = 1;
+    n_iters = 100;
     test_nodegroup = true;
     lb_test = false;
 

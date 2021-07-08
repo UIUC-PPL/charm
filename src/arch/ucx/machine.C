@@ -37,8 +37,10 @@
 #define UCX_MSG_NUM_RX_REQS_MAX         1024
 #define UCX_TAG_MSG_BITS                4
 #define UCX_TAG_RMA_BITS                4
+#define UCX_TAG_PE_BITS                 32
 #define UCX_MSG_TAG_EAGER               UCS_BIT(0)
 #define UCX_MSG_TAG_PROBE               UCS_BIT(1)
+#define UCX_MSG_TAG_DEVICE              UCS_BIT(2)
 #define UCX_RMA_TAG_GET                 UCS_BIT(UCX_TAG_MSG_BITS + 1)
 #define UCX_RMA_TAG_REG_AND_SEND_BACK   UCS_BIT(UCX_TAG_MSG_BITS + 2)
 #define UCX_RMA_TAG_DEREG_AND_ACK       UCS_BIT(UCX_TAG_MSG_BITS + 3)
@@ -49,9 +51,13 @@
 #define UCX_LOG_PRIO 50 // Disabled by default
 
 enum {
-    UCX_SEND_OP,    // Regular Send using UcxSendMsg
-    UCX_RMA_OP_PUT, // RMA Put operation using UcxRmaOp
-    UCX_RMA_OP_GET  // RMA Get operation using UcxRmaOp
+    UCX_SEND_OP,        // Regular Send using UcxSendMsg
+    UCX_RMA_OP_PUT,     // RMA Put operation using UcxRmaOp
+    UCX_RMA_OP_GET,     // RMA Get operation using UcxRmaOp
+#if CMK_CUDA
+    UCX_DEVICE_SEND_OP, // Device send
+    UCX_DEVICE_RECV_OP, // Device recv
+#endif
 };
 
 #define UCX_LOG(prio, fmt, ...) \
@@ -78,6 +84,11 @@ typedef struct UcxRequest
     void           *ncpyAck;
     ucp_rkey_h     rkey;
 #endif
+#if CMK_CUDA
+    void*          cb;
+    DeviceRdmaOp*  device_op;
+    DeviceRecvType type;
+#endif
 } UcxRequest;
 
 typedef struct UcxContext
@@ -96,14 +107,20 @@ typedef struct UcxContext
 #ifdef CMK_SMP
 typedef struct UcxPendingRequest
 {
-    int                 state;
-    int                 index;
-    void                *msgBuf;
-    int                 size;
-    ucp_tag_t           tag;
-    int                 dNode;
-    int                 op;
-    ucp_send_callback_t cb;
+    int                     state;
+    int                     index;
+    void                    *msgBuf;
+    int                     size;
+    ucp_tag_t               tag;
+    int                     dNode;
+    int                     op;
+    ucp_send_callback_t     cb;
+#if CMK_CUDA
+    ucp_tag_recv_callback_t recv_cb;
+    ucp_tag_t               mask;
+    DeviceRdmaOp*           device_op;
+    DeviceRecvType          type;
+#endif
 } UcxPendingRequest;
 #endif
 
@@ -112,6 +129,10 @@ static UcxContext ucxCtx;
 static void UcxRxReqCompleted(void *request, ucs_status_t status,
                               ucp_tag_recv_info_t *info);
 static void UcxPrepostRxBuffers();
+
+#if CMK_CUDA
+CpvDeclare(int, tag_counter);
+#endif
 
 #if CMK_ONESIDED_IMPL
 #include "machine-onesided.h"
@@ -133,12 +154,30 @@ static void UcxPrepostRxBuffers();
 
 #define UCX_CHECK_PMI_RET(_ret, _str) UCX_CHECK_RET(_ret, _str, _ret)
 
+#if CMK_CUDA
+inline void UcxInvokeRecvHandler(DeviceRdmaOp* op, DeviceRecvType type) {
+  switch (type) {
+    case DEVICE_RECV_TYPE_CHARM:
+      CmiInvokeRecvHandler(op);
+      break;
+    // TODO: AMPI and Charm4py
+    default:
+      CmiAbort("Invvalid recv type: %d\n", type);
+      break;
+  }
+}
+#endif
+
 void UcxRequestInit(void *request)
 {
     UcxRequest *req = (UcxRequest*)request;
     req->msgBuf     = NULL;
     req->idx        = -1;
     req->completed  = 0;
+#if CMK_CUDA
+    req->cb         = NULL;
+    req->device_op  = NULL;
+#endif
 }
 
 static void UcxInitEps(int numNodes, int myId)
@@ -198,7 +237,6 @@ static void UcxInitEps(int numNodes, int myId)
 
     for (i = 0; i < numNodes; ++i) {
         peer = (i + myId) % numNodes;
-        if (peer == myId) continue;
 
         ret = snprintf(keys, maxkey, "UCX-size-%d", peer);
         UCX_CHECK_RET(ret, "UcxInitEps: snprintf error", (ret <= 0));
@@ -233,6 +271,7 @@ static void UcxInitEps(int numNodes, int myId)
 }
 
 // Should be called for every node (not PE)
+// Only invoked by comm threads
 void LrtsInit(int *argc, char ***argv, int *numNodes, int *myNodeID)
 {
     ucp_params_t cParams;
@@ -299,6 +338,11 @@ void LrtsInit(int *argc, char ***argv, int *numNodes, int *myNodeID)
 
     UCX_LOG(5, "Initialized: preposted reqs %d, rndv thresh %d\n",
             ucxCtx.numRxReqs, ucxCtx.eagerSize);
+
+#if CMK_CUDA
+    CpvInitialize(int, tag_counter);
+    CpvAccess(tag_counter) = 0;
+#endif
 }
 
 static inline UcxRequest* UcxPostRxReqInternal(ucp_tag_t tag, size_t size,
@@ -606,6 +650,42 @@ static inline int ProcessTxQueue()
             UcxRmaOp((NcpyOperationInfo *)(req->msgBuf), req->op);
         }
 #endif
+#if CMK_CUDA
+        else if (req->op == UCX_DEVICE_SEND_OP) { // Send device data
+          ucs_status_ptr_t status_ptr;
+          status_ptr = ucp_tag_send_nb(ucxCtx.eps[req->dNode], req->msgBuf,
+                                       req->size, ucp_dt_make_contig(1),
+                                       req->tag, req->cb);
+          if (!UCS_PTR_IS_PTR(status_ptr)) {
+            // Either send was complete or error
+            CmiEnforce(!UCS_PTR_IS_ERR(status_ptr));
+            CmiEnforce(UCS_PTR_STATUS(status_ptr) == UCS_OK);
+          } else {
+            // Callback function will be invoked once send completes
+            UcxRequest* store_req = (UcxRequest*)status_ptr;
+            store_req->msgBuf = req->msgBuf;
+          }
+        } else if (req->op == UCX_DEVICE_RECV_OP) { // Recv device data
+          ucs_status_ptr_t status_ptr;
+          status_ptr = ucp_tag_recv_nb(ucxCtx.worker, req->msgBuf, req->size,
+                                       ucp_dt_make_contig(1), req->tag, req->mask,
+                                       req->recv_cb);
+          CmiEnforce(!UCS_PTR_IS_ERR(status_ptr));
+
+          UcxRequest* ret_req = (UcxRequest*)status_ptr;
+          if (ret_req->completed) {
+            // Recv was completed immediately
+            UcxInvokeRecvHandler(req->device_op, req->type);
+            UCX_REQUEST_FREE(ret_req);
+          } else {
+            // Recv wasn't completed immediately, recv_cb will be invoked
+            // sometime later
+            ret_req->device_op = req->device_op;
+            ret_req->msgBuf = req->msgBuf;
+            ret_req->type = req->type;
+          }
+        }
+#endif
         else {
           CmiAbort("[%d][%d][%d] UCX:ProcessTxQueue req->op(%d) is Invalid\n", CmiMyPe(), CmiMyNode(), CmiMyRank(), req->op);
         }
@@ -731,6 +811,102 @@ void  LrtsBarrier()
     ret = runtime_barrier();
     UCX_CHECK_PMI_RET(ret, "runtime_barrier");
 }
+
+#if CMK_CUDA
+void UcxSendDeviceCompleted(void* request, ucs_status_t status)
+{
+  CmiEnforce(status == UCS_OK);
+  UcxRequest* req = (UcxRequest*)request;
+
+  UCX_REQUEST_FREE(req);
+}
+
+void UcxRecvDeviceCompleted(void* request, ucs_status_t status,
+                            ucp_tag_recv_info_t* info)
+{
+  UcxRequest* req = (UcxRequest*)request;
+
+  if (ucs_unlikely(status == UCS_ERR_CANCELED)) return;
+  CmiEnforce(status == UCS_OK);
+
+  if (req->msgBuf != NULL) {
+    // Invoke recv handler since data transfer is complete
+    UcxInvokeRecvHandler(req->device_op, req->type);
+    UCX_REQUEST_FREE(req);
+  } else {
+    // Request was completed immediately
+    // Handle recv in the caller
+    req->completed = 1;
+  }
+}
+
+void LrtsSendDevice(int dest_pe, const void*& ptr, size_t size, uint64_t& tag) {
+  // FIXME: Is this tag generation OK?
+  tag = ((uint64_t)CpvAccess(tag_counter)++ << (UCX_TAG_PE_BITS + UCX_TAG_MSG_BITS)) | (CmiMyPe() << UCX_TAG_MSG_BITS) | UCX_MSG_TAG_DEVICE;
+#if CMK_SMP
+  UcxPendingRequest* req = (UcxPendingRequest*)CmiAlloc(sizeof(UcxPendingRequest));
+  req->msgBuf = (void*)ptr;
+  req->size   = size;
+  req->tag    = tag;
+  req->dNode  = CmiNodeOf(dest_pe);
+  req->cb     = UcxSendDeviceCompleted;
+  req->op     = UCX_DEVICE_SEND_OP;
+
+  PCQueuePush(ucxCtx.txQueue, (char *)req);
+#else
+  ucs_status_ptr_t status_ptr;
+  status_ptr = ucp_tag_send_nb(ucxCtx.eps[CmiNodeOf(dest_pe)], (void*)ptr, size,
+                               ucp_dt_make_contig(1), tag,
+                               UcxSendDeviceCompleted);
+
+  if (!UCS_PTR_IS_PTR(status_ptr)) {
+    // Either send was complete or error
+    CmiEnforce(!UCS_PTR_IS_ERR(status_ptr));
+    CmiEnforce(UCS_PTR_STATUS(status_ptr) == UCS_OK);
+  } else {
+    // Callback function will be invoked once send completes
+    UcxRequest* req = (UcxRequest*)status_ptr;
+    req->msgBuf = (void*)ptr;
+  }
+#endif // CMK_SMP
+}
+
+void LrtsRecvDevice(DeviceRdmaOp* op, DeviceRecvType type)
+{
+#if CMK_SMP
+  UcxPendingRequest *req = (UcxPendingRequest*)CmiAlloc(sizeof(UcxPendingRequest));
+  req->msgBuf    = (void*)op->dest_ptr;
+  req->size      = op->size;
+  req->tag       = op->tag;
+  req->op        = UCX_DEVICE_RECV_OP;
+  req->device_op = op;
+  req->mask      = UCX_MSG_TAG_MASK_FULL;
+  req->recv_cb   = UcxRecvDeviceCompleted;
+  req->type      = type;
+
+  PCQueuePush(ucxCtx.txQueue, (char *)req);
+#else
+  ucs_status_ptr_t status_ptr;
+  status_ptr = ucp_tag_recv_nb(ucxCtx.worker, (void*)op->dest_ptr, op->size,
+                               ucp_dt_make_contig(1), op->tag,
+                               UCX_MSG_TAG_MASK_FULL, UcxRecvDeviceCompleted);
+  CmiEnforce(!UCS_PTR_IS_ERR(status_ptr));
+
+  UcxRequest* req = (UcxRequest*)status_ptr;
+  if (req->completed) {
+    // Recv was completed immediately
+    UcxInvokeRecvHandler(op, type);
+    UCX_REQUEST_FREE(req);
+  } else {
+    // Recv wasn't completed immediately, recv_cb will be invoked
+    // sometime later
+    req->device_op = op;
+    req->msgBuf = (void*)op->dest_ptr;
+    req->type = type;
+  }
+#endif // CMK_SMP
+}
+#endif // CMK_CUDA
 
 #if CMK_ONESIDED_IMPL
 #include "machine-onesided.C"

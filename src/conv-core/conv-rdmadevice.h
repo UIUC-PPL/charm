@@ -2,6 +2,7 @@
 #define _CONV_RDMADEVICE_H_
 
 #include "conv-header.h"
+#include "cmirdmautils.h"
 #include "pup.h"
 
 #if CMK_CUDA
@@ -21,7 +22,9 @@ public:
   // Pointer to and size of the buffer
   const void* ptr;
   size_t cnt;
+  cudaStream_t cuda_stream;
 
+#if !CMK_GPU_COMM
   // Source and destination PEs
   int src_pe;
   int dest_pe;
@@ -30,7 +33,6 @@ public:
   int device_idx;
   size_t comm_offset;
   int event_idx;
-  cudaStream_t cuda_stream;
 
   // Store the actual data for host-staged inter-node messaging (no GPUDirect RDMA)
   bool data_stored;
@@ -50,10 +52,18 @@ public:
     data_stored = false;
     data = NULL;
   }
+#else
+  uint64_t tag;
+
+  CmiDeviceBuffer() : ptr(NULL), cnt(0) {}
+
+  explicit CmiDeviceBuffer(const void* ptr_, size_t cnt_) : ptr(ptr_), cnt(cnt_) {}
+#endif // CMK_GPU_COMM
 
   void pup(PUP::er &p) {
     p((char *)&ptr, sizeof(ptr));
     p|cnt;
+#if !CMK_GPU_COMM
     p|src_pe;
     p|dest_pe;
     p|device_idx;
@@ -66,15 +76,28 @@ public:
       }
       PUParray(p, (char*)data, cnt);
     }
+#else
+    p|tag;
+#endif // CMK_GPU_COMM
   }
 
   ~CmiDeviceBuffer() {
+#if !CMK_GPU_COMM
     if (data) cudaFreeHost(data);
+#endif
   }
 };
 
 CmiNcpyModeDevice findTransferModeDevice(int srcPe, int destPe);
 
+#if CMK_GPU_COMM
+typedef void (*RdmaAckCallerFn)(void *token);
+
+void CmiSendDevice(int dest_pe, const void*& ptr, size_t size, uint64_t& tag);
+void CmiRecvDevice(DeviceRdmaOp* op, DeviceRecvType type);
+void CmiRdmaDeviceRecvInit(RdmaAckCallerFn fn);
+void CmiInvokeRecvHandler(void* data);
+#endif // CMK_GPU_COMM
 #endif // CMK_CUDA
 
 #endif // _CONV_RDMADEVICE_H_

@@ -102,6 +102,7 @@ struct GPUManager {
   int pes_per_device;
   std::vector<DeviceManager> device_managers;
   std::unordered_map<int, DeviceManager*> device_map;
+  int comm_thread_device;
 
   // Device communication buffer
   size_t comm_buffer_size;
