@@ -53,7 +53,7 @@ static char* strsignal(int sig) {
  * */
 
 #define CMI_MSGTYPE(msg)            ((CmiMsgHeaderBasic *)msg)->mpiMsgType
-enum mpiMsgTypes { REGULAR, ONESIDED_BUFFER_SEND, ONESIDED_BUFFER_RECV, ONESIDED_BUFFER_DIRECT_RECV, ONESIDED_BUFFER_DIRECT_SEND, POST_DIRECT_RECV, POST_DIRECT_SEND};
+enum mpiMsgTypes : unsigned char { REGULAR, ONESIDED_BUFFER_SEND, ONESIDED_BUFFER_RECV, ONESIDED_BUFFER_DIRECT_RECV, ONESIDED_BUFFER_DIRECT_SEND, POST_DIRECT_RECV, POST_DIRECT_SEND};
 
 /* =======Beginning of Definitions of Performance-Specific Macros =======*/
 /* Whether to use multiple send queue in SMP mode */

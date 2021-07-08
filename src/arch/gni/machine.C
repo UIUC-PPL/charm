@@ -99,7 +99,7 @@ static int   RDMA_cap =   10;
 static int   RDMA_pending = 0;
 #endif
 
-enum CMK_SMSG_TYPE {
+enum CMK_SMSG_TYPE : unsigned char {
   CHARM_SMSG=1,
   NONCHARM_SMSG,
   SMSG_DONT_FREE

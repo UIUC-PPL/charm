@@ -4,9 +4,10 @@
  * converse.h.
  */
 
+#if defined __cplusplus && (__cplusplus >= 201103L || (defined _MSC_VER && _MSC_VER >= 1700))
+
 // Enum for registration modes used in the Zerocopy API
-// TODO:Convert to typed enum post C++ conversion
-enum ncpyRegModes {
+enum ncpyRegModes : unsigned char {
   /* CMK_BUFFER_REG is the default mode that always registers the buffer by treating network and non-network transfers
    * equally. It avoids an extra small message to register, as done in the case of CMK_BUFFER_UNREG
    */
@@ -37,8 +38,7 @@ enum ncpyRegModes {
 };
 
 // Enum for de-registration modes used in the Zerocopy API
-// TODO:Convert to typed enum post C++ conversion
-enum ncpyDeregModes {
+enum ncpyDeregModes : unsigned char {
   /* CMK_BUFFER_DEREG is the default mode which makes the RTS de-register the buffers after the completion
    * of the Zero Copy operation
    */
@@ -59,8 +59,7 @@ enum ncpyDeregModes {
 #define CMK_COMMON_NOCOPY_DIRECT_BYTES 0
 
 // Enum for the type of zerocopy operation
-// TODO: Convert to typed enum post C++ conversion
-enum ncpyOperationMode {
+enum ncpyOperationMode : unsigned char {
   CMK_DIRECT_API             = 0,
   CMK_EM_API                 = 1,
   CMK_EM_API_SRC_ACK_INVOKE  = 2,
@@ -73,23 +72,20 @@ enum ncpyOperationMode {
 };
 
 // Enum for the method of acknowledglement handling after the completion of a zerocopy operation
-// TODO: Convert to typed enum post C++ conversion
-enum ncpyAckMode {
+enum ncpyAckMode : unsigned char {
   CMK_SRC_DEST_ACK       = 0,
   CMK_SRC_ACK            = 1,
   CMK_DEST_ACK           = 2
 };
 
 // Enum to determine if a NcpyOperationInfo can be freed upon completion
-// TODO: Convert to a bool variable post C++ conversion
-enum ncpyFreeNcpyOpInfoMode {
+enum ncpyFreeNcpyOpInfoMode : unsigned char {
   CMK_FREE_NCPYOPINFO                = 0,
   CMK_DONT_FREE_NCPYOPINFO           = 1
 };
 
 // Enum for the type of converse message
-// TODO: Convert to a bool variable post C++ conversion
-enum cmiZCMsgType {
+enum cmiZCMsgType : unsigned char {
   CMK_REG_NO_ZC_MSG = 0,
   CMK_ZC_P2P_SEND_MSG = 1,
   CMK_ZC_P2P_RECV_MSG = 2,
@@ -100,6 +96,7 @@ enum cmiZCMsgType {
   CMK_ZC_BCAST_RECV_ALL_DONE_MSG = 7,
   CMK_ZC_DEVICE_MSG = 8
 };
+#endif //__cplusplus
 
 #ifndef CMK_NOCOPY_DIRECT_BYTES
 

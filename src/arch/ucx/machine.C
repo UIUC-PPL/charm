@@ -48,7 +48,7 @@
 
 #define UCX_LOG_PRIO 50 // Disabled by default
 
-enum {
+enum : unsigned char {
     UCX_SEND_OP,    // Regular Send using UcxSendMsg
     UCX_RMA_OP_PUT, // RMA Put operation using UcxRmaOp
     UCX_RMA_OP_GET  // RMA Get operation using UcxRmaOp

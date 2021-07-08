@@ -12,7 +12,7 @@ void PumpOneSidedRDMATransactions(gni_cq_handle_t rdma_cq, CmiNodeLock rdma_cq_l
 /* Type of RDMA transaction
    This is used in handling each type of RDMA transaction appropriately on completion
  */
-enum CMK_RDMA_TYPE {
+enum CMK_RDMA_TYPE : unsigned char {
   DIRECT_SEND_RECV=1,
   DIRECT_SEND_RECV_UNALIGNED
 };
