@@ -101,12 +101,20 @@ TName::TName(Type* t, const char* n, const char* v) : type(t), name(n), val(v) {
 TVarList::TVarList(TVar* v, TVarList* n) : tvar(v), next(n) {}
 
 void Template::outputClosuresDecl(XStr& str) {
+#if CMK_NO_RTTI
+  Chare* c = (Chare *)entity;
+#else
   Chare* c = dynamic_cast<Chare*>(entity);
+#endif
   if (c) str << c->closuresDecl;
 }
 
 void Template::outputClosuresDef(XStr& str) {
+#if CMK_NO_RTTI
+  Chare* c = (Chare *)entity;
+#else
   Chare* c = dynamic_cast<Chare*>(entity);
+#endif
   if (c) str << c->closuresDef;
 }
 
