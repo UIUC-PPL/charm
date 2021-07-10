@@ -1,0 +1,26 @@
+mainmodule ng_test{
+
+  readonly CProxy_main mainProxy;
+  readonly CProxy_NG1 ngProxy;
+  readonly CProxy_G1 gProxy;
+  readonly int kVal;
+
+  message ngMsg {
+    int buffer[];
+  };
+
+  mainchare main {
+    entry main(CkArgMsg *m);
+    entry [reductiontarget] void done();
+  };
+
+  nodegroup NG1 {
+    entry NG1();
+    entry void recvMsg(ngMsg *msg);
+  };
+
+  group G1 {
+    entry G1();
+    entry void ngMsgReceived();
+  }
+};
