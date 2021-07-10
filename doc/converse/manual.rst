@@ -210,6 +210,20 @@ pointer (to a message buffer) as an argument, and returns nothing. The
 handler may use the message buffer for any purpose, but is responsible
 for eventually deleting the message using CmiFree.
 
+.. _handler3:
+
+Calling Handler Functions
+-------------------------
+
+In most cases, the system will receive messages and call the appropriate handler.
+However, there are situations where it is desirable to direct the system to handle
+a message. This is performed by calling ``CmiHandleMessage``, shown below.
+
+.. code-block:: c++
+
+  void CmiHandleMessage(void *message)
+
+
 Building Messages
 -----------------
 
@@ -2089,6 +2103,56 @@ the resolution to a shorter time. The same caveats about short polling
 times affecting performance still apply, This function returns the
 previous (and potentially current, if it was shorter than
 ``newResolution``,) resolution in seconds.
+
+.. _converse_task_queues:
+
+Converse Task Queue
+=====================
+
+In addition to the scheduler queue, Converse provides support for task queues. To enable these queues,
+the flag ``--enable_task_queue`` should be included when Converse is built in SMP mode.
+Converse supports queues managed by the PE's scheduler and those managed by user programs.
+
+To support efficient insertion, deletion, and work-stealing, queues in Converse are implemented according to the work-stealing protocol in the Cilk programming language. That is to say that each thread inserts and removes tasks at the tail of its queue, much like a stack. Threads can also steal work from other threads. A thread
+that is stealing from another will attempt to remove a task at the head of the victim's queue.
+
+Scheduler-managed Queues
+---------------------------
+To interact with the task queue managed by the Converse scheduler, the following function can be used:
+
+.. code-block:: c++
+
+  CsdTaskEnqueue(void *msg)
+
+When called, ``CsdTaskEnqueue`` enqueues the message to the PE's task queue, where it will eventually
+be dequeued by the system.
+Once removed from the queue, the message will be passed to the handler registered
+for this message. If a PE becomes idle, then it will automatically attempt to steal tasks from
+a random rank on the same logical node.
+
+User-managed Queues
+----------------------
+Additionally, Converse supports user-scheduled task queues. These queues are managed with the following
+functions:
+
+.. code-block:: c++
+
+  TaskQueuePush(TaskQueue Q, void *data)
+  void *TaskQueuePop(TaskQueue Q)
+  void *TaskQueueSteal(TaskQueue Q)
+
+The first, ``TaskQueuePush``, enqueues the message data to the tail of the task queue Q, as described
+previously. ``TaskQueuePop``
+pops the item at the tail of the task queue and returns it. If the task queue is empty, NULL is
+returned. The task can then be handled using ``CmiHandleMessage`` (Section :numref:`handler3`)
+or any user-defined function. Note that it is the responsibility of the message handler or the user
+to free the message.
+
+In addition to the standard queueing and dequeueing operations, Converse task queues support task
+stealing with ``TaskQueueSteal``. Note that ``TaskQueuePop`` and ``TaskQueueSteal`` are
+not equivalent. The former removes a task from the tail of the queue, while the latter removes
+a task from the queue's head.
+
 
 .. _converse_client_server:
 
