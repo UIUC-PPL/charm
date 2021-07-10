@@ -4,10 +4,9 @@
 
 //===----------------------------------------------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is dual licensed under the MIT and the University of Illinois Open
-// Source Licenses. See LICENSE.txt for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -34,7 +33,6 @@
 #define get_section(id) ((id) >> 16)
 #define get_number(id) ((id)&0xFFFF)
 
-kmp_msg_t __kmp_msg_empty = {kmp_mt_dummy, 0, "", 0};
 kmp_msg_t __kmp_msg_null = {kmp_mt_dummy, 0, NULL, 0};
 static char const *no_message_available = "(No message available)";
 
@@ -641,7 +639,7 @@ kmp_msg_t __kmp_msg_format(unsigned id_arg, ...) {
   // numbers, for example:  "%2$s %1$s".
   __kmp_str_buf_vprint(&buffer, __kmp_i18n_catgets(id), args);
 #elif KMP_OS_WINDOWS
-  // On Winodws, printf() family functions does not recognize GNU style
+  // On Windows, printf() family functions does not recognize GNU style
   // parameter numbers, so we have to use FormatMessage() instead. It recognizes
   // parameter numbers, e. g.:  "%2!s! "%1!s!".
   {
@@ -821,19 +819,19 @@ void __kmp_msg(kmp_msg_severity_t severity, kmp_msg_t message, va_list args) {
     if (message.type == kmp_mt_dummy && message.str == NULL) {
       break;
     }
-    if (message.type == kmp_mt_dummy && message.str == __kmp_msg_empty.str) {
-      continue;
-    }
     switch (message.type) {
     case kmp_mt_hint: {
       format = kmp_i18n_fmt_Hint;
+      // we cannot skip %1$ and only use %2$ to print the message without the
+      // number
+      fmsg = __kmp_msg_format(format, message.str);
     } break;
     case kmp_mt_syserr: {
       format = kmp_i18n_fmt_SysErr;
+      fmsg = __kmp_msg_format(format, message.num, message.str);
     } break;
     default: { KMP_DEBUG_ASSERT(0); }
     }
-    fmsg = __kmp_msg_format(format, message.num, message.str);
     __kmp_str_free(&message.str);
     __kmp_str_buf_cat(&buffer, fmsg.str, fmsg.len);
     __kmp_str_free(&fmsg.str);
