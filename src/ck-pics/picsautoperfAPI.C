@@ -20,18 +20,6 @@ void PICS_registerAutoPerfDone(CkCallback cb, int frameworkShouldAdvancePhase){
   autoPerfProxy.setAutoPerfDoneCallback(cb);
 }
 
-void PICS_setNumOfPhases(bool fromGlobal, int num, char *names[]) {
-  std::vector<char> seqNames(num*40);
-  for(int i=0; i<num; i++)
-  {
-    strcpy(&seqNames[0]+i*40, names[i]);
-  }
-  if(fromGlobal)
-    autoPerfProxy.setNumOfPhases(num, &seqNames[0]);
-  else
-    autoPerfProxy.ckLocalBranch()->setNumOfPhases(num, &seqNames[0]);
-}
-
 void PICS_startPhase( bool fromGlobal, int phaseId)
 {
   if(fromGlobal)
@@ -143,14 +131,6 @@ void setUserDefinedGoal(double value)
   autoPerfProxy.setUserDefinedGoal(value);
 }
 
-void PICS_setCollectionMode(int m) {
-   setCollectionMode(m); 
-}
-
-void PICS_setEvaluationMode(int m) {
-  setEvaluationMode(m);
-}
-
 void PICS_markLDBStart(int appStep) {
   autoPerfProxy.PICS_markLDBStart(appStep);
 }
@@ -159,11 +139,30 @@ void PICS_markLDBEnd(){
   autoPerfProxy.PICS_markLDBEnd();
 }
 
-void PICS_setWarmUpSteps(int steps){
-  WARMUP_STEP = steps;
-}
+void PICS_configure(PicsConfig config, CkCallback cb) {
+  if (config.warmupSteps != PICS_INVALID)
+    WARMUP_STEP = config.warmupSteps;
+  if (config.pauseSteps != PICS_INVALID)
+    PAUSE_STEP = config.pauseSteps;
+  if (config.collectionMode != PICS_INVALID)
+    setCollectionMode(config.collectionMode);
+  if (config.evaluationMode != PICS_INVALID)
+    setEvaluationMode(config.evaluationMode);
 
-
-void PICS_setPauseSteps(int steps){
-  PAUSE_STEP = steps;
+  if (config.numPhases != PICS_INVALID) {
+    std::vector<char> seqNames(config.numPhases*40);
+    for(int i = 0; i < config.numPhases; i++) {
+      strcpy(&seqNames[0]+i*40, config.phaseNames[i]);
+    }
+    if(config.fromGlobal)
+      autoPerfProxy.setNumOfPhases(config.numPhases, &seqNames[0], cb);
+    else
+      autoPerfProxy.ckLocalBranch()->setNumOfPhases(config.numPhases, &seqNames[0], cb);
+  } else {
+    char name[40] = "default";
+    if(config.fromGlobal)
+      autoPerfProxy.setNumOfPhases(1, &name[0], cb);
+    else
+      autoPerfProxy.ckLocalBranch()->setNumOfPhases(1, &name[0], cb);
+  }
 }

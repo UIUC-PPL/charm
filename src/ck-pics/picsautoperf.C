@@ -331,7 +331,7 @@ void TraceAutoPerfBOC::registerPerfGoal(int goalIndex) {
 
 void TraceAutoPerfBOC::setUserDefinedGoal(double value) { }
 
-void TraceAutoPerfBOC::setNumOfPhases(int num, const char names[]) {
+void TraceAutoPerfBOC::setNumOfPhases(int num, const char names[], CkCallback cb) {
   CkpvAccess(numOfPhases) = num;
   CkpvAccess(phaseNames).clear();
   CkpvAccess(phaseNames).resize(num);
@@ -341,6 +341,7 @@ void TraceAutoPerfBOC::setNumOfPhases(int num, const char names[]) {
     strcpy(name, names + i*40);
     CkpvAccess(phaseNames)[i] = name;
   }
+  contribute(0, NULL, CkReduction::nop, cb);
 }
 
 // set the call back function, which is invoked after auto perf is done
@@ -659,7 +660,6 @@ TraceAutoPerfBOC::TraceAutoPerfBOC() {
 
   if((isPeriodicalAnalysis))
   {
-    setNumOfPhases(1, "Default");
     startStep();
     startPhase(0);
     if(CkMyPe() == 0)
@@ -719,7 +719,6 @@ TraceAutoPerfInit::TraceAutoPerfInit(CkArgMsg* args)
   /* Starts a new phase without user call */
   autoPerfProxy.startStep();
   autoPerfProxy.startPhase(0);
-  autoPerfProxy.setNumOfPhases(1, "program");
 }
 
 extern "C" void traceAutoPerfExitFunction() {

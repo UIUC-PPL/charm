@@ -122,6 +122,7 @@ typedef enum Direction_t    Direction;
 #define PARALLEL  11
 #define SINGLE 20
 #define MULTIPLE 21
+#define PICS_INVALID -1
 
 #define   PERIOD_PERF 1
 
