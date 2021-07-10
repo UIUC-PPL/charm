@@ -243,7 +243,7 @@ public:
   void PICS_markLDBStart(int appStep) ;
   void PICS_markLDBEnd() ;
 
-  void setNumOfPhases(int num, const char names[]);
+  void setNumOfPhases(int num, const char names[], CkCallback cb);
   void setProjectionsOutput();
   void recvGlobalSummary(CkReductionMsg *msg);
 

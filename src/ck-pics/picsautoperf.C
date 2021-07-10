@@ -253,6 +253,8 @@ void TraceAutoPerfBOC::endStep(bool fromGlobal, int fromPE, int incSteps) {
 void TraceAutoPerfBOC::endStepResumeCb(bool fromGlobal, int fromPE, CkCallback cb) {
   endStepTimer = CkWallTimer();
   TraceAutoPerf *t = localAutoPerfTracingInstance();
+  currentAppStep++;
+  picsStep++;
   if(picsStep % PERIOD_PERF == 0 ) {
     t->endStep(true);
   }
@@ -260,7 +262,6 @@ void TraceAutoPerfBOC::endStepResumeCb(bool fromGlobal, int fromPE, CkCallback c
   {
     t->endStep(false);
   }
-  currentAppStep++;
   setAutoPerfDoneCallback(cb);
   run(fromGlobal, fromPE); 
 }
@@ -331,7 +332,7 @@ void TraceAutoPerfBOC::registerPerfGoal(int goalIndex) {
 
 void TraceAutoPerfBOC::setUserDefinedGoal(double value) { }
 
-void TraceAutoPerfBOC::setNumOfPhases(int num, const char names[]) {
+void TraceAutoPerfBOC::setNumOfPhases(int num, const char names[], CkCallback cb) {
   CkpvAccess(numOfPhases) = num;
   CkpvAccess(phaseNames).clear();
   CkpvAccess(phaseNames).resize(num);
@@ -341,6 +342,7 @@ void TraceAutoPerfBOC::setNumOfPhases(int num, const char names[]) {
     strcpy(name, names + i*40);
     CkpvAccess(phaseNames)[i] = name;
   }
+  contribute(cb);
 }
 
 // set the call back function, which is invoked after auto perf is done
@@ -360,33 +362,28 @@ void TraceAutoPerfBOC::formatPerfData(PerfData *perfdata, int subStep, int phase
   int steps = currentAppStep-lastAnalyzeStep;
 
   //derive metrics from raw performance data
-  if (steps > 0) {
-    data[AVG_LoadPerPE] = data[AVG_UtilizationPercentage]/numpes * totaltime/steps;
-    data[AVG_UtilizationPercentage] /= numpes; 
-    data[AVG_IdlePercentage] /= numpes; 
-    data[AVG_OverheadPercentage] /= numpes; 
-    data[MAX_LoadPerPE] = data[MAX_UtilizationPercentage]*totaltime/steps;
-    data[AVG_BytesPerMsg] = data[AVG_BytesPerObject]/data[AVG_NumMsgsPerObject];
-    data[AVG_NumMsgPerPE] = (data[AVG_NumMsgsPerObject]/numpes)/steps;
-    data[AVG_BytesPerPE] = data[AVG_BytesPerObject]/numpes/steps;
-    data[AVG_CacheMissRate] = data[AVG_CacheMissRate]/numpes/steps;
+  data[AVG_LoadPerPE] = data[AVG_UtilizationPercentage]/numpes * totaltime/steps;
+  data[AVG_UtilizationPercentage] /= numpes;
+  data[AVG_IdlePercentage] /= numpes;
+  data[AVG_OverheadPercentage] /= numpes;
+  data[MAX_LoadPerPE] = data[MAX_UtilizationPercentage]*totaltime/steps;
+  data[AVG_BytesPerMsg] = data[AVG_BytesPerObject]/data[AVG_NumMsgsPerObject];
+  data[AVG_NumMsgPerPE] = (data[AVG_NumMsgsPerObject]/numpes)/steps;
+  data[AVG_BytesPerPE] = data[AVG_BytesPerObject]/numpes/steps;
+  data[AVG_CacheMissRate] = data[AVG_CacheMissRate]/numpes/steps;
 
-    data[AVG_NumMsgRecv] = data[AVG_NumMsgRecv]/numpes/steps;
-    data[AVG_BytesMsgRecv] = data[AVG_BytesMsgRecv]/numpes/steps;
+  data[AVG_NumMsgRecv] = data[AVG_NumMsgRecv]/numpes/steps;
+  data[AVG_BytesMsgRecv] = data[AVG_BytesMsgRecv]/numpes/steps;
 
-    data[AVG_EntryMethodDuration] /= data[AVG_NumInvocations];
-    data[AVG_EntryMethodDuration_1] /= data[AVG_NumInvocations_1];
-    data[AVG_EntryMethodDuration_2] /= data[AVG_NumInvocations_2];
-    data[AVG_NumInvocations] = data[AVG_NumInvocations]/numpes/steps;
-    data[AVG_NumInvocations_1] = data[AVG_NumInvocations_1]/numpes/steps;
-    data[AVG_NumInvocations_2] = data[AVG_NumInvocations_2]/numpes/steps;
+  data[AVG_EntryMethodDuration] /= data[AVG_NumInvocations];
+  data[AVG_NumInvocations] = data[AVG_NumInvocations]/numpes/steps;
 
-    data[AVG_LoadPerObject] /= data[AVG_NumObjectsPerPE];
-    data[AVG_NumMsgsPerObject] /= data[AVG_NumObjectsPerPE];
-    data[AVG_BytesPerObject] /= data[AVG_NumObjectsPerPE];
+  data[AVG_LoadPerObject] /= data[AVG_NumObjectsPerPE];
+  data[AVG_NumMsgsPerObject] /= data[AVG_NumObjectsPerPE];
+  data[AVG_BytesPerObject] /= data[AVG_NumObjectsPerPE];
 
-    data[AVG_NumObjectsPerPE] = data[AVG_NumObjectsPerPE]/numpes/steps;
-  }
+  data[AVG_NumObjectsPerPE] = data[AVG_NumObjectsPerPE]/numpes/steps;
+  data[AVG_ExternalBytePerPE] /= numpes/steps;
 
   CkPrintf("\nPICS Data: PEs in group: %d\nIDLE: %.2f%%\nOVERHEAD: %.2f%%\nUTIL: %.2f%%\nAVG_ENTRY_DURATION: %fs\n", numpes, data[AVG_IdlePercentage]*100, data[AVG_OverheadPercentage]*100, data[AVG_UtilizationPercentage]*100, data[AVG_EntryMethodDuration]);
 }
@@ -449,6 +446,11 @@ void TraceAutoPerfBOC::globalPerfAnalyze(CkReductionMsg *msg )
       CkpvAccess(summaryPerfDatabase)->add(msg);
     }
     lastAnalyzeStep = currentAppStep;
+    return;
+  }
+
+  // to prevent traceAutoPerfExitFunction resulting in data being analyzed twice
+  if (CkpvAccess(isExit) && picsStep % PERIOD_PERF == 0) {
     return;
   }
 
@@ -659,7 +661,6 @@ TraceAutoPerfBOC::TraceAutoPerfBOC() {
 
   if((isPeriodicalAnalysis))
   {
-    setNumOfPhases(1, "Default");
     startStep();
     startPhase(0);
     if(CkMyPe() == 0)
@@ -719,7 +720,6 @@ TraceAutoPerfInit::TraceAutoPerfInit(CkArgMsg* args)
   /* Starts a new phase without user call */
   autoPerfProxy.startStep();
   autoPerfProxy.startPhase(0);
-  autoPerfProxy.setNumOfPhases(1, "program");
 }
 
 extern "C" void traceAutoPerfExitFunction() {

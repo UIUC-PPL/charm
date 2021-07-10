@@ -4,10 +4,10 @@
 extern char FieldName[][30];
 extern char EffectName[][30];
 
-#define NUM_AVG 28
+#define NUM_AVG 24
 #define NUM_MIN 9
-#define NUM_MAX 40 
-#define NUM_NODES   79
+#define NUM_MAX 36
+#define NUM_NODES   71
 enum FieldIndex_t {
   AVG_TotalTime=0,
   AVG_IdlePercentage,
@@ -15,11 +15,7 @@ enum FieldIndex_t {
   AVG_UtilizationPercentage,
   AVG_AppPercentage,
   AVG_EntryMethodDuration,
-  AVG_EntryMethodDuration_1,
-  AVG_EntryMethodDuration_2,
   AVG_NumInvocations,
-  AVG_NumInvocations_1,
-  AVG_NumInvocations_2,
   AVG_LoadPerObject,
   AVG_LoadPerPE,
   AVG_NumObjectsPerPE,
@@ -69,10 +65,6 @@ enum FieldIndex_t {
   MAX_BytesMsgRecvPE,
   MAX_EntryMethodDuration,
   MAX_EntryID,
-  MAX_EntryMethodDuration_1,
-  MAX_EntryID_1,
-  MAX_EntryMethodDuration_2,
-  MAX_EntryID_2,
   MAX_NumMsgSend,
   MAX_NumMsgSendPE,
   MAX_BytesSend,
@@ -122,6 +114,7 @@ typedef enum Direction_t    Direction;
 #define PARALLEL  11
 #define SINGLE 20
 #define MULTIPLE 21
+#define PICS_INVALID -1
 
 #define   PERIOD_PERF 1
 

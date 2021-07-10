@@ -38,8 +38,6 @@ class TraceAutoPerf : public Trace {
 
   /** The amount of time spent executing entry methods since we last reset the counters */
   double totalEntryMethodTime;
-  double totalEntryMethodTime_1;
-  double totalEntryMethodTime_2;
 
   double appWorkStartTimer;
   /** the amount of application useful work, need app knowledge */
@@ -55,11 +53,7 @@ class TraceAutoPerf : public Trace {
 
   /* * maximum excution time of a single entry method */
   double maxEntryTime;
-  double maxEntryTime_1;
-  double maxEntryTime_2;
   int    maxEntryIdx;
-  int    maxEntryIdx_1;
-  int    maxEntryIdx_2;
 
   /*  maximum execution time of a single object  */
   /*  obj load map */
@@ -75,8 +69,6 @@ class TraceAutoPerf : public Trace {
 
   /** The number of entry method invocations since we last reset the counters */
   long totalEntryMethodInvocations;
-  long totalEntryMethodInvocations_1;
-  long totalEntryMethodInvocations_2;
 
   /** The time we last rest the counters */
   double lastResetTime;

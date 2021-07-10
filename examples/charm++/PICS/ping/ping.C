@@ -60,7 +60,10 @@ public:
 
   void prepare() {
     char *names[] = {"PING"};
-    PICS_setNumOfPhases(true, 1, names);
+    PicsConfig pc;
+    pc.numPhases = 1;
+    pc.phaseNames = names;
+    PICS_configure(pc, CkCallbackResumeThread());
     //PICS_registerTunableParameterFields("PIPELINE_NUM", TP_INT, dv, minv, maxv, 1, PICS_EFF_GRAINSIZE, -1, OP_ADD, TS_SIMPLE, 1);
     thisProxy.run();
   }
