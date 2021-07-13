@@ -1,0 +1,24 @@
+name: NetLRTS Linux i386
+
+on: pull_request
+
+jobs:
+  build:
+    timeout-minutes: 60
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: install-prerequisites
+      run: |
+        sudo dpkg --add-architecture i386
+        sudo apt-get update
+        sudo apt-get install -y gcc-multilib g++-multilib gfortran-multilib zlib1g-dev:i386 libjpeg-dev:i386
+    - name: build
+      run: ./build all-test netlrts-linux-i386 --build-shared --with-production --enable-error-checking --enable-lbuserdata -j3 -g -Werror=vla
+      # TODO: this should build tests with "-charm-shared". See #2735 on why this is not done currently.
+    - name: test
+      run: make -C netlrts-linux-i386/tmp test TESTOPTS="++local"
+    - name: testp
+      run: make -C netlrts-linux-i386/tmp testp P=2 TESTOPTS="++local"

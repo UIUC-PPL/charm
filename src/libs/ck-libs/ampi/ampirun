@@ -1,9 +1,11 @@
 #!/bin/bash
 
-set -o nounset -o posix -o pipefail
+set -o posix -o pipefail
+# bash < 4.4 erroneously considers empty arrays to be unset
+[[ ${BASH_VERSINFO[0]} -gt 4 ]] || [[ ${BASH_VERSINFO[0]} -eq 4 && ${BASH_VERSINFO[1]} -ge 4 ]] && set -o nounset
 
-progname=$(basename "$0")
-progdir=$(dirname "$0")
+progname="$(basename "$0")"
+progdir="$(dirname "$0")"
 
 verbose=0
 num_ranks=1
@@ -11,8 +13,8 @@ num_hosts=0
 
 virtual_ranks=0
 
-cmd=""
-charmrun_args=""
+cmd=()
+charmrun_args=()
 hosts=""
 
 usage() {
@@ -62,12 +64,12 @@ processArgs() {
         ;;
 
       -n|-np|--np|-p)
-        num_ranks=$1
+        num_ranks="$1"
         shift
         ;;
 
       --host)
-        hosts=$1
+        hosts="$1"
         shift
         ;;
 
@@ -76,7 +78,7 @@ processArgs() {
         ;;
 
       --)
-        cmd="$@ "
+        cmd+=("$@")
         return
         ;;
 
@@ -86,39 +88,39 @@ processArgs() {
         ;;
 
       *)
-        cmd="\"$arg\" $@ "
+        cmd+=("$arg" "$@")
         return
         ;;
     esac
   done
 }
 
-eval processArgs "$@"
+processArgs "$@"
 
 handle_hosts
 
 if [[ $verbose == 0 ]]; then
-  charmrun_args+="++quiet "
+  charmrun_args+=(++quiet)
 fi
 
 if [[ -z $hosts ]]; then
-  charmrun_args+="++local "
+  charmrun_args+=(++local)
 else
-  charmrun_args+="++nodelist ampirun-nodelist "
+  charmrun_args+=(++nodelist ampirun-nodelist)
 fi
 
 if [[ $virtual_ranks == 0 ]]; then
-  cmd+="+p$num_ranks "
+  cmd+=("+p$num_ranks")
 else
-  cmd+="+vp$num_ranks +p$num_hosts "
+  cmd+=("+vp$num_ranks" "+p$num_hosts")
 fi
 
-Do() {
-  [[ $verbose == 1 ]] && echo "$progname: Executing $@" 1>&2
-  eval "$@"
+runCmd() {
+  [[ $verbose == 1 ]] && echo "$progname: Executing" "$@" 1>&2
+  "$@"
 }
 
-Do "$progdir/charmrun" $charmrun_args $cmd
+runCmd "$progdir/charmrun" "${charmrun_args[@]}" "${cmd[@]}"
 status=$?
 
 rm -f ampirun-nodelist

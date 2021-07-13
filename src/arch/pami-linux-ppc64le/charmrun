@@ -6,7 +6,7 @@
 
 export FROM_CHARMRUN='1'
 
-args=""
+args=()
 pes=0
 nodes=0
 ppn=1
@@ -17,11 +17,17 @@ DEBUG=0
 DEBUG_NO_PAUSE=0
 DEBUGGER='gdb'
 
+runCmd()
+{
+  [[ $QUIET -eq 0 ]] && echo "charmrun>" "$@"
+  "$@"
+}
+
 while [ $# -gt 0 ]
 do
-	case $1 in
+	case "$1" in
 	+n|++n|++np)
-		nodes=$2
+		nodes="$2"
 		shift
 		;;
 	+n[0-9]*)
@@ -34,20 +40,20 @@ do
 		nodes="${1#\+\+np}"
 		;;
 	+ppn|++ppn)
-		args=$args" +ppn "$2
-		ppn=$2
+		args+=(+ppn "$2")
+		ppn="$2"
 		shift
 		;;
 	+ppn[0-9]*)
-		args=$args" "$1
+		args+=("$1")
 		ppn="${1#\+ppn}"
 		;;
 	++ppn[0-9]*)
-		args=$args" "$1
+		args+=("$1")
 		ppn="${1#\+\+ppn}"
 		;;
 	+p|++p)
-		pes=$2
+		pes="$2"
 		shift
 		;;
 	+p[0-9]*)
@@ -57,12 +63,12 @@ do
 		pes="${1#\+\+p}"
 		;;
 	+pemap)
-		args=$args" "$1" "$2
+		args+=("$1" "$2")
 		shift
 		;;
 	-machinefile)
-		machinefile=$2
-		args=" "$1" "$2" "$args
+		machinefile="$2"
+		args=("$1" "$2" "${args[@]}")
 		shift
 		;;
 	++quiet)
@@ -72,7 +78,7 @@ do
 		QUIET=0
 		;;
 	++xterm)
-		XTERM=$2
+		XTERM="$2"
 		shift
 		;;
 	++debug)
@@ -88,31 +94,31 @@ do
 		DEBUG_NO_PAUSE=0
 		;;
 	++debugger)
-		DEBUGGER=$2
+		DEBUGGER="$2"
 		shift
 		;;
 	*)
-		args=$args" "$1
+		args+=("$1")
 		;;
 	esac
 	shift
 done
 
-test $QUIET -eq 1 && args=$args" "++quiet
+[[ $QUIET -eq 1 ]] && args+=(++quiet)
 
 if [ "$DEBUG" = '1' -o "$DEBUG_NO_PAUSE" = '1' ]
 then
-  DEBUG_RUN='-ex r'
+  DEBUG_RUN=(-ex r)
   DEBUG_POSTFIX='--args'
   if [ "$DEBUGGER" = 'lldb' ]
   then
-    DEBUG_RUN='-o r'
+    DEBUG_RUN=(-o r)
     DEBUG_POSTFIX='--'
   fi
 
-  args="$DEBUG_POSTFIX $args"
-  [ "$DEBUG_NO_PAUSE" = '1' ] && args="$DEBUG_RUN $args"
-  args="$XTERM -e $DEBUGGER $args"
+  args=("$DEBUG_POSTFIX" "${args[@]}")
+  [[ "$DEBUG_NO_PAUSE" = '1' ]] && args=("${DEBUG_RUN[@]}" "${args[@]}")
+  args=("$XTERM" -e "$DEBUGGER" "${args[@]}")
 fi
 
 if [[ $nodes = 0 ]]
@@ -131,34 +137,32 @@ then
   exit 1
 fi
 
-[[ $QUIET -eq 0 ]] && printf "\nRunning as $nodes OS processes: %s\n" "$args"
+[[ $QUIET -eq 0 ]] && echo && echo "Running as $nodes OS processes: ${args[*]}"
 
 
 if [ -n "$PBS_NODEFILE" ]
 then
 # we are in a job shell
-  aprun=`command -v aprun 2>/dev/null`
+  aprun="$(command -v aprun 2>/dev/null)"
   if test -n "$aprun"
   then
-    [[ $QUIET -eq 0 ]] && echo aprun -n $nodes $args
-    $aprun -n $nodes $args
+    runCmd "$aprun" -n "$nodes" "${args[@]}"
   else
-    mpirun_cmd=`command -v mpirun 2>/dev/null`
+    mpirun_cmd="$(command -v mpirun 2>/dev/null)"
     if test -n "$mpirun_cmd"
     then
-      if echo $mpirun_cmd | grep 'mvapich2'  > /dev/null 2>/dev/null
+      if echo "$mpirun_cmd" | grep 'mvapich2' >/dev/null 2>&1
       then
         # if daemon not started, start it
-        if ! mpdtrace > /dev/null 2>/dev/null
+        if ! mpdtrace >/dev/null 2>&1
         then
           mvapich2-start-mpd
         fi
-        mpirun -np $nodes $args
+        runCmd mpirun -np "$nodes" "${args[@]}"
         #    mpdallexit
       else   # normal case
-        test -z "$machinefile" && args=-machinefile" "$PBS_NODEFILE" "$args
-        [[ $QUIET -eq 0 ]] && echo mpirun -np $nodes $args
-        mpirun -np $nodes $args
+        [[ -z "$machinefile" ]] && args=(-machinefile "$PBS_NODEFILE" "${args[@]}")
+        runCmd mpirun -np "$nodes" "${args[@]}"
       fi
     else
       echo "Charmrun> can not locate mpirun in order to run the program."
@@ -168,20 +172,18 @@ then
 elif [ -n "$LSB_HOSTS" ]
 then
   # Summit/Summitdev
-  jsrun=`command -v jsrun 2>/dev/null`
+  jsrun="$(command -v jsrun 2>/dev/null)"
   if test -n "$jsrun"
   then
     #cores per resource set = ppn + 1 core for system processes
     cores=$(( ppn + 1 ))
-    [[ $QUIET -eq 0 ]] && echo jsrun -r$nodes -c$cores $args
-    $jsrun -r$nodes -c$cores  $args
+    runCmd "$jsrun" "-r$nodes" "-c$cores" "${args[@]}"
   else
-    hostname=`hostname`
+    hostname="$(hostname)"
     case "$hostname" in
     #Tungsten and other machines
     *)
-    [[ $QUIET -eq 0 ]] && echo cmpirun -lsf -poll -no_smp -gm_long 200000 $args
-    cmpirun -lsf -poll -no_smp -gm_long 200000 $args
+    runCmd cmpirun -lsf -poll -no_smp -gm_long 200000 "${args[@]}"
     ;;
     esac
   fi
@@ -189,10 +191,10 @@ elif [ -n "$PBS_QUEUE" -o -n "$LSF_QUEUE" ]
 then
 # Interactive mode: create, and submit a batch job
         script="charmrun_script.$$.sh"
-        indir=`pwd`
+        indir="$(pwd)"
         output="$indir/charmrun_script.$$.stdout"
         result="$indir/charmrun_script.$$.result"
-	rm -f $result
+	rm -f "$result"
 # Some machine specific
 	USE_LSF=0
 # 10 minutes
@@ -200,18 +202,19 @@ then
 	queue_stat=qstat
 	queue_qsub=qsub
 	queue_kill=qdel
-	hostname=`hostname`
+	hostname="$(hostname)"
+	extra=()
 	case "$hostname" in
 	turing*.turing.uiuc.edu)
 		ppn='#PBS -l nodes='$nodes':ppn=1'
-		extra='-machinefile $PBS_NODEFILE'
+		extra=("-machinefile" "\$PBS_NODEFILE")
 		;;
 	tg-login*|honest*.ncsa.uiuc.edu)
 		# always ppn=2
 		nodes=$(( ( nodes + 1 ) / 2 ))
 		[[ $nodes -eq 1 ]] && ppns=1 || ppns=2
 		ppn='#PBS -l nodes='$nodes':ppn='$ppns
-		extra='-machinefile $PBS_NODEFILE'
+		extra=("-machinefile" "\$PBS_NODEFILE")
 		;;
 	co-login*.ncsa.uiuc.edu)
 		mem='#PBS -l mem=500mb'
@@ -228,7 +231,7 @@ then
 		nodes=$(( ( nodes + 1 ) / 2 ))
 		[[ $nodes -eq 1 ]] && ppns=1 || ppns=2
 		ppn='#PBS -l nodes='$nodes':ppn='$ppns
-		extra='-machinefile $PBS_NODEFILE'
+		extra=("-machinefile" "\$PBS_NODEFILE")
 		;;
         kraken*)
                 ncores=$(( ( nodes + 11 ) / 12 * 12 ))
@@ -241,11 +244,11 @@ then
 	esac
 	if test $USE_LSF -eq 0
 	then
-          mpirun=`command -v aprun 2>/dev/null`
+          mpirun="$(command -v aprun 2>/dev/null)"
           npcmd="-n "
           if test -z "$mpirun"
           then
-	    mpirun=`command -v mpirun 2>/dev/null`
+	    mpirun="$(command -v mpirun 2>/dev/null)"
             npcmd="-np "
           fi
           cat > $script << EOF
@@ -272,8 +275,8 @@ $mem
 cd $indir
 
 cat \$PBS_NODEFILE
-echo $mpirun $npcmd $nodes $extra $args
-$mpirun $npcmd $nodes $extra $args
+echo $mpirun $npcmd $nodes ${extra[@]} ${args[@]}
+$mpirun $npcmd $nodes ${extra[@]} ${args[@]}
 
 # Save mpirun exit status
 status=\$?
@@ -294,7 +297,7 @@ EOF
 
 cd $indir
 echo \$LSB_MCPU_HOSTS
-$mpirun $args
+$mpirun ${args[@]}
 # Save mpirun exit status
 status=\$?
 echo \$status > $result
@@ -308,7 +311,7 @@ End() {
 	exit $1
 }
 
-        echo "Submitting batch job for> $mpirun -np $nodes $args"
+        echo "Submitting batch job for> $mpirun -np $nodes ${args[*]}"
         echo " using the command> $queue_qsub $script"
         chmod 755 $script
 	while [ -z "$jobid" ]
@@ -325,16 +328,16 @@ End() {
         do
                 $queue_stat $jobid > tmp.$$
 		exitstatus=$?
-                if test -f $output
+                if [[ -f "$output" ]]
                 then
 # The job is done-- print its output
                         rm tmp.$$
 # When job hangs, result file does not exist
-			test -f $result && status=`cat $result` || status=1
-			test $status -eq 0 && status=`grep 'End of program' $output > /dev/null 2>&1`
-			cat $output
-			rm -f $result
-			test -f $status && rm -f $script $output
+			[[ -f "$result" ]] && status="$(cat "$result")" || status=1
+			[[ $status -eq 0 ]] && status="$(grep 'End of program' "$output" > /dev/null 2>&1)"
+			cat "$output"
+			rm -f "$result"
+			[[ -f "$status" ]] && rm -f "$script" "$output"
 			exit $status
                 fi
 # The job is still queued or running-- print status and wait
@@ -359,28 +362,25 @@ End() {
 		fi
         done
 else
-  mpirun_cmd=`command -v mpirun 2>/dev/null`
+  mpirun_cmd="$(command -v mpirun 2>/dev/null)"
   if test -n "$mpirun_cmd"
   then
-    [ -n "$MPI_MACHINEFILE" ] && args=" -machinefile $MPI_MACHINEFILE $args"
-    setarch_cmd=`command -v setarch 2>/dev/null`
+    [[ -n "$MPI_MACHINEFILE" ]] && args=(-machinefile "$MPI_MACHINEFILE" "${args[@]}")
+    setarch_cmd="$(command -v setarch 2>/dev/null)"
     if [ -n "$setarch_cmd" -a -x "$setarch_cmd" ]
     then
       # Disables randomization of the virtual address  space  (turns  on
       #          ADDR_NO_RANDOMIZE).
-      cur_arch=`uname -m`
-      [[ $QUIET -eq 0 ]] && echo "charmrun>  $setarch_cmd $cur_arch -R  mpirun -np $nodes $args"
-      $setarch_cmd $cur_arch -R  mpirun -np $nodes $args
+      cur_arch="$(uname -m)"
+      runCmd "$setarch_cmd" "$cur_arch" -R mpirun -np "$nodes" "${args[@]}"
     else
-      [[ $QUIET -eq 0 ]] && echo "charmrun> mpirun -np $nodes $args"
-      mpirun -np $nodes $args
+      runCmd mpirun -np "$nodes" "${args[@]}"
     fi
   else
-    mpiexec_cmd=`command -v mpiexec 2>/dev/null`
+    mpiexec_cmd="$(command -v mpiexec 2>/dev/null)"
     if test -n "$mpiexec_cmd"
     then
-      [[ $QUIET -eq 0 ]] && echo "charmrun> $mpiexec_cmd -n $nodes $args" && echo
-      "$mpiexec_cmd" -n $nodes $args
+      runCmd "$mpiexec_cmd" -n "$nodes" "${args[@]}"
     else
       echo "Don't know how to run MPI program."
       exit 1

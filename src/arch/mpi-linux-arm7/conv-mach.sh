@@ -1,5 +1,9 @@
 . $CHARMINC/cc-mpiopts.sh
 
+CMK_XIOPTS=''
+CMK_WARNINGS_ARE_ERRORS='-Werror'
+CMK_CXX_OPTIMIZE='-O3'
+
 CMK_QT='generic64-light'
 
 
@@ -9,8 +13,8 @@ CMK_CXX="$MPICXX"
 CMK_LD_LIBRARY_PATH="-Wl,-rpath,$CHARMLIBSO/"
 
 CMK_NATIVE_CC='gcc'
-CMK_NATIVE_CXX='g++'
 CMK_NATIVE_LD='gcc'
+CMK_NATIVE_CXX='g++'
 CMK_NATIVE_LDXX='g++'
 CMK_NATIVE_LIBS=''
 

@@ -6,8 +6,8 @@ if [[ "$1" = "@CMAKE_C_COMPILER@" ]]; then shift; fi
 if [[ "$1" = "@CMAKE_CXX_COMPILER@" ]]; then shift; fi
 if [[ "$1" = "@CMAKE_Fortran_COMPILER@" ]]; then shift; fi
 
-[ -z "$AMPICC" ] && AMPICC="$(basename $0)"
-CHARMBIN=$(dirname $0)
+[ -z "$AMPICC" ] && AMPICC="$(basename "$0")"
+CHARMBIN="$(dirname "$0")"
 CHARMLIB="$CHARMBIN/../lib"
 CHARMINC="$CHARMBIN/../include"
 . "$CHARMINC/conv-mach-opt.sh"
@@ -20,13 +20,10 @@ GLOBALS_SHARED=''
 GLOBALS_FUNCPTR=''
 EXPLICIT_COMPILATION=''
 BUILD_SHARE=''
-PASSTHROUGH_COMPILER_OPTIONS=''
+PASSTHROUGH_COMPILER_OPTIONS=()
 
-ARGS=''
+ARGS=()
 OBJECT=''
-
-# protect rpath arguments from disappearing due to variable expansion
-ORIGIN='\$ORIGIN'
 
 processArgs() {
 while [ ! $# -eq 0 ]
@@ -35,7 +32,7 @@ do
   case "$arg" in
   -showme:command|--showme:command)
      shift
-     echo "$CHARMBIN/$AMPICC" $ARGS "$@"
+     echo "$CHARMBIN/$AMPICC" "${ARGS[@]}" "$@"
      exit 0
      ;;
   -showme:compile|--showme:compile)
@@ -66,15 +63,15 @@ do
      ;;
   -show*|--show*)
      shift
-     echo "$CHARMBIN/$AMPICC" $ARGS "$@"
+     echo "$CHARMBIN/$AMPICC" "${ARGS[@]}" "$@"
      exit 0
      ;;
   -v|--version|-print-search-dirs)
-     PASSTHROUGH_COMPILER_OPTIONS+=" $arg"
+     PASSTHROUGH_COMPILER_OPTIONS+=("$arg")
      ;;
   -verbose)
      VERBOSE='true'
-     ARGS="$ARGS \"$arg\""
+     ARGS+=("$arg")
      ;;
   -standalone)
      STANDALONE='true'
@@ -92,39 +89,40 @@ do
 
   -c)
      EXPLICIT_COMPILATION='true'
-     ARGS="$ARGS \"$arg\""
+     ARGS+=("$arg")
      ;;
   -shared|-G)
      BUILD_SHARE='true'
-     ARGS="$ARGS \"$arg\""
+     ARGS+=("$arg")
      ;;
   -o)
      shift
      OBJECT="$1"
      ;;
   *)
-     ARGS="$ARGS \"$arg\""
+     ARGS+=("$arg")
      ;;
   esac
   shift
 done
 }
 
-eval processArgs "$AMPI_BUILD_FLAGS" "$@"
+# shellcheck disable=SC2086
+processArgs $AMPI_BUILD_FLAGS "$@"
 
 # If there are no filename arguments specified, just pass through
 # compiler options to charmc. Helps with configure scripts that
 # parse the output to detect compiler versions, search paths, etc.
-if [[ -z "$ARGS" && -n "$PASSTHROUGH_COMPILER_OPTIONS" ]]; then
-  $CHARMBIN/charmc $PASSTHROUGH_COMPILER_OPTIONS
+if [[ ${#ARGS[@]} -eq 0 && ${#PASSTHROUGH_COMPILER_OPTIONS[@]} -ne 0 ]]; then
+  "$CHARMBIN/charmc" "${PASSTHROUGH_COMPILER_OPTIONS[@]}"
   exit $?
 fi
 
-ARGS+=" $PASSTHROUGH_COMPILER_OPTIONS"
+ARGS+=("${PASSTHROUGH_COMPILER_OPTIONS[@]}")
 
-Do() {
-  [ -n "$VERBOSE" ] && echo "$AMPICC: Executing $@" 1>&2
-  eval "$@"
+runCmd() {
+  [[ -n "$VERBOSE" ]] && echo "$AMPICC: Executing" "$@" 1>&2
+  "$@"
 }
 
 if [ "$GLOBALS" = 'fs' ]
@@ -143,61 +141,62 @@ then
   fi
 fi
 
-AMPICC_POST_OPTS=''
+AMPICC_POST_OPTS=()
 
-[ -n "$STANDALONE" ] && ARGS="$ARGS -standalone"
+[[ -n "$STANDALONE" ]] && ARGS+=(-standalone)
 
+ROMIO=()
 if [ -z "$STANDALONE" ]
 then
-  [ "$CMK_AMPI_WITH_ROMIO" = '1' ] && ROMIO='-pthread'
+  [[ "$CMK_AMPI_WITH_ROMIO" = '1' ]] && ROMIO+=(-pthread)
 
-  [ "$CMK_SUPPORTS_MEMORY_ISOMALLOC" = '1' ] && ARGS="-memory isomalloc $ARGS"
-  ARGS="-module CommonLBs $ARGS"
+  [[ "$CMK_SUPPORTS_MEMORY_ISOMALLOC" = '1' ]] && ARGS=(-memory isomalloc "${ARGS[@]}")
+  ARGS=(-module CommonLBs "${ARGS[@]}")
 fi
 
-ARGS+=" -language $AMPICC_MODE"
+ARGS+=(-language "$AMPICC_MODE")
 
 if [ -n "$GLOBALS" ]
 then
   USER_SUFFIX="$CMK_USER_SUFFIX.$CMK_SHARED_SUF"
-  SHIM_OPTS='-seq'
+  SHIM_OPTS=(-seq)
+  SHARED_OPTS=()
   if [ -n "$GLOBALS_SHARED" ]
   then
-    SHARED_OPTS='-shared'
-    [[ "$CMK_MACOSX" != '1' ]] && SHIM_OPTS+=' -fPIE'
-    SHIM_MAIN_OBJS=''
+    SHARED_OPTS+=(-shared)
+    [[ "$CMK_MACOSX" != '1' ]] && SHIM_OPTS+=(-fPIE)
+    SHIM_MAIN_OBJS=()
   else
-    SHARED_OPTS=''
-    SHIM_OPTS+=' -fPIE'
-    SHIM_MAIN_OBJS="\"$CHARMLIB/ampi_funcptr_shim_main.o\""
+    SHIM_OPTS+=(-fPIE)
+    SHIM_MAIN_OBJS=("$CHARMLIB/ampi_funcptr_shim_main.o")
   fi
 
   if [ -n "$GLOBALS_FUNCPTR" -o "$CMK_WINDOWS" = '1' ]
   then
-    SHIM_OPTS="$SHIM_OPTS -standalone -DAMPI_USE_FUNCPTR"
-    SHIM_OBJS="\"$CHARMLIB/ampi_funcptr_shim.o\" $SHIM_MAIN_OBJS"
-    [ "$AMPICC_MODE" = 'ampif' ] && SHIM_OBJS="$SHIM_OBJS \"$CHARMLIB/ampi_funcptr_shim_fortran.o\" \"$CHARMLIB/ampi_funcptr_shim_fortran_impl.o\" \"$CHARMLIB/ampi_funcptr_shim_fortran_mod.o\""
-    [[ "$AMPICC_MODE" = 'ampif' && "$CMK_AMPI_WITH_ROMIO" = '1' ]] && SHIM_OBJS="$SHIM_OBJS \"$CHARMLIB/ampi_funcptr_shim_fortran_romio.o\""
-    LOADER_OBJS="\"$CHARMLIB/ampi_funcptr_loader.o\" $ROMIO"
-    ROMIO=''
+    SHIM_OPTS+=(-standalone -DAMPI_USE_FUNCPTR)
+    SHIM_OBJS=("$CHARMLIB/ampi_funcptr_shim.o" "${SHIM_MAIN_OBJS[@]}")
+    [[ "$AMPICC_MODE" = 'ampif' ]] && SHIM_OBJS+=("$CHARMLIB/ampi_funcptr_shim_fortran.o" "$CHARMLIB/ampi_funcptr_shim_fortran_impl.o" "$CHARMLIB/ampi_funcptr_shim_fortran_mod.o")
+    [[ "$AMPICC_MODE" = 'ampif' && "$CMK_AMPI_WITH_ROMIO" = '1' ]] && SHIM_OBJS+=("$CHARMLIB/ampi_funcptr_shim_fortran_romio.o")
+    LOADER_OBJS=("$CHARMLIB/ampi_funcptr_loader.o" "${ROMIO[@]}")
+    ROMIO=()
   else
-    SHIM_OBJS=''
-    LOADER_OBJS="\"$CHARMLIB/ampi_funcptr_loader_stub.o\""
-    [ "$AMPICC_MODE" = 'ampif' ] && LOADER_OBJS="$LOADER_OBJS \"$CHARMLIB/ampif.o\" \"$CHARMLIB/ampifimpl.o\" \"$CHARMLIB/ampimod.o\""
+    SHIM_OBJS=()
+    LOADER_OBJS=("$CHARMLIB/ampi_funcptr_loader_stub.o")
+    [[ "$AMPICC_MODE" = 'ampif' ]] && LOADER_OBJS+=("$CHARMLIB/ampif.o" "$CHARMLIB/ampifimpl.o" "$CHARMLIB/ampimod.o")
   fi
-  [ "$AMPICC_MODE" = 'ampif' ] && SHIM_OBJS="$SHIM_OBJS \"$CHARMLIB/ampi_funcptr_shim_fmpimain.o\""
+  [[ "$AMPICC_MODE" = 'ampif' ]] && SHIM_OBJS+=("$CHARMLIB/ampi_funcptr_shim_fmpimain.o")
 
   if [ -z "$EXPLICIT_COMPILATION" -a -z "$BUILD_SHARE" -a -z "$STANDALONE" ] # if linking an AMPI executable
   then
     # link the user program as its own file
     [ -z "$OBJECT" ] && USEROBJECT="a.out$USER_SUFFIX" || USEROBJECT="${OBJECT%$CMK_POST_EXE}$USER_SUFFIX"
-    SHIM_OPTS="$SHIM_OPTS -standalone -Wl,-undefined,dynamic_lookup"
-    Do $CHARMBIN/charmc $ARGS $AMPICC_POST_OPTS $SHIM_OPTS $SHIM_OBJS $SHARED_OPTS -o "$USEROBJECT"
+    SHIM_OPTS+=(-standalone '-Wl,-undefined,dynamic_lookup')
+    runCmd "$CHARMBIN/charmc" "${ARGS[@]}" "${AMPICC_POST_OPTS[@]}" "${SHIM_OPTS[@]}" "${SHIM_OBJS[@]}" "${SHARED_OPTS[@]}" -o "$USEROBJECT"
     status=$?
     [ $status -ne 0 ] && exit $status
 
     # set up linking the loader against the runtime
-    AMPICC_POST_OPTS="$AMPICC_POST_OPTS -clear-input $LOADER_OBJS \"$CHARMLIB/ampi_globals_$GLOBALS.o\""
+    AMPICC_POST_OPTS+=(-clear-input "${LOADER_OBJS[@]}" "$CHARMLIB/ampi_globals_$GLOBALS.o")
 
     if [ "$GLOBALS" = 'pip' ]
     then
@@ -211,24 +210,21 @@ then
         echo 'Note: PiP-glibc not found. Maximum virtualization count will be limited.'
         echo '      Please set and export $PIP_GLIBC_INSTALL_DIR appropriately.'
       else
-        AMPICC_POST_OPTS="$AMPICC_POST_OPTS -Wl,--dynamic-linker=$pipld"
+        AMPICC_POST_OPTS+=("-Wl,--dynamic-linker=$pipld")
       fi
     fi
   else
-    AMPICC_POST_OPTS="$AMPICC_POST_OPTS $SHIM_OPTS"
-    [ -z "$BUILD_SHARE" ] && AMPICC_POST_OPTS="$AMPICC_POST_OPTS $SHARED_OPTS"
+    AMPICC_POST_OPTS+=("${SHIM_OPTS[@]}")
+    [[ -z "$BUILD_SHARE" ]] && AMPICC_POST_OPTS+=("${SHARED_OPTS[@]}")
   fi
 fi
 
-if [ -n "$OBJECT" ]
-then
-  AMPICC_POST_OPTS="$AMPICC_POST_OPTS -o \"$OBJECT\""
-fi
+[[ -n "$OBJECT" ]] && AMPICC_POST_OPTS+=(-o "$OBJECT")
 
-Do $CHARMBIN/charmc -default-to-aout $ARGS $AMPICC_POST_OPTS $ROMIO
+runCmd "$CHARMBIN/charmc" -default-to-aout "${ARGS[@]}" "${AMPICC_POST_OPTS[@]}" "${ROMIO[@]}"
 status=$?
 
 # Copy ampirun, but do not overwrite it if it already exists.
-[ $status -eq 0 ] && cp -n $CHARMBIN/ampirun .
+[[ $status -eq 0 ]] && cp -n "$CHARMBIN/ampirun" .
 
 exit $status

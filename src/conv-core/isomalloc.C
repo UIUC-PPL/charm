@@ -329,12 +329,22 @@ static uint8_t * pmax(uint8_t * a, uint8_t * b) { return pointer_lt(a, b) ? b : 
 static const constexpr memRange_t meg = 1024u * 1024u;         /* One megabyte */
 static const constexpr memRange_t gig = 1024u * 1024u * 1024u; /* One gigabyte */
 static const constexpr CmiUInt8 tb = (CmiUInt8)gig * 1024ull;  /* One terabyte */
+
+#if CMK_64BIT
 static const constexpr CmiUInt8 vm_limit = tb * 256ull;
-
 static const constexpr memRange_t other_libs = 16ul * gig; /* space for other libraries to use */
-
+static const constexpr memRange_t heuristicHeapSize = 1u * gig;
+static const constexpr memRange_t heuristicMmapSize = 2u * gig;
+static const constexpr int minimumRegionSize = 512u * meg;
 /* the smallest size used when describing unavailable regions */
 static const constexpr memRange_t division_size = 256u * meg;
+#else
+static const constexpr memRange_t other_libs = 256u * meg;
+static const constexpr memRange_t heuristicHeapSize = 64u * meg;
+static const constexpr memRange_t heuristicMmapSize = 64u * meg;
+static const constexpr int minimumRegionSize = 64u * meg;
+static const constexpr memRange_t division_size = 32u * meg;
+#endif
 
 /* Maybe write a new function that distributes start points as
  * 0, 1/2, 1/4, 3/4, 1/8, 3/8, 5/8, 7/8, 1/16, ... */
@@ -399,15 +409,7 @@ static void check_range(uint8_t * start, uint8_t * end, memRegion_t * max)
   if (start >= end) return; /*Ran out of hole*/
   len = (memRange_t)end - (memRange_t)start;
 
-#if 0
-  /* too conservative */
-  if (len/gig>64u)
-  { /* This is an absurd amount of space-- cut it down, for safety */
-    start += 16u * gig;
-    end = start + 32u * gig;
-    len = (memRange_t)end - (memRange_t)start;
-  }
-#else
+#if CMK_64BIT
   /* Note: 256TB == 2^48 bytes.  So a 48-bit virtual-address CPU
    *    can only actually address 256TB of space. */
   if (len / tb > 10u)
@@ -418,6 +420,7 @@ static void check_range(uint8_t * start, uint8_t * end, memRegion_t * max)
     len = (memRange_t)end - (memRange_t)start;
   }
 #endif
+
   if (len <= max->len) return; /*It's too short already!*/
   DEBUG_PRINT("[%d] Checking at %p - %p\n", CmiMyPe(), start, end);
 
@@ -514,11 +517,11 @@ static int find_largest_free_region(memRegion_t * destRegion)
 
   regions[nRegions].type = "Heap (small blocks)";
   regions[nRegions].start = heapLil;
-  regions[nRegions++].len = 1u * gig;
+  regions[nRegions++].len = heuristicHeapSize;
 
   regions[nRegions].type = "Heap (large blocks)";
   regions[nRegions].start = heapBig;
-  regions[nRegions++].len = 1u * gig;
+  regions[nRegions++].len = heuristicHeapSize;
 
   regions[nRegions].type = "Stack space";
   regions[nRegions].start = stack;
@@ -532,7 +535,7 @@ static int find_largest_free_region(memRegion_t * destRegion)
   {
     regions[nRegions].type = "Result of a non-fixed call to mmap";
     regions[nRegions].start = (uint8_t *)mmapAny;
-    regions[nRegions++].len = 2u * gig;
+    regions[nRegions++].len = heuristicMmapSize;
 
     call_munmap(mmapAny, mmapAnyLen);
   }

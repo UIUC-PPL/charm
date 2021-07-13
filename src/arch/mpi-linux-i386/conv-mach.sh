@@ -1,13 +1,38 @@
-. $CHARMINC/cc-mpi.sh
+CMK_DEFS="$CMK_DEFS -m32"
+CMK_FDEFS="$CMK_FDEFS -m32"
+
+. $CHARMINC/cc-mpiopts.sh
 
 CMK_QT='i386-gcc'
 
-CMK_NATIVE_CC='gcc '
-CMK_NATIVE_CXX='g++ '
+
+CMK_CC="$MPICC"
+CMK_CXX="$MPICXX"
+
+CMK_LD_LIBRARY_PATH="-Wl,-rpath,$CHARMLIBSO/"
+
+CMK_NATIVE_CC='gcc'
+CMK_NATIVE_CXX='g++'
 CMK_NATIVE_LD='gcc'
 CMK_NATIVE_LDXX='g++'
 CMK_NATIVE_LIBS=''
 
-CMK_CF77='f77'
-CMK_CF90='f90'
-CMK_F90LIBS='-L/usr/absoft/lib -L/opt/absoft/lib -lf90math -lfio -lU77 -lf77math '
+CMK_NATIVE_FLAGS='-fPIC'
+
+CMK_NATIVE_CC_FLAGS="$CMK_NATIVE_FLAGS"
+CMK_NATIVE_LD_FLAGS="$CMK_NATIVE_FLAGS"
+CMK_NATIVE_CXX_FLAGS="$CMK_NATIVE_FLAGS"
+CMK_NATIVE_LDXX_FLAGS="$CMK_NATIVE_FLAGS"
+
+# Fortran
+CMK_CXX_IS_GCC=`$MPICXX -V 2>&1 | grep 'g++' `
+CMK_CXX_IS_ICC=`$MPICXX -V 2>&1 | grep Intel `
+if test -n "$CMK_CXX_IS_GCC"
+then
+    . $CHARMINC/conv-mach-gfortran.sh
+elif test -n "$CMK_CXX_IS_ICC"
+then
+    . $CHARMINC/conv-mach-ifort.sh
+fi
+
+CMK_COMPILER='mpicc'

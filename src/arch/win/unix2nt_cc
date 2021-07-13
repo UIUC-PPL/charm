@@ -19,7 +19,7 @@ then
 else
   VCC_DIR="$VCINSTALLDIR"
 fi
-if [[ ! -d "`cygpath -u "$VCC_DIR"`" ]]
+if [[ ! -d "$(cygpath -u "$VCC_DIR")" ]]
 then
   echo "\$VCINSTALLDIR is not set properly: $VCC_DIR"
   exit 1
@@ -33,7 +33,7 @@ then
 else
   SDK_DIR='C:/Program Files/Windows Kits/10'
 fi
-if [[ ! -d "`cygpath -u "$SDK_DIR"`" ]]
+if [[ ! -d "$(cygpath -u "$SDK_DIR")" ]]
 then
   echo "\$WindowsSdkDir is not set properly: $SDK_DIR"
   exit 1
@@ -44,45 +44,34 @@ fi
 CL_CMD='CL.EXE'
 # Define NOMINMAX to avoid definition of unexpected min(a,b) and max(a,b)
 # macros,per http://support.microsoft.com/kb/143208
-CL_COMMON='-nologo -W1 -EHsc -D_WINDOWS -DNOMINMAX'
-# CL_COMMON+=" -I`cygpath -d \"$SDK_DIR/Include\"`"
-# CL_COMMON+=" -I`cygpath -d \"$VCC_DIR/Include\"`"
+CL_COMMON=(-nologo -W1 -EHsc -D_WINDOWS -DNOMINMAX)
 CL_MT='-MT'
 CL_DLL='-LD'
 
 # assembler
 ML_CMD='ML64.EXE'
-ML_COMMON='-nologo -W1 -D_WINDOWS -DNOMINMAX'
+ML_COMMON=(-nologo -W1 -D_WINDOWS -DNOMINMAX)
 
 #LINK command-line options for -O and -g mode
 #only for the environment that has set corresponding environmental variables
 #Here, the full path to "link.exe" has to be added because, in cygwin, there
 #is a file "/usr/bin/link" which has the same name, and takes higher precedence
 #than the microsoft one.
-cl_path=`command -v cl`
-if [[ "`command -v link`" != '/usr/bin/link' ]]
+cl_path="$(command -v cl)"
+if [[ "$(command -v link)" != '/usr/bin/link' ]]
 then
 LINK_CMD='link.exe'
-elif [[ -d "`cygpath -u "${cl_path%cl}"`" ]]
+elif [[ -d "$(cygpath -u "${cl_path%cl}")" ]]
 then
 LINK_CMD="${cl_path%cl}link.exe"
-elif [[ -d "`cygpath -u "$VCC_DIR/BIN/amd64"`" ]]
+elif [[ -d "$(cygpath -u "$VCC_DIR/BIN/amd64")" ]]
 then
 LINK_CMD="$VCC_DIR/BIN/amd64/LINK.EXE"
 else
 LINK_CMD="$VCC_DIR/BIN/LINK.EXE"
 fi
-LINK_COMMON='-nologo -subsystem:console -DYNAMICBASE:NO'
-#if [[ -d "`cygpath -u \"$SDK_DIR/Lib/x64\"`" ]]
-#then
-#LINK_COMMON+=" -LIBPATH:`cygpath -d \"$SDK_DIR/Lib/x64\"`"
-#else
-#LINK_COMMON+=" -LIBPATH:`cygpath -d \"$VCC_DIR/Lib/amd64\"`"
-#fi
-#LINK_POST='ws2_32.lib kernel32.lib user32.lib gdi32.lib winspool.lib
-#  comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib
-#  odbc32.lib odbccp32.lib -SUBSYSTEM:CONSOLE -INCREMENTAL:NO -MACHINE:IX86 '
-LINK_POST='ws2_32.lib kernel32.lib user32.lib psapi.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib -MACHINE:X64 -ERRORREPORT:PROMPT '
+LINK_COMMON=(-nologo -subsystem:console -DYNAMICBASE:NO)
+LINK_POST=(ws2_32.lib kernel32.lib user32.lib psapi.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib -MACHINE:X64 -ERRORREPORT:PROMPT)
 
 if [[ -z "$LIB" ]]
 then
@@ -113,6 +102,12 @@ printUsage() {
     exit 1
 }
 
+runCmd()
+{
+  [[ -n "$VERBOSE" ]] && echo "unix2nt_cc>" "$@"
+  "$@"
+}
+
 # End blows away the temporary files (unless SAVE is true) and exits
 # Args: <exit code>
 End() {
@@ -123,7 +118,7 @@ End() {
 # ("1>&2" redirects the echo output to stderr).
 # Args: written to stderr
 Abort() {
-	echo "unix2nt_cc Fatal Error in directory "`pwd` 1>&2
+	echo "unix2nt_cc Fatal Error in directory $(pwd)" 1>&2
 	echo "   $*" 1>&2
 	echo "unix2nt_cc exiting..." 1>&2
 	End 1
@@ -134,19 +129,19 @@ Abort() {
 # basename, it keeps the directory path.
 # Args: <name to strip>
 stripExtension() {
-	se_base=`echo $1 | awk -F/ '{print $NF}'`
-	se_strip=`echo $se_base | awk -F. '{ORS="";print $1;for (i=2;i<NF;i++) print "."$i}'`
-	se_ret=`echo $1 | awk -F/ '{ORS="";for (i=1;i<NF;i++) print $i"/"}'`"$se_strip"
-	echo $se_ret
+	se_base="$(echo "$1" | awk -F/ '{print $NF}')"
+	se_strip="$(echo "$se_base" | awk -F. '{ORS="";print $1;for (i=2;i<NF;i++) print "."$i}')"
+	se_ret="$(echo "$1" | awk -F/ '{ORS="";for (i=1;i<NF;i++) print $i"/"}')$se_strip"
+	echo "$se_ret"
 }
 
 # GetExtension returns the extension on the given file name
 # or "" if none.  (e.g. "./bob/snack.c" returns ".c")
 # Args: <name to find extension of>
 getExtension() {
-	se_base=`echo $1 | awk -F/ '{print $NF}'`
-        se_ret=`echo $se_base | awk -F. '{if (NF<=1) print ""; else print "."$NF}'`
-	echo $se_ret
+	se_base="$(echo "$1" | awk -F/ '{print $NF}')"
+	se_ret="$(echo "$se_base" | awk -F. '{if (NF<=1) print ""; else print "."$NF}')"
+	echo "$se_ret"
 }
 
 ##############################################################################
@@ -166,16 +161,16 @@ DOLINK=''
 DODEPS=''
 SHARED=''
 OUTPUT=''
-CL_OPTS="$CL_COMMON"
-ML_OPTS="$ML_COMMON"
-LINK_OPTS="$LINK_COMMON"
+CL_OPTS=("${CL_COMMON[@]}")
+ML_OPTS=("${ML_COMMON[@]}")
+LINK_OPTS=("${LINK_COMMON[@]}")
 LIBDIR=''
-LIBDIRS=''
+LIBDIRS=()
 
 #NT CL and LINK command-line arguments:
-LINK=''
-CL=''
-ML=''
+LINK=()
+CL=()
+ML=()
 
 [[ $# -eq 0 ]] && printUsage "Error: No arguments given."
 
@@ -192,69 +187,66 @@ do
 		SHARED='1'
 		;;
 	-E)
-		CL+=' -E'
-		ML+=' -EP'
+		CL+=(-E)
+		ML+=(-EP)
 		;;
 	-O0)
-		CL_OPTS+=' -Od'
+		CL_OPTS+=(-Od)
 		;;
 	-Og)
-		CL_OPTS+=' -DNDEBUG -Od'
-		ML_OPTS+=' -DNDEBUG'
+		CL_OPTS+=(-DNDEBUG -Od)
+		ML_OPTS+=(-DNDEBUG)
 		;;
 	-O|-O1|-Os)
-		CL_OPTS+=' -DNDEBUG -O1'
-		ML_OPTS+=' -DNDEBUG'
+		CL_OPTS+=(-DNDEBUG -O1)
+		ML_OPTS+=(-DNDEBUG)
 		;;
 	-O2)
-		CL_OPTS+=' -DNDEBUG -O2'
-		ML_OPTS+=' -DNDEBUG'
+		CL_OPTS+=(-DNDEBUG -O2)
+		ML_OPTS+=(-DNDEBUG)
 		;;
 	-O3|-Ofast)
-		CL_OPTS+=' -DNDEBUG -Ox'
-		ML_OPTS+=' -DNDEBUG'
+		CL_OPTS+=(-DNDEBUG -Ox)
+		ML_OPTS+=(-DNDEBUG)
 		;;
 	-g|-g[123456789]|-ggdb|-ggdb[123])
-		CL_OPTS+=' -Z7'
-		ML_OPTS+=' -Zi -Zd'
-		LINK_OPTS+=' -DEBUG'
+		CL_OPTS+=(-Z7)
+		ML_OPTS+=(-Zi -Zd)
+		LINK_OPTS+=(-DEBUG)
 		CL_MT='-MTd'
 		CL_DLL='-LDd'
 		;;
 	-c)
-		CL+=' -c'
-		ML+=' -c'
-        ;;
+		CL+=("$arg")
+		ML+=("$arg")
+		;;
 	-D)
-		CL+=" -D$1"
-		ML+=" -D$1"
+		CL+=("$arg$1")
+		ML+=("$arg$1")
 		shift
 		;;
 	-U)
-		CL+=" -U$1"
-		ML+=" -U$1"
+		CL+=("$arg$1")
 		shift
 		;;
 	-D*)
-		def=`echo $arg | awk -F@ '{print substr($1,3)}'`
-		CL+=" -D$def"
-		ML+=" -D$def"
+		CL+=("$arg")
+		ML+=("$arg")
 		;;
 	-U*)
-		def=`echo $arg | awk -F@ '{print substr($1,3)}'`
-		CL+=" -U$def"
+		CL+=("$arg")
 		;;
 	-I)
-		path="`cygpath -w $1`"
-		CL+=" -I$path"
-		ML+=" -I$path"
+		path="$(cygpath -w "$1")"
+		CL+=("-I$path")
+		ML+=("-I$path")
 		shift
 		;;
 	-I*)
-		path=`echo $arg | awk -F@ '{print substr($1,3)}'`
-		path="`cygpath -w $path`"
-		CL+=" -I$path"
-		ML+=" -I$path"
+		path="${arg#-I}"
+		path="$(cygpath -w "$path")"
+		CL+=("-I$path")
+		ML+=("-I$path")
 		;;
 	-MM|-M)
 		DODEPS='1'
@@ -262,65 +254,65 @@ do
 	-MG|-MP)
 		;;
 	-L)
-		LIBDIR="`cygpath -w $1`"
-		LIBDIRS+=" `cygpath -u $LIBDIR`"
-		LINK=$LINK"	-LIBPATH:$LIBDIR"
+		LIBDIR="$(cygpath -w "$1")"
+		LIBDIRS+=("$(cygpath -u "$LIBDIR")")
+		LINK+=("-LIBPATH:$LIBDIR")
 		shift
 		;;
 	-L*)
-		LIBDIR=`echo $arg | awk -F@ '{print substr($1,3)}'`
-		LIBDIR="`cygpath -w $LIBDIR`"
-		LIBDIRS+=" `cygpath -u $LIBDIR`"
-		LINK+="	-LIBPATH:$LIBDIR"
+		LIBDIR="${arg#-L}"
+		LIBDIR="$(cygpath -w "$LIBDIR")"
+		LIBDIRS+=("$(cygpath -u "$LIBDIR")")
+		LINK+=("-LIBPATH:$LIBDIR")
 		;;
 	-l*)
 		if [[ "$arg" != '-lm' ]]
 		then
 #Convert -lfoo to path-to-foo.a
-			L=`echo $arg | awk -F@ '{print substr($1,3)}'`
+			L="${arg#-l}"
 			D=''
 			[[ -r "$L" ]] && D="$L"
 			[[ -r "$L.a" ]] && D="$L.a"
 			[[ -r "$L.lib" ]] && D="$L.lib"
 			[[ -r "lib$L.a" ]] && D="lib$L.a"
 			[[ -r "lib$L.lib" ]] && D="lib$L.lib"
-			[[ -n "$LIBDIRS" ]] &&	\
-			for dir in $LIBDIRS
+			[[ ${#LIBDIRS[@]} -ne 0 ]] && \
+			for dir in "${LIBDIRS[@]}"
 			do
 			  [[ -r "$dir/lib$L" ]] && D="$dir/lib$L"
 			  [[ -r "$dir/lib$L.a" ]] && D="$dir/lib$L.a"
 			  [[ -r "$dir/$L.lib" ]] && D="$dir/$L.lib"
 			  [[ -r "$dir/lib$L.lib" ]] && D="$dir/lib$L.lib"
 			done
-			[[ -z "$D" ]] && Abort "Couldn't find library $L in . or $LIBDIRS"
-			LINK+=" `cygpath -w $D`"
+			[[ -z "$D" ]] && Abort "Couldn't find library $L in . or ${LIBDIRS[*]}"
+			LINK+=("$(cygpath -w "$D")")
 		fi
 		;;
 	-o)
-		out=$1
+		out="$1"
 		shift
-		if [[ "x`getExtension $out`" = "x.o" ]]
+		if [[ "$(getExtension "$out")" = ".o" ]]
 		then
 #It's a .o output filename-- tell CL
-			OUTPUT="-Fo`cygpath -w $out`"
-		elif [[ "x`getExtension $out`" = "x.obj" ]]
+			OUTPUT="-Fo$(cygpath -w "$out")"
+		elif [[ "$(getExtension "$out")" = ".obj" ]]
 		then
-			OUTPUT="-Fo`cygpath -w $out`"
-		elif [[ "x`getExtension $out`" = "x.so" ]]
+			OUTPUT="-Fo$(cygpath -w "$out")"
+		elif [[ "$(getExtension "$out")" = ".so" ]]
 		then
-			OUTPUT="-Fo`cygpath -w $out`"
-		elif [[ "x`getExtension $out`" = "x.dll" ]]
+			OUTPUT="-Fo$(cygpath -w "$out")"
+		elif [[ "$(getExtension "$out")" = ".dll" ]]
 		then
-			OUTPUT="-Fo`cygpath -w $out`"
-			LINK+=" -dll -out:$out"
+			OUTPUT="-Fo$(cygpath -w "$out")"
+			LINK+=(-dll "-out:$out")
 			DOLINK='1'
-		elif [[ "x`getExtension $out`" = "x.exe" ]]
+		elif [[ "$(getExtension "$out")" = ".exe" ]]
 		then
-			LINK+=" -out:$out"
+			LINK+=("-out:$out")
 			DOLINK='1'
 		else
 #It's an exe filename-- tell LINK
-			LINK+=" -out:$out.exe"
+			LINK+=("-out:$out.exe")
 			DOLINK='1'
 		fi
 		;;
@@ -329,41 +321,41 @@ do
 	*.o|*.a|*.lib|*.obj)
 		if [[ -n "$DOCOMPILE" ]]
 		then
-		  CL+=" `cygpath -w $arg`"
+		  CL+=("$(cygpath -w "$arg")")
 		else
-		  LINK+=" `cygpath -w $arg`"
+		  LINK+=("$(cygpath -w "$arg")")
 		  DOLINK='1'
 		fi
 		;;
 #C source file
 	*.c)
-		base=`stripExtension $arg`
+		base="$(stripExtension "$arg")"
 		source="$arg"
-		CL+=" -Tc`cygpath -w $arg`"
-		OBJ_OUTPUT="-Fo$(cygpath -w $base).o"
-		LINK+=" $(cygpath -w $base).o"
+		CL+=("-Tc$(cygpath -w "$arg")")
+		OBJ_OUTPUT="-Fo$(cygpath -w "$base").o"
+		LINK+=("$(cygpath -w "$base").o")
 		DOCOMPILE='1'
 		;;
 #ASM source file
 	*.asm)
-		base=`stripExtension $arg`
+		base="$(stripExtension "$arg")"
 		source="$arg"
-		ML+=" -Ta`cygpath -w $arg`"
+		ML+=("-Ta$(cygpath -w "$arg")")
 #		OUTPUT="-Fo$base.o"
-		LINK+=" $(cygpath -w $base).o"
+		LINK+=("$(cygpath -w "$base").o")
 		DOASSEMBLE='1'
 		;;
 #C++ source file
 	*.C|*.cxx|*.cpp)
-		base=`stripExtension $arg`
+		base="$(stripExtension "$arg")"
 		source="$arg"
-		CL+=" -Tp`cygpath -w $arg`"
+		CL+=("-Tp$(cygpath -w "$arg")")
 #		OUTPUT="-Fo$base.o"
-		LINK+=" $base.o"
+		LINK+=("$base.o")
 		DOCOMPILE='1'
 		;;
 	-fno-stack-protector)
-		CL_OPTS+=" -GS-"
+		CL_OPTS+=(-GS-)
 		;;
 	-fno-lifetime-dse|-rdynamic|-Wl,--export-dynamic|-fvisibility=*|-Wl,-undefined,dynamic_lookup|-ftls-model=*)
 		# UNKNOWN_FLAGS
@@ -378,13 +370,17 @@ do
 	esac
 done
 
-[[ -n "$SHARED" ]] && CL_OPTS+=" $CL_DLL" || CL_OPTS+=" $CL_MT"
+[[ -n "$SHARED" ]] && CL_OPTS+=("$CL_DLL") || CL_OPTS+=("$CL_MT")
+
+CLML_OPTS=()
+[[ -n "$OUTPUT" ]] && CLML_OPTS+=("$OUTPUT")
+[[ -n "$DOLINK" && -z "$OUTPUT" ]] && CLML_OPTS+=("$OBJ_OUTPUT")
 
 if [[ -n "$DODEPS" ]]
 then
-	OPTS="$CL_OPTS $CL -showIncludes"
+	OPTS=("${CL_OPTS[@]}" "${CL[@]}" -showIncludes)
 	echo "$base.o: $source \\"
-	"$CL_CMD" $OPTS | sed -e '/^Note: including file:/!d' \
+	"$CL_CMD" "${OPTS[@]}" | sed -e '/^Note: including file:/!d' \
 		-e 's/^Note: including file:\s*\(.*\)$/\1/' \
 		-e 's/\\/\//g' \
 		-e 's/ /\\ /g' \
@@ -393,39 +389,30 @@ then
 	exit 0
 fi
 
-#if [[ -n "$CL" ]]
 if [[ -n "$DOCOMPILE" ]]
 then
-	OPTS="$CL_OPTS $OUTPUT $CL -I." # '-I.' in case input file is a full path
-	[[ -n "$DOLINK" && -z "$OUTPUT" ]] && OPTS+=" $OBJ_OUTPUT"
-	[[ -n "$VERBOSE" ]] && echo "unix2nt_cc> $CL_CMD" $OPTS
-	"$CL_CMD" $OPTS
-	if [[ $? -ne 0 ]]
+	OPTS=("${CL_OPTS[@]}" "${CLML_OPTS[@]}" "${CL[@]}" '-I.') # '-I.' in case input file is a full path
+	if ! runCmd "$CL_CMD" "${OPTS[@]}"
 	then
-		Abort "Error executing" "$CL_CMD" $OPTS
+		Abort "Error executing" "$CL_CMD" "${OPTS[@]}"
 	fi
 fi
 
 if [[ -n "$DOASSEMBLE" ]]
 then
-	OPTS="$ML_OPTS $OUTPUT $ML"
-	[[ -n "$DOLINK" && -z "$OUTPUT" ]] && OPTS+=" $OBJ_OUTPUT"
-	[[ -n "$VERBOSE" ]] && echo "unix2nt_cc> $ML_CMD" $OPTS
-	"$ML_CMD" $OPTS
-	if [[ $? -ne 0 ]]
+	OPTS=("${ML_OPTS[@]}" "${CLML_OPTS[@]}" "${ML[@]}")
+	if ! runCmd "$ML_CMD" "${OPTS[@]}"
 	then
-		Abort "Error executing" "$ML_CMD" $OPTS
+		Abort "Error executing" "$ML_CMD" "${OPTS[@]}"
 	fi
 fi
 
 if [[ -n "$DOLINK" ]]
 then
-	OPTS="$LINK_OPTS $LINK $LINK_POST"
-	[[ -n "$VERBOSE" ]] && echo "unix2nt_cc> $LINK_CMD" $OPTS
-	"$LINK_CMD" $OPTS
-	if [[ $? -ne 0 ]]
+	OPTS=("${LINK_OPTS[@]}" "${LINK[@]}" "${LINK_POST[@]}")
+	if ! runCmd "$LINK_CMD" "${OPTS[@]}"
 	then
-		Abort "Error executing" "$LINK_CMD" $OPTS
+		Abort "Error executing" "$LINK_CMD" "${OPTS[@]}"
 	fi
 fi
 

@@ -2,25 +2,31 @@
 
 export FROM_CHARMRUN='1'
 
-pre_args=''
+pre_args=()
 cmd=""
-args=""
+args=()
 QUIET=0
 XTERM='xterm'
 DEBUG=0
 DEBUG_NO_PAUSE=0
 DEBUGGER=''
 
+runCmd()
+{
+  [[ $QUIET -eq 0 ]] && echo "charmrun>" "$@"
+  "$@"
+}
+
 while [ $# -gt 0 ]
 do
-	case $1 in
+	case "$1" in
 	+p|++p|+ppn|++ppn)
-		args="$args $1 $2"
+		args+=("$1" "$2")
 		shift
 		shift
 		;;
 	+n|++n|++np)
-		if [[ $2 != 0 && $2 != 1 ]]
+		if [[ "$2" != 0 && "$2" != 1 ]]
 		then
 			printf "Charmrun> Error: Multicore builds only support single-node runs.\n"
 		 	exit 1
@@ -49,7 +55,7 @@ do
 		shift
 		;;
 	++xterm)
-		XTERM=$2
+		XTERM="$2"
 		shift
 		shift
 		;;
@@ -70,26 +76,26 @@ do
 		shift
 		;;
 	++debugger)
-		DEBUGGER=$2
+		DEBUGGER="$2"
 		shift
 		shift
 		;;
 	+*)
-		args=$args" "$1
+		args+=("$1")
 		shift
 		;;
 	*)
 		if [ -z "$cmd" ]; then
 			cmd="$1"
 		else
-			args=$args" "$1
+			args+=("$1")
 		fi
 		shift
 		;;
 	esac
 done
 
-test $QUIET -eq 1 && args=$args" "++quiet
+[[ $QUIET -eq 1 ]] && args+=(++quiet)
 
 if [ "$DEBUG" = '1' ] || [ "$DEBUG_NO_PAUSE" = '1' ]
 then
@@ -98,20 +104,17 @@ then
     [ "$(uname -s 2>/dev/null)" = 'Darwin' ] && DEBUGGER='lldb' || DEBUGGER='gdb'
   fi
 
-  DEBUG_RUN='-ex r'
+  DEBUG_RUN=(-ex r)
   DEBUG_POSTFIX='--args'
   if [ "$DEBUGGER" = 'lldb' ]
   then
-    DEBUG_RUN='-o r'
+    DEBUG_RUN=(-o r)
     DEBUG_POSTFIX='--'
   fi
 
-  pre_args="$DEBUG_POSTFIX $pre_args"
-  [ "$DEBUG_NO_PAUSE" = '1' ] && pre_args="$DEBUG_RUN $pre_args"
-  pre_args="$XTERM -e $DEBUGGER $pre_args"
+  pre_args=("$DEBUG_POSTFIX" "${pre_args[@]}")
+  [[ "$DEBUG_NO_PAUSE" = '1' ]] && pre_args=("${DEBUG_RUN[@]}" "${pre_args[@]}")
+  pre_args=("$XTERM" -e "$DEBUGGER" "${pre_args[@]}")
 fi
 
-[[ $QUIET -eq 0 ]] && echo Running command: "$pre_args" "$cmd" "$args" && echo
-
-# shellcheck disable=SC2086
-exec $pre_args "$cmd" $args
+runCmd "${pre_args[@]}" "$cmd" "${args[@]}"

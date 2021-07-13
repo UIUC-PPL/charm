@@ -22,8 +22,8 @@ CMK_CF90=''
 
 # Find libgfortran, which we need to link to manually as the C++ compiler does
 # the linking.
-f90libdir=$(dirname $($CMK_CF90 -print-file-name=libgfortran.a))
-gccehlibdir=$(dirname $($CMK_CF90 -print-file-name=libgcc_eh.a))
+f90libdir="$(dirname "$($CMK_CF90 $CMK_FDEFS -print-file-name=libgfortran.a)")"
+gccehlibdir="$(dirname "$($CMK_CF90 $CMK_FDEFS -print-file-name=libgcc_eh.a)")"
 
 CMK_CF90="$CMK_CF90 $CMK_F90FLAGS -fPIC -fno-second-underscore -fdollar-ok "
 CMK_CF90_FIXED="$CMK_CF90 -ffixed-form "

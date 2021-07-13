@@ -6,10 +6,10 @@
 
 export FROM_CHARMRUN='1'
 
-args=""
+args=()
 
 # Arguments that need to be passed to the charm application, not mpirun (e.g. ++quiet)
-charm_args=""
+charm_args=()
 pes=0
 nodes=0
 ppn=1
@@ -19,11 +19,17 @@ DEBUG=0
 DEBUG_NO_PAUSE=0
 DEBUGGER='gdb'
 
+runCmd()
+{
+  [[ $QUIET -eq 0 ]] && echo "charmrun>" "$@"
+  "$@"
+}
+
 while [ $# -gt 0 ]
 do
-	case $1 in
+	case "$1" in
 	+n|++n|++np)
-		nodes=$2
+		nodes="$2"
 		shift
 		;;
 	+n[0-9]*)
@@ -36,20 +42,20 @@ do
 		nodes="${1#\+\+np}"
 		;;
 	+ppn|++ppn)
-		args=$args" +ppn "$2
-		ppn=$2
+		args+=(+ppn "$2")
+		ppn="$2"
 		shift
 		;;
 	+ppn[0-9]*)
-		args=$args" "$1
+		args+=("$1")
 		ppn="${1#\+ppn}"
 		;;
 	++ppn[0-9]*)
-		args=$args" "$1
+		args+=("$1")
 		ppn="${1#\+\+ppn}"
 		;;
 	+p|++p)
-		pes=$2
+		pes="$2"
 		shift
 		;;
 	+p[0-9]*)
@@ -59,11 +65,11 @@ do
 		pes="${1#\+\+p}"
 		;;
 	+pemap)
-	    args="$args $1 $2"
+	    args+=("$1" "$2")
 	    shift
 	    ;;
 	-machinefile)
-	    args=" $1 $2 $args"
+	    args=("$1" "$2" "${args[@]}")
 	    shift
 	    ;;
 	++quiet)
@@ -76,7 +82,7 @@ do
 		# Ignored (unsupported by MPI layer)
 		;;
 	++xterm)
-		XTERM=$2
+		XTERM="$2"
 		shift
 		;;
 	++debug)
@@ -92,33 +98,33 @@ do
 		DEBUG_NO_PAUSE=0
 		;;
 	++debugger)
-		DEBUGGER=$2
+		DEBUGGER="$2"
 		shift
 		;;
 	*)
-	    args=$args" "$1
+	    args+=("$1")
 	    ;;
     esac
     shift
 done
 
-test $QUIET -eq 1 && charm_args=$charm_args" "++quiet
+[[ $QUIET -eq 1 ]] && charm_args+=(++quiet)
 
-args=$args" "$charm_args
+args+=("${charm_args[@]}")
 
 if [ "$DEBUG" = '1' ] || [ "$DEBUG_NO_PAUSE" = '1' ]
 then
-  DEBUG_RUN='-ex r'
+  DEBUG_RUN=(-ex r)
   DEBUG_POSTFIX='--args'
   if [ "$DEBUGGER" = 'lldb' ]
   then
-    DEBUG_RUN='-o r'
+    DEBUG_RUN=(-o r)
     DEBUG_POSTFIX='--'
   fi
 
-  args="$DEBUG_POSTFIX $args"
-  [ "$DEBUG_NO_PAUSE" = '1' ] && args="$DEBUG_RUN $args"
-  args="$XTERM -e $DEBUGGER $args"
+  args=("$DEBUG_POSTFIX" "${args[@]}")
+  [[ "$DEBUG_NO_PAUSE" = '1' ]] && args=("${DEBUG_RUN[@]}" "${args[@]}")
+  args=("$XTERM" -e "$DEBUGGER" "${args[@]}")
 fi
 
 if [[ $nodes = 0 ]]
@@ -137,15 +143,13 @@ then
   exit 1
 fi
 
-[[ $QUIET -eq 0 ]] && printf "\nRunning as $nodes OS processes: %s\n" "$args"
+[[ $QUIET -eq 0 ]] && echo && echo "Running as $nodes OS processes: ${args[*]}"
 
 
-mpiexec_cmd=$(command -v mpiexec 2>/dev/null)
+mpiexec_cmd="$(command -v mpiexec 2>/dev/null)"
 if test -n "$mpiexec_cmd"
 then
-    [[ $QUIET -eq 0 ]] && echo "charmrun> $mpiexec_cmd -n $nodes $args" && echo
-    # shellcheck disable=SC2086
-    "$mpiexec_cmd" -n $nodes $args
+    runCmd "$mpiexec_cmd" -n "$nodes" "${args[@]}"
 else
     echo "Don't know how to run MPI program."
     exit 1

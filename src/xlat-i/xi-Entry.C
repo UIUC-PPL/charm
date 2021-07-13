@@ -426,9 +426,6 @@ void Entry::genChareStaticConstructorDecl(XStr& str) {
       << ");\n";
   str << "    static void ckNew(" << paramComma(1)
       << "CkChareID* pcid, int onPE=CK_PE_ANY" << eo(1) << ");\n";
-  if (!param->isVoid())
-    str << "    " << container->proxyName(0) << "(" << paramComma(1)
-        << "int onPE=CK_PE_ANY" << eo(1) << ");\n";
 }
 
 void Entry::genChareStaticConstructorDefs(XStr& str) {
@@ -449,18 +446,6 @@ void Entry::genChareStaticConstructorDefs(XStr& str) {
   str << "  CkCreateChare(" << chareIdx() << ", " << epIdx()
       << ", impl_msg, pcid, impl_onPE);\n";
   str << "}\n";
-
-  if (!param->isVoid()) {
-    str << makeDecl(" ", 1) << "::" << container->proxyName(0) << "(" << paramComma(0)
-        << "int impl_onPE" << eo(0) << ")\n";
-    str << "{\n";
-    str << marshallMsg();
-    str << "  CkChareID impl_ret;\n";
-    str << "  CkCreateChare(" << chareIdx() << ", " << epIdx()
-        << ", impl_msg, &impl_ret, impl_onPE);\n";
-    str << "  ckSetChareID(impl_ret);\n";
-    str << "}\n";
-  }
 }
 
 /***************************** Array Entry Points **************************/

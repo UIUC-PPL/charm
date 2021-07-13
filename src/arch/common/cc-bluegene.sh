@@ -16,8 +16,6 @@ BGQ_BIN=$BGQ_FLOOR/gnu-linux/bin
 BGQ_ZLIB=/soft/libraries/alcf/current/xl/ZLIB/
 
 GCC_OPTS="-Wno-deprecated "
-OPTS_CPP="$OPTS_CPP"
-OPTS_LD="$OPTS_LD"
 
 CMK_CPP_CHARM="$BGQ_BIN/powerpc64-bgq-linux-cpp -P"
 CMK_CPP_C="$BGQ_BIN/powerpc64-bgq-linux-cpp "

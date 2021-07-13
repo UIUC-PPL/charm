@@ -19,7 +19,7 @@ fi
 #only valid for the platform that has exported corresponding variables
 #LIB_CMD="$VCC_DIR/BIN/LIB.EXE"
 LIB_CMD='lib.exe'
-LIB_OPTS='-nologo'
+LIB_OPTS=(-nologo)
 
 if [[ -z "$LIB" ]]
 then
@@ -54,7 +54,7 @@ End() {
 # ("1>&2" redirects the echo output to stderr).
 # Args: written to stderr
 Abort() {
-	echo "unix2nt_ar Fatal Error in directory "`pwd` 1>&2
+	echo "unix2nt_ar Fatal Error in directory $(pwd)" 1>&2
 	echo "   $*" 1>&2
 	echo "unix2nt_ar exiting..." 1>&2
 	End 1
@@ -69,15 +69,15 @@ Abort() {
 [[ $# -eq 1 ]] && exit 0
 [[ $# -lt 2 ]] && printUsage "Error: Not enough arguments given."
 
-out=$(cygpath -w $1)
+out="$(cygpath -w "$1")"
 shift
-args="-out:$out $@"
+args=("-out:$out" "$@")
 
-"$LIB_CMD" $LIB_OPTS $args
+"$LIB_CMD" "${LIB_OPTS[@]}" "${args[@]}"
 
 if [[ $? -ne 0 ]]
 then
-	Abort "Error executing" "$LIB_CMD" $LIB_OPTS $args
+	Abort "Error executing" "$LIB_CMD" "${LIB_OPTS[@]}" "${args[@]}"
 fi
 
 exit 0
