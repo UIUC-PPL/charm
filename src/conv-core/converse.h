@@ -2235,6 +2235,7 @@ int id[OBJ_ID_SZ];
 /* public interface for thread id acquisition */
 CmiObjId *CthGetThreadID(CthThread th);
 void CthSetThreadID(CthThread th, int a, int b, int c);
+void CthSetEpIdx(CthThread th, int ep);
 
 void CthTraceResume(CthThread t);
 

@@ -257,7 +257,7 @@ void TraceTau::beginExecute(envelope *e)
   // no message means thread execution
   if (e == NULL) {
     dprintf("[%d] Entry Method invoked via thread id %d\n", CkMyPe(),
-	    _threadEP);
+	    CtvAccess(CthEP));
     if (profile) {
       startEntryEvent(-1);
     }

@@ -591,9 +591,9 @@ void traceEndIdle()
 }
 
 // CMK_TRACE_ENABLED is already guarded in convcore.C
-void traceResume(int eventID, int srcPE, CmiObjId *tid)
+void traceResume(int eventID, int srcPE, int ep, CmiObjId *tid)
 {
-    _TRACE_BEGIN_EXECUTE_DETAILED(eventID, ForChareMsg, _threadEP, srcPE, 0, NULL, tid);
+    _TRACE_BEGIN_EXECUTE_DETAILED(eventID, ForChareMsg, ep, srcPE, 0, NULL, tid);
     if(CpvAccess(_traceCoreOn))
 	    resumeTraceCore();
 }

@@ -28,7 +28,7 @@ void traceInit(char **argv) {
 void traceMessageRecv(char *msg, int pe) {}
 void traceBeginIdle(void) {}
 void traceEndIdle(void) {}
-void traceResume(int event, int srcPE, CmiObjId *t) {}
+void traceResume(int event, int srcPE, int ep, CmiObjId *t) {}
 void traceSuspend(void) {}
 void traceAwaken(CthThread t) {}
 void traceUserEvent(int i) {}

@@ -823,7 +823,7 @@ void TraceCounter::traceEnd() {
 void TraceCounter::beginExecute(envelope *e)
 {
   // no message means thread execution
-  if (e==NULL) { beginExecute(-1,-1,_threadEP,-1); }
+  if (e==NULL) { beginExecute(-1,-1,CtvAccess(CthEP),-1); }
   else { beginExecute(-1,-1,e->getEpIdx(),-1); }  
 }
 

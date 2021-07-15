@@ -157,7 +157,9 @@ void Chare::ckDebugPup(PUP::er &p) {
 /// This method is called before starting a [threaded] entry method.
 void Chare::CkAddThreadListeners(CthThread th, void *msg) {
   CthSetThreadID(th, thishandle.onPE, (int)(((char *)thishandle.objPtr)-(char *)0), 0);
-  traceAddThreadListeners(th, UsrToEnv(msg));
+  envelope *env = UsrToEnv(msg);
+  CthSetEpIdx(th, env->getEpIdx());
+  traceAddThreadListeners(th, env);
 }
 
 void CkMessage::ckDebugPup(PUP::er &p,void *msg) {

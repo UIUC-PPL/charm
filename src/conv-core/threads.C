@@ -324,11 +324,22 @@ CthCpvStatic(CthThread,  CthCurrent); /*Current thread*/
 CthCpvDeclare(char *,    CthData); /*Current thread's private data (externally visible)*/
 CthCpvStatic(size_t,     CthDatasize);
 
+#if CMK_TRACE_ENABLED
+CtvDeclare(int, CthEP); //Entry point index
+#endif
+
 void CthSetThreadID(CthThread th, int a, int b, int c)
 {
   B(th)->tid.id[0] = a;
   B(th)->tid.id[1] = b;
   B(th)->tid.id[2] = c;
+}
+
+void CthSetEpIdx(CthThread th, int ep)
+{
+#if CMK_TRACE_ENABLED
+  CtvAccess(CthEP) = ep;
+#endif
 }
 
 /* possible hack? CW */
@@ -1115,6 +1126,9 @@ void CthInit(char **argv)
   p = (CthProcInfo)malloc(sizeof(struct CthProcInfo_s));
   _MEMCHECK(p);
   CthCpvAccess(CthProc)=p;
+#if CMK_TRACE_ENABLED
+  CtvAccess(CthEP)=0; // dummy _threadEP
+#endif
 
   /* leave some space for current stack frame < 256 bytes */
   /* sp must be same on all processors for migration to work ! */
@@ -2226,7 +2240,7 @@ char * CthPointer(CthThread t, size_t pos)
 void CthTraceResume(CthThread t)
 {
 #if CMK_TRACE_ENABLED
-  traceResume(B(t)->eventID, B(t)->srcPE,&t->base.tid);
+  traceResume(B(t)->eventID, B(t)->srcPE, CtvAccess(CthEP), &t->base.tid);
 #endif
 }
 /* Functions that help debugging */
