@@ -27,6 +27,7 @@ DIRS = \
   longIdle \
   bombard \
   varTRAM \
+  atsync \
 
 FTDIRS = \
   jacobi3d \

@@ -1,0 +1,16 @@
+mainmodule atsync {
+  readonly CProxy_Main mainProxy;
+  readonly int nElements;
+  readonly int iters;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry void done();
+  };
+
+  array [1D] Test {
+    entry Test(void);
+    entry void start();
+  };
+
+};
