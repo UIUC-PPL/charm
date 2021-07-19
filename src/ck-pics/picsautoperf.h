@@ -72,11 +72,16 @@ public:
     userMetrics = src->userMetrics;
   }
 
+  /**
+   * Print field values as raw performance measures
+   * @param fp
+   * @param str
+   */
   void printMe(FILE *fp, const char *str) {
     for(int i=0; i<NUM_NODES; i++)
     {
       if (i == AVG_IdlePercentage || i == AVG_OverheadPercentage ||
-          i==AVG_UtilizationPercentage || i==AVG_AppPercentage ||
+          i == AVG_UtilizationPercentage || i == AVG_AppPercentage ||
           i == MAX_IdlePercentage || i == MAX_OverheadPercentage ||
           i == MAX_UtilizationPercentage || i == MAX_AppPercentage ||
           i == MIN_IdlePercentage || i == MIN_OverheadPercentage ||

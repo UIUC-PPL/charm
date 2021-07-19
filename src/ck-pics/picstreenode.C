@@ -5,86 +5,91 @@
 #include "register.h"
 
 
+/**
+ * 28 Avg
+ * 40 Max
+ * 9 Min
+ */
 char FieldName[NUM_NODES][30] = {
- "AVG_TotalTime",
- "AVG_IdlePercentage",
- "AVG_OverheadPercentage",
- "AVG_UtilizationPercentage",
- "AVG_AppPercentage",
- "AVG_EntryMethodDuration",
- "AVG_EntryMethodDuration_1",
- "AVG_EntryMethodDuration_2",
- "AVG_NumInvocations",
- "AVG_NumInvocations_1",
- "AVG_NumInvocations_2",
- "AVG_LoadPerObject",
- "AVG_LoadPerPE",
- "AVG_NumObjectsPerPE",
- "AVG_BytesPerMsg",
- "AVG_BytesPerObject",
- "AVG_NumMsgsPerObject",
- "AVG_NumMsgPerPE",
- "AVG_CacheMissRate",
- "AVG_BytesPerPE",
- "AVG_ExternalBytePerPE",
- "AVG_CompressTime",
- "AVG_CompressSourceBytes",
- "AVG_CompressDestBytes",
- "AVG_NumMsgRecv",
- "AVG_BytesMsgRecv",
- "AVG_MsgTimeCost",
- "AVG_TuningOverhead",
- "MAX_IdlePercentage",
- "MAX_IdlePE",
- "MAX_OverheadPercentage",
- "MAX_OverheadPE",
- "MAX_UtilizationPercentage",
- "MAX_UtilPE",
- "MAX_AppPercentage",
- "MAX_AppPE",
- "MAX_NumInvocations",
- "MAX_NumInvocPE",
- "MAX_LoadPerObject",
- "MAX_ObjID",
- "MAX_LoadPerPE",
- "MAX_LoadPE",
- "MAX_BytesPerMsg",
- "MAX_BytesEntryID",
- "MAX_BytesPerObject",
- "MAX_ByteObjID",
- "MAX_NumMsgsPerObject",
- "MAX_NumMsgObjID",
- "MAX_BytesPerPE",
- "MAX_BytesPE",
- "MAX_ExternalBytePerPE",
- "MAX_ExternalBytePE",
- "MAX_CriticalPathLength",
- "MAX_CPPE",
- "MAX_NumMsgRecv",
- "MAX_NumMsgRecvPE",
- "MAX_BytesMsgRecv",
- "MAX_BytesMsgRecvPE",
- "MAX_EntryMethodDuration",
- "MAX_EntryID",
- "MAX_EntryMethodDuration_1",
- "MAX_EntryID_1",
- "MAX_EntryMethodDuration_2",
- "MAX_EntryID_2",
- "MAX_NumMsgSend",
- "MAX_NumMsgSendPE",
- "MAX_BytesSend",
- "MAX_BytesSendPE",
- "MIN_IdlePercentage",
- "MIN_OverheadPercentage",
- "MIN_UtilizationPercentage",
- "MIN_AppPercentage",
- "MIN_LoadPerObject",
- "MIN_LoadPerPE",
- "MIN_BytesPerMsg",
- "MIN_NumMsgRecv",
- "MIN_BytesMsgRecv",
- "MinIdlePE",
- "MaxEntryPE"
+    "AVG_TotalTime",
+    "AVG_IdlePercentage",
+    "AVG_OverheadPercentage",
+    "AVG_UtilizationPercentage",
+    "AVG_NumObjectsPerPE",
+    "AVG_NumMsgRecvPerPE",
+    "AVG_BytesMsgRecvPerPE",
+    "AVG_EntryMethodDuration",
+    "AVG_NumInvocations",
+    "AVG_LoadPerPE",
+    "AVG_CacheMissRate",
+    "AVG_NumMsgsPerObject",
+    "AVG_BytesPerObject",
+    "AVG_LoadPerObject",
+    "AVG_BytesPerMsg",
+    "AVG_AppPercentage",
+    "AVG_EntryMethodDuration_1",
+    "AVG_EntryMethodDuration_2",
+    "AVG_NumInvocations_1",
+    "AVG_NumInvocations_2",
+    "AVG_NumMsgPerPE",
+    "AVG_BytesPerPE",
+    "AVG_ExternalBytePerPE",
+    "AVG_CompressTime",
+    "AVG_CompressSourceBytes",
+    "AVG_CompressDestBytes",
+    "AVG_MsgTimeCost",
+    "AVG_TuningOverhead",
+    "MAX_IdlePercentage",
+   "MAX_IdlePE",
+   "MAX_OverheadPercentage",
+   "MAX_OverheadPE",
+   "MAX_UtilizationPercentage",
+   "MAX_UtilPE",
+   "MAX_AppPercentage",
+   "MAX_AppPE",
+   "MAX_NumInvocations",
+   "MAX_NumInvocPE",
+   "MAX_LoadPerObject",
+   "MAX_ObjID",
+   "MAX_LoadPerPE",
+   "MAX_LoadPE",
+   "MAX_BytesPerMsg",
+   "MAX_BytesEntryID",
+   "MAX_BytesPerObject",
+   "MAX_ByteObjID",
+   "MAX_NumMsgsPerObject",
+   "MAX_NumMsgObjID",
+   "MAX_BytesPerPE",
+   "MAX_BytesPE",
+   "MAX_ExternalBytePerPE",
+   "MAX_ExternalBytePE",
+   "MAX_CriticalPathLength",
+   "MAX_CPPE",
+   "MAX_NumMsgRecv",
+   "MAX_NumMsgRecvPE",
+   "MAX_BytesMsgRecv",
+   "MAX_BytesMsgRecvPE",
+   "MAX_EntryMethodDuration",
+   "MAX_EntryID",
+   "MAX_EntryMethodDuration_1",
+   "MAX_EntryID_1",
+   "MAX_EntryMethodDuration_2",
+   "MAX_EntryID_2",
+   "MAX_NumMsgSend",
+   "MAX_NumMsgSendPE",
+   "MAX_BytesSend",
+   "MAX_BytesSendPE",
+   "MIN_IdlePercentage",
+   "MIN_OverheadPercentage",
+   "MIN_UtilizationPercentage",
+   "MIN_AppPercentage",
+   "MIN_LoadPerObject",
+   "MIN_LoadPerPE",
+   "MIN_BytesPerMsg",
+   "MIN_NumMsgRecv",
+   "MIN_BytesMsgRecv",
+   "MinIdlePE",
+   "MaxEntryPE"
 };
 
 
@@ -110,33 +115,48 @@ void Condition::printMe() {
   printf("condition %s \n", name.c_str());
 }
 
-void Condition::printDataToFile(double *input, FILE *fp) {
+void Condition::parseString(std::string str, FILE *fp) {
+  std::size_t pos = str.find("_");
+  fprintf(fp, "Condition:\n");
+  if(strstr(str.c_str(), "Low")) {
+    fprintf(fp, "%s is too low.\n", str.substr(pos+1).c_str());
+  } else if(strstr(str.c_str(), "High")) {
+    fprintf(fp, "%s is too high.\n", str.substr(pos+1).c_str());
+  } else if(str.c_str(), "Small") {
+    fprintf(fp, "%s is too small.\n", str.substr(pos+1).c_str());
+  } else if(str.c_str(), "Many") {
+    fprintf(fp, "%s is too many.\n", str.substr(pos+1).c_str());
+  } else if(str.c_str(), "Few") {
+    fprintf(fp, "%s is too few.\n", str.substr(pos+1).c_str());
+  } else if(str.c_str(), "Long") {
+    fprintf(fp, "%s is too long.\n", str.substr(pos+1).c_str());
+  } else {
+    fprintf(fp, "Invalid entry format in decision tree for %s.\n", str.substr(pos+1).c_str());
+  }
+}
 
-  fprintf(fp, "Condition  %s %d %d ", name.c_str(), varIndex, baseIndex);
-  if(thresholdIndex > -1)
+void Condition::printFields(double *input, FILE *fp) {
+  if(thresholdIndex > -1) {
     threshold = input[thresholdIndex];
-  if(varIndex>-1)
-    fprintf(fp, "  %s %f %s ", FieldName[varIndex], input[varIndex], operatorName[op]);
+  }
+  if(varIndex > -1) {
+    fprintf(fp, "%s %f\n", FieldName[varIndex], input[varIndex]);
+  }
 
   if(baseIndex > -1) {
     base = input[baseIndex];
-    fprintf(fp, " %s %f ", FieldName[baseIndex], base);
+    fprintf(fp, "%s %f \n", FieldName[baseIndex], base);
   }
-  else
-    fprintf(fp, " %f ", base);
+}
 
-  fprintf(fp, " %s %f ", compareName[symbol], threshold);
-  //potential improvement
-  fprintf(fp, " %f ", potentialImprove);
-
-  if(varIndex == MAX_EntryMethodDuration)
-  {
-    int entryIdx = (int)input[varIndex+1];
-    fprintf(fp, " %d  %s %s ", entryIdx, _entryTable[entryIdx]->name, _chareTable[_entryTable[entryIdx]->chareIdx]->name); 
-  }else if(varIndex>=NUM_AVG && varIndex<NUM_AVG+NUM_MAX)
-    fprintf(fp, " %d ", (int)input[varIndex+1]);
-
-  fprintf(fp, "\n");
+/**
+ * Parse string to print data to files in readable form
+ * @param input
+ * @param fp
+ */
+void Condition::printDataToFile(double *input, FILE *fp) {
+  parseString(name, fp);
+  printFields(input, fp);
 }
 
 bool Condition::test(double *input) {
@@ -202,7 +222,7 @@ bool Condition::test(double *input) {
     printf("Undefined symbol \n");
     exit(1);
   }
-  if(!strcmp(name.c_str(), "CPU_Util"))
+  if(!strcmp(name.c_str(), "Low_CPU_Util"))
     potentialImprove = 1 - realValue;
   else if(!strcmp(name.c_str(), "High_Overhead"))
     potentialImprove = realValue;
@@ -214,6 +234,12 @@ bool Condition::test(double *input) {
   return ret;
 }
 
+/**
+ * PICS suggested solutions.
+ * Applied to code iff PICS is used for tuning otherwise just prints a suggestion
+ * @param input
+ * @param fp
+ */
 void Solution::printDataToFile(double *input, FILE *fp) {
   int abseff = eff>=0?eff:-eff;
   fprintf(fp, "Solution %s %s \n", eff>0?"UP":"Down", EffectName[abseff]);
@@ -277,11 +303,13 @@ void TreeNode::printMe() {
   }
 }
 
+/**
+ * Call printData func iff the data is a condition data and not solution data
+ * @param input
+ * @param fp
+ */
 void TreeNode::printDataToFile(double *input, FILE *fp) {
-  if(_isSolution) {
-    data.solution->printDataToFile(input, fp);
-  }
-  else {
+  if(!_isSolution) {
     data.condition->printDataToFile(input, fp);
   }
 }

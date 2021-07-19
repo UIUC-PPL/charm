@@ -239,7 +239,9 @@ public:
     return maxEntryTime;
   }
 
-  void summarizeObjectInfo(double &maxtime, double &totaltime, double &maxMsgCount, double &totalMsgCount, double &maxMsgSize, double &totalMsgSize, double &numObjs) ;
+  void summarizeObjectInfo(double &maxtime, double &totaltime, double &mintime, double &maxMsgCount,
+                           double &totalMsgCount, double &maxMsgSize, double &totalMsgSize,
+                           double &numObjs, double &maxBytesPerMsg, double &minBytesPerMsg) ;
 
 
   inline long numInvocations() {

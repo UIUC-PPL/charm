@@ -46,6 +46,8 @@ public:
   void setPotentialImprove(double v) { potentialImprove = v;}
   void printMe();
   void printDataToFile(double *input, FILE *fp);
+  void parseString(std::string str, FILE *fp);
+  void printFields(double *input, FILE *fp);
   bool test(double *input); //test whether this condition is satisfied with input data
 };
 
