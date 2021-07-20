@@ -342,9 +342,9 @@ static inline void _parseCommandLineOpts(char **argv)
 	  _isNotifyChildInRed = false;
 	}
 
-	_isStaticInsertion = false;
-	if (CmiGetArgFlagDesc(argv,"+staticInsertion","Array elements are only inserted at construction")) {
-	  _isStaticInsertion = true;
+	if (CmiGetArgFlagDesc(argv,"+staticInsertion", "DEPRECATED")) {
+		CmiPrintf("WARNING: +staticInsertion has been deprecated.\n"
+		          "Static insertion is now the default behavior for arrays that are non-empty at construction.\n");
 	}
 
         useNodeBlkMapping = false;

@@ -6218,9 +6218,13 @@ create them, CkArrayOptions contains a few flags that the runtime can
 use to optimize handling of a given array. If the array elements will
 only migrate at controlled points (such as periodic load balancing with
 ``AtASync()``), this is signaled to the runtime by calling
-``opts.setAnytimeMigration(false)``\  [11]_. If all array elements will
-be inserted by bulk creation or by ``fooArray[x].insert()`` calls,
-signal this by calling ``opts.setStaticInsertion(true)``  [12]_.
+``opts.setAnytimeMigration(false)``\  [11]_. Similarly, certain optimizations can
+be made if all array elements are statically inserted via bulk construction during the
+``ckNew(...)`` call [12]_. By default, insertion is set to ``STATIC`` if ``ckNew`` is
+called with a non-zero number of initial elements, and is set to ``DYNAMIC`` in cases
+where the number of initial elements is 0. Applications can call
+``opts.setStaticInsertion(false)`` to override this behavior for cases where there are a
+non-zero number of initial insertions, but more dynamic insertions will follow.
 
 .. _array map:
 
@@ -11271,9 +11275,9 @@ Downloading Charm++
 
 Charm++ can be downloaded using one of the following methods:
 
--  From Charm++ website - The current stable version (source code and
+-  From the Charm++ website - The current stable version (source code and
    binaries) can be downloaded from our website at
-   *http://charm.cs.illinois.edu/software*.
+   *https://charm.cs.illinois.edu/software*.
 
 -  From source archive - The latest development version of Charm++ can
    be downloaded from our source archive using *git clone
@@ -11292,19 +11296,30 @@ Installation
 A typical prototype command for building Charm++ from the source code
 is:
 
-``./build <TARGET> <TARGET ARCHITECTURE> [OPTIONS]`` where,
+.. code-block:: bash
 
-TARGET
+   $ ./build <TARGET> <TARGET ARCHITECTURE> [OPTIONS]
+
+where,
+
+``TARGET``
    is the framework one wants to build such as *charm++* or *AMPI*.
 
-TARGET ARCHITECTURE
+``TARGET ARCHITECTURE``
    is the machine architecture one wants to build for such as
    *netlrts-linux-x86_64*, *pamilrts-bluegeneq* etc.
 
-OPTIONS
+``OPTIONS``
    are additional options to the build process, e.g. *smp* is used to
    build a shared memory version, *-j8* is given to build in parallel
    etc.
+
+.. note::
+
+   Starting from version 7.0, Charm++ uses the CMake-based build system
+   when building with the ``./build`` command. To use the old configure-based
+   build system, you can build with the ``./buildold`` command with the same
+   options. We intend to remove the old build system in Charm++ 7.1.
 
 In Table :numref:`tab:buildlist`, a list of build
 commands is provided for some of the commonly used systems. Note that,
@@ -11362,13 +11377,13 @@ path would be ``netlrts-linux-x86_64/tmp``. On Linux and macOS, the tmp
 symlink in the top-level charm directory also points to the tmp
 directory of the most recent build.
 
-Alternatively, CMake can be used for configuring and building Charm++.
+Alternatively, CMake can be used directly for configuring and building Charm++.
 You can use ``cmake-gui`` or ``ccmake`` for an overview of available
 options. Note that some are only effective when passed with ``-D`` from
 the command line while configuring from a blank slate. To build with all
 defaults, ``cmake .`` is sufficient, though invoking CMake from a
 separate location (ex:
-``mkdir mybuild && cd mybuild && cmake ../charm``) is recommended.
+``mkdir mybuild && cd mybuild && cmake ..``) is recommended.
 Please see Section :numref:`sec:cmakeinstall` for building Charm++
 directly with CMake.
 
@@ -11419,9 +11434,8 @@ select another version with the ``@`` option (for example,
 Installation with CMake
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-As an experimental feature, Charm++ can be installed with the CMake tool,
-version 3.4 or newer.
-This is currently supported on Linux and Darwin, but not on Windows.
+Charm++ can be installed directly with the CMake tool,
+version 3.4 or newer, without using the ``./build`` command.
 
 After downloading and unpacking Charm++, it can be installed in the following way:
 
@@ -11442,46 +11456,40 @@ For example, to build Charm++ and AMPI on top of the MPI layer with SMP, the fol
 
    $ cmake .. -DNETWORK=mpi -DSMP=on -DTARGET=AMPI
 
-To simplify building with CMake, the `buildcmake` command is a simple wrapper around cmake
-that supports many of the options that `build` supports.
-
-.. code-block:: bash
-
-   $ ./buildcmake AMPI netlrts-linux-x86_64 smp --with-production
 
 Charm++ installation directories
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The main directories in a Charm++ installation are:
 
-charm/bin
+``charm/bin``
    Executables, such as charmc and charmrun, used by Charm++.
 
-charm/doc
+``charm/doc``
    Documentation for Charm++, such as this document. Distributed as
-   LaTeX source code; HTML and PDF versions can be built or downloaded
-   from our web site.
+   reStructuredText (RST or ReST) source code; HTML and PDF versions can be
+   built or downloaded from our web site.
 
-charm/include
+``charm/include``
    The Charm++ C++ and Fortran user include files (.h).
 
-charm/lib
+``charm/lib``
    The static libraries (.a) that comprise Charm++.
 
-charm/lib_so
+``charm/lib_so``
    The shared libraries (.so/.dylib) that comprise Charm++, if Charm++
    is compiled with the ``-build-shared`` option.
 
-charm/examples
+``charm/examples``
    Example Charm++ programs.
 
-charm/src
+``charm/src``
    Source code for Charm++ itself.
 
-charm/tmp
+``charm/tmp``
    Directory where Charm++ is built.
 
-charm/tests
+``charm/tests``
    Test Charm++ programs used by autobuild.
 
 Reducing disk usage

@@ -13,13 +13,13 @@
 cmake_minimum_required(VERSION 3.4)
 
 # Print warning
-message("#################################################################")
-message("# The CMake build system is currently a beta version.           #")
-message("# Please let us know if you experience any problems by opening  #")
-message("# an issue on our GitHub (https://github.com/UIUC-PPL/charm),   #")
-message("# with the below configuration information.                     #")
-message("# You can run './buildold' to use the previous build system.    #")
-message("#################################################################")
+message("##################################################################")
+message("# The CMake build system may not support advanced build options. #")
+message("# Please let us know if you experience any problems by opening   #")
+message("# an issue on our GitHub (https://github.com/UIUC-PPL/charm),    #")
+message("# with the below configuration information.                      #")
+message("# You can run './buildold' to use the previous build system.     #")
+message("##################################################################")
 
 if(CMAKE_VERSION VERSION_GREATER 3.12 OR CMAKE_VERSION VERSION_EQUAL 3.12)
   cmake_policy(SET CMP0075 OLD)

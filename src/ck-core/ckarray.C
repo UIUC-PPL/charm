@@ -57,7 +57,6 @@ Orion Sky Lawlor, olawlor@acm.org
 #include <stdarg.h>
 
 bool _isAnytimeMigration;
-bool _isStaticInsertion;
 bool _isNotifyChildInRed;
 
 #define ARRAY_DEBUG_OUTPUT 0
@@ -871,7 +870,7 @@ CkArray::CkArray(CkArrayOptions&& opts, CkMarshalledMessage&& initMsg)
       sectionAutoDelegate(opts.isSectionAutoDelegated()),
       initCallback(opts.getInitCallback()),
       thisProxy(thisgroup),
-      stableLocations(opts.staticInsertion && !opts.anytimeMigration),
+      stableLocations(opts.isStaticInsertion() && !opts.anytimeMigration),
       numInitial(opts.getNumInitial()),
       isInserting(true),
       numPesInited(0)
@@ -903,7 +902,7 @@ CkArray::CkArray(CkArrayOptions&& opts, CkMarshalledMessage&& initMsg)
 
   /// Set up initial elements (if any)
   locMgr->populateInitial(opts, initMsg.getMessage(), this);
-  if (opts.staticInsertion)
+  if (opts.isStaticInsertion())
     initDone();
 
   if (opts.reductionClient.type != CkCallback::invalid && CkMyPe() == 0)
