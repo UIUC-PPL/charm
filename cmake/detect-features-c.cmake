@@ -359,26 +359,6 @@ void test()
 }
 " CMK_IBV_PORT_ATTR_HAS_LINK_LAYER)
 
-check_c_source_compiles([=[
-void main() {
-  void * m1, * m2;
-  asm volatile ("movq %%fs:0x0, %0\\n\t"
-                "movq %1, %%fs:0x0\\n\t"
-                : "=&r"(m1)
-                : "r"(m2));
-}
-]=] CMK_TLS_SWITCHING_X86_64)
-
-check_c_source_compiles([=[
-void main() {
-  void * m1, * m2;
-  asm volatile ("movl %%gs:0x0, %0\\n\t"
-                "movl %1, %%gs:0x0\\n\t"
-                : "=&r"(m1)
-                : "r"(m2));
-}
-]=] CMK_TLS_SWITCHING_X86)
-
 check_c_source_compiles("
 #include <stdint.h>
 #include <gni_pub.h>
