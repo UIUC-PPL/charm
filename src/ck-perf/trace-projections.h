@@ -526,7 +526,6 @@ public:
     }
 
     /* for overiding basic thread listener support in Trace class */
-    virtual void traceAddThreadListeners(CthThread tid, envelope *e);
 };
 
 using namespace PUP;
