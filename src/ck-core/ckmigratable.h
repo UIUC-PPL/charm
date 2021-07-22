@@ -75,6 +75,7 @@ public:
 
   /// Execute the given entry method.  Returns false if the element 
   /// deleted itself or migrated away during execution.
+  // TODO: Why does this have a different signature than other invoke calls?
   inline bool ckInvokeEntry(int epIdx,void *msg,bool doFree) 
 	  {return myRec->invokeEntry(this,msg,epIdx,doFree);}
 

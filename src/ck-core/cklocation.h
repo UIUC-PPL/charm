@@ -317,6 +317,15 @@ enum CkElementCreation_t : uint8_t
 #  define CMK_RANK_0(pe) pe
 #endif
 
+class CkMigratable_initInfo
+{
+public:
+  CkLocRec* locRec;
+  int chareType;
+  bool forPrefetch; /* If true, this creation is only a prefetch restore-from-disk.*/
+};
+CkpvExtern(CkMigratable_initInfo, mig_initInfo);
+
 class CkLocCache : public CBase_CkLocCache
 {
 private:
@@ -357,9 +366,9 @@ public:
   void erase(CmiUInt8 id) { locMap.erase(id); }
 
   void addListener(Listener l) { listeners.push_back(l); }
-  void notifyListeners(CmiUInt8 id, int pe)
+  void notifyListeners(CmiUInt8 id, int pe) const
   {
-    for (Listener& l : listeners)
+    for (const Listener& l : listeners)
     {
       l(id, pe);
     }
@@ -378,13 +387,15 @@ private:
 
   using ArrayIdMap = std::unordered_map<CkArrayID, CkArray*, ArrayIDHasher>;
   using MsgBuffer = std::unordered_map<CmiUInt8, std::vector<CkArrayMessage*> >;
-  using IndexMsgBuffer =
-      std::unordered_map<CkArrayIndex, std::vector<CkArrayMessage*>, IndexHasher>;
   using LocationRequestBuffer =
       std::unordered_map<CkArrayIndex, std::vector<int>, IndexHasher>;
   using IdxIdMap = std::unordered_map<CkArrayIndex, CmiUInt8, IndexHasher>;
   using LocRecHash = std::unordered_map<CmiUInt8, CkLocRec*>;
   using ElemMap = std::unordered_map<CmiUInt8, CkMigratable*>;
+
+  using LocationListener = std::function<void(CmiUInt8, int)>;
+  using IndexListener = std::function<void(const CkArrayIndex&, CmiUInt8, int)>;
+  std::list<IndexListener> listeners;
 
   // Internal interface:
   void AtSyncBarrierReached();
@@ -397,6 +408,7 @@ private:
   friend class CkLocation;  // so it can call pupElementsFor
   friend class ArrayElement;
   friend class MemElementPacker;
+  friend class CkArray;
 
   void pupElementsFor(PUP::er& p, CkLocRec* rec, CkElementCreation_t type,
                       bool rebuild = false);
@@ -405,12 +417,6 @@ private:
   typedef void (CkMigratable::*CkMigratable_voidfn_t)(void);
   typedef void (CkMigratable::*CkMigratable_voidfn_arg_t)(void*);
   void callMethod(CkLocRec* rec, CkMigratable_voidfn_arg_t fn, void*);
-
-  void deliverUnknown(CkArrayMessage* msg, const CkArrayIndex* idx, int opts);
-
-  // Create a new local record at this array index.
-  CkLocRec* createLocal(const CkArrayIndex& idx, bool forMigration, bool ignoreArrival,
-                        bool notifyHome, int epoch = 0);
 
   LocationRequestBuffer bufferedLocationRequests;
 
@@ -468,20 +474,7 @@ public:
   CmiUInt8 idCounter;
   CmiUInt8 getNewObjectID(const CkArrayIndex& idx);
 
-  /// Map idx to undelivered msgs
-  /// @todo: We should not buffer msgs for uncreated array elements forever.
-  /// After some timeout or other policy, we should throw errors or warnings
-  /// or at least report and discard any msgs addressed to uncreated array elements
-  MsgBuffer bufferedMsgs;
-  MsgBuffer bufferedRemoteMsgs;
-  MsgBuffer bufferedShadowElemMsgs;
   MsgBuffer bufferedActiveRgetMsgs;
-
-  IndexMsgBuffer bufferedIndexMsgs;
-  IndexMsgBuffer bufferedDemandMsgs;
-
-  void processDeliverBufferedMsgs(CmiUInt8, MsgBuffer& buffer);
-  void processPrepBufferedMsgs(const CkArrayIndex&, CmiUInt8, IndexMsgBuffer&);
 
   bool addElementToRec(CkLocRec* rec, CkArray* m, CkMigratable* elt, int ctorIdx,
                        void* ctorMsg);
@@ -544,6 +537,7 @@ public:
     }
   }
 
+  // TODO: This should be better
   bool lookupID(const CkArrayIndex& idx, CmiUInt8& id) const
   {
     if (compressor)
@@ -586,7 +580,18 @@ public:
     }
   }
 
+  int getMapHandle() const { return mapHandle; }
   CkGroupID getMap() const { return mapID; }
+
+  void addLocationListener(LocationListener l) { cache->addListener(l); }
+  void addIndexListener(IndexListener l) { listeners.push_back(l); }
+  void notifyListeners(const CkArrayIndex& idx, CmiUInt8 id, int pe) const
+  {
+    for (const IndexListener& l : listeners)
+    {
+      l(idx, id, pe);
+    }
+  }
 
   // Look up array element in hash table.  Index out-of-bounds if not found.
   CkLocRec* elementRec(const CkArrayIndex& idx);
@@ -614,14 +619,6 @@ public:
   void addManager(CkArrayID aid, CkArray* mgr);
   void deleteManager(CkArrayID aid, CkArray* mgr);
 
-  /// Populate this array with initial elements and store CkArrayOptions to the underlying
-  /// map
-  void populateInitial(CkArrayOptions& options, void* initMsg, CkArray* mgr)
-  {
-    map->storeCkArrayOpts(options);
-    map->populateInitial(mapHandle, options, initMsg, mgr);
-  }
-
   // Deliver buffered msgs that were buffered because of active rdma gets
   void deliverAnyBufferedRdmaMsgs(CmiUInt8);
 
@@ -631,11 +628,9 @@ public:
   // carrying out rgets)
   void processAfterActiveRgetsCompleted(CmiUInt8 id);
 
-  /// Add a new local array element, calling element's constructor
-  /// Returns true if the element was successfully added; false if the element migrated
-  /// away or deleted itself.
-  bool addElement(CkArrayID aid, const CkArrayIndex& idx, CkMigratable* elt, int ctorIdx,
-                  void* ctorMsg);
+  // Create a new local record at this array index.
+  CkLocRec* createLocal(const CkArrayIndex& idx, bool forMigration, bool ignoreArrival,
+                        bool notifyHome, int epoch = 0);
 
   /// Done inserting elements for now
   void doneInserting(void);
@@ -646,26 +641,9 @@ public:
   // means k*n elements are living here
   unsigned int numLocalElements();
 
-  /// Deliver message to this element:
-  // int deliverMsg(CkMessage *m, CkArrayID mgr, const CkArrayIndex &idx, CkDeliver_t
-  // type, int opts = 0);
-  int deliverMsg(CkArrayMessage* m, CkArrayID mgr, CmiUInt8 id, const CkArrayIndex* idx,
-                 CkDeliver_t type, int opts = 0);
-  void sendMsg(CkArrayMessage* m, CkArrayID mgr, CmiUInt8 id, const CkArrayIndex* idx,
-                 CkDeliver_t type, int opts = 0);
-  void prepMsg(CkArrayMessage* msg, CkArrayID mgr, const CkArrayIndex& idx,
-               CkDeliver_t type, int opts);
-
-  void recordSend(const CkArrayIndex* idx, const CmiUInt8 id, const unsigned int bytes,
-                  const int opts = 0);
-
   // Map stores the CkMigratable elements that have active Rgets
   // ResumeFromSync is not called for these elements until the Rgets have completed
   ElemMap toBeResumeFromSynced;
-
-  // Deliver any buffered msgs to a newly created array element
-  void processAllDeliverBufferedMsgs(CmiUInt8);
-  void processAllPrepBufferedMsgs(const CkArrayIndex&, CmiUInt8);
 
   // Advisories:
   /// This index now lives on the given processor-- update local records
@@ -689,13 +667,9 @@ public:
   // This index will no longer be used-- delete the associated elements
   void reclaim(CkLocRec* rec);
 
-  void requestDemandCreation(const CkArrayIndex&, int, int, int, CkArrayID);
-  bool demandCreateElement(CkArrayMessage* msg, const CkArrayIndex& idx, int onPe);
-  void demandCreateElement(const CkArrayIndex& idx, int chareType, int onPe,
-                           CkArrayID mgr);
-
   // Communication:
   void immigrate(CkArrayElementMigrateMessage* msg);
+  void requestLocation(CmiUInt8 id);
   void requestLocation(const CkArrayIndex& idx);
   bool requestLocation(const CkArrayIndex& idx, int peToTell);
   void updateLocation(const CkArrayIndex& idx, const CkLocEntry& e);
