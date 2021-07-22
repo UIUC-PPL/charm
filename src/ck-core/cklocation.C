@@ -3049,10 +3049,8 @@ void CkLocMgr::prepMsg(CkArrayMessage* msg, CkArrayID mgr, const CkArrayIndex& i
 
   checkInBounds(idx);
 
-  if (type == CkDeliver_queue)
-  {
-    _TRACE_CREATION_DETAILED(env, msg->array_ep());
-  }
+  // Trace this send for Projections
+  _TRACE_CREATION_DETAILED(env, msg->array_ep());
 
   CmiUInt8 id;
   if (lookupID(idx, id))
