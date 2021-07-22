@@ -20,13 +20,19 @@ class TableEntry {
     IrrGroup *obj;
     PtrQ *pending; //Buffers msgs recv'd before group is created
     int cIdx;
+    bool ready;
 
   public:
-    TableEntry(int ignored=0) { (void)ignored; obj=0; pending=0; cIdx=-1; }
+    TableEntry(int ignored = 0)
+    : obj(nullptr), pending(nullptr), cIdx(-1), ready(false) {
+      (void)ignored;
+    }
     inline IrrGroup* getObj(void) { return obj; }
     inline void setObj(void *_obj) { obj=(IrrGroup *)_obj; }
     PtrQ* getPending(void) { return pending; }
     inline void clearPending(void) { delete pending; pending = NULL; }
+    inline const bool &isReady(void) const { return this->ready; }
+    inline void setReady(void) { this->ready = true; }
     void enqMsg(void *msg) {
       if (pending==0)
         pending=new PtrQ();
@@ -165,7 +171,12 @@ static inline IrrGroup *_localBranch(CkGroupID gID)
 // Ensure thread safety while using this function as it is accessing a non-PE-local group
 static inline IrrGroup *_localBranchOther(CkGroupID gID, int rank)
 {
-  return CkpvAccessOther(_groupTable, rank)->find(gID).getObj();
+  if (rank == CkMyRank()) {
+    return _localBranch(gID);
+  } else {
+    auto &entry = CkpvAccessOther(_groupTable, rank)->find(gID);
+    return entry.isReady() ? entry.getObj() : nullptr; // ensures the object was created
+  }
 }
 
 extern void _registerCommandLineOpt(const char* opt);
