@@ -2126,11 +2126,15 @@ void CthResumeNormalThread(CthThreadToken* token)
 #endif
 }
 
+int CthIsMainThread(CthThread t) {
+  return t == CpvAccess(CthMainThread);
+}
+
 void CthResumeSchedulingThread(CthThreadToken  *token)
 {
   CthThread t = token->thread;
   CthThread me = CthSelf();
-  if (me == CpvAccess(CthMainThread)) {
+  if (CthIsMainThread(me)) {
     CthEnqueueSchedulingThread(CthGetToken(me),CQS_QUEUEING_FIFO, 0, 0);
   } else {
     CthSetNext(me, CpvAccess(CthSleepingStandins));

@@ -1551,6 +1551,7 @@ typedef CthThread   (*CthThFn)(void);
 
 void       CthSetSerialNo(CthThread t, int no);
 int        CthImplemented(void);
+int        CthIsMainThread(CthThread t);
 
 CthThread  CthSelf(void);
 CthThread  CthCreate(CthVoidFn, void *, int);
