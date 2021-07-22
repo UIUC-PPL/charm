@@ -94,6 +94,10 @@ class Parameter {
   const char* getName(void) const { return name; }
   void printMsg(XStr& str);
   void storePostedRdmaPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count);
+  void setupPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count);
+  void copyFromPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count);
+  void extractPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count);
+  void printPeerAckInfo(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count);
   int operator==(const Parameter& parm) const;
 
   // DMK - Added for accelerator options
@@ -189,6 +193,10 @@ class ParamList {
   int operator==(ParamList& plist);
   void checkParamList();
   void storePostedRdmaPtrs(XStr& str, bool isSDAGGen);
+  void setupPostedPtrs(XStr& str, bool isSDAGGen);
+  void copyFromPostedPtrs(XStr& str, bool isSDAGGen);
+  void extractPostedPtrs(XStr& str, bool isSDAGGen);
+  void printPeerAckInfo(XStr& str, bool isSDAGGen);
 };
 
 }  // namespace xi

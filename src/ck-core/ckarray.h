@@ -698,6 +698,15 @@ public:
     }
   }
 
+ inline size_t getNumLocalElems() {
+    return localElemVec.size();
+  }
+
+  inline unsigned int getEltLocalIndex(const CmiUInt8 id) {
+    const auto itr = localElems.find(id);
+    return ( itr == localElems.end() ? -1 : itr->second);
+  }
+
   virtual CkMigratable* getEltFromArrMgr(const CmiUInt8 id)
   {
     const auto itr = localElems.find(id);
@@ -840,7 +849,8 @@ private:
 public:
   CkArrayBroadcaster* getBroadcaster() { return broadcaster; }
   void flushStates();
-  void forwardZCMsgToOtherElems(envelope* env);
+  void forwardZCMsgToOtherElems(envelope *env);
+  void forwardZCMsgToSpecificElem(envelope *env, CkMigratable *elem);
 
   static bool isIrreducible() { return true; }
 };
@@ -887,6 +897,7 @@ public:
   int incrementBcastNo();
 
   bool deliver(CkArrayMessage* bcast, ArrayElement* el, bool doFree);
+  bool deliverAlreadyDelivered(CkArrayMessage* bcast, ArrayElement* el, bool doFree);
 #if CMK_CHARM4PY
   void deliver(CkArrayMessage* bcast, std::vector<CkMigratable*>& elements, int arrayId,
                bool doFree);

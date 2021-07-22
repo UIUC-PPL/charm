@@ -652,9 +652,9 @@ void ParamList::beginUnmarshall(XStr& str) {
         callEach(&Parameter::beginUnmarshallRdma, str, true, false);
         if (hasRecvRdma()) {
           str << "  CkNcpyBufferPost ncpyPost[" << entry->numRdmaRecvParams << "];\n";
+          str << "  int numPostAsync=0;\n";
           for (int index = 0; index < entry->numRdmaRecvParams; index++) {
-            str << "  ncpyPost[" << index << "].regMode = CK_BUFFER_REG;\n";
-            str << "  ncpyPost[" << index << "].deregMode = CK_BUFFER_DEREG;\n";
+            str << "  initPostStruct(ncpyPost, " << index << " );\n";
           }
         }
       }
@@ -666,6 +666,16 @@ void ParamList::beginUnmarshall(XStr& str) {
   }
 }
 
+void ParamList::copyFromPostedPtrs(XStr& str, bool isSDAGGen) {
+  int count = 0;
+  callEach(&Parameter::copyFromPostedPtrs, str, true, isSDAGGen, false, count);
+}
+
+void ParamList::setupPostedPtrs(XStr& str, bool isSDAGGen) {
+  int count = 0;
+  callEach(&Parameter::setupPostedPtrs, str, true, isSDAGGen, false, count);
+}
+
 void ParamList::storePostedRdmaPtrs(XStr& str, bool isSDAGGen) {
   if (hasDevice()) {
     int count = 0; // Used to keep track of indices
@@ -674,6 +684,182 @@ void ParamList::storePostedRdmaPtrs(XStr& str, bool isSDAGGen) {
     callEach(&Parameter::storePostedRdmaPtrs, str, true, isSDAGGen, false);
   }
 }
+
+void ParamList::extractPostedPtrs(XStr& str, bool isSDAGGen) {
+    int count = 0;
+    callEach(&Parameter::extractPostedPtrs, str, true, isSDAGGen, false, count);
+}
+
+void ParamList::printPeerAckInfo(XStr& str, bool isSDAGGen) {
+    int count = 0;
+    callEach(&Parameter::printPeerAckInfo, str, true, isSDAGGen, false, count);
+}
+
+void Parameter::printPeerAckInfo(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count) {
+  Type* dt = type->deref();  // Type, without &
+  if (isRdma() && count == 0) {
+    str << "    NcpyEmInfo *ncpyEmInfo = (";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".ncpyEmInfo);\n";
+    str << "    NcpyBcastRecvPeerAckInfo *peerAckInfo = (";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".ncpyEmInfo->peerAckInfo);\n";
+
+    str << "    std::vector<int> *tagArray = ";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".ncpyEmInfo->tagArray;\n";
+    count++;
+  }
+}
+
+void Parameter::extractPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count) {
+  Type* dt = type->deref();  // Type, without &
+  if (isRdma()) {
+    str << "      ";
+    if(isSDAGGen)
+      str << "genClosure->" << arrLen;
+    else
+      str << arrLen << ".t";
+    str << " = extractStoredBuffer(";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".ncpyEmInfo->tagArray, env, myIndex,";
+    if(isSDAGGen)
+      str << "genClosure->num_rdma_fields,";
+    else
+      str << "impl_num_rdma_fields, ";
+    str << count++ << ", (void *&)(";
+    if(isSDAGGen)
+      str << "genClosure->";
+    str << "ncpyBuffer_" << name << ".ptr));\n";
+  }
+}
+
+
+void Parameter::setupPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count) {
+  Type* dt = type->deref();  // Type, without &
+
+  if (isRdma()) {
+    bool hostPath = !device && !isDevice();
+    bool devicePath = device && isDevice();
+
+    if (hostPath) {
+      if (genRdma) {
+        str << "      setPostStruct(ncpyPost, " << count++ << ",";
+        if(isSDAGGen) str << "genClosure->";
+        str << "ncpyBuffer_" << name << ",";
+        str << "myIndex);\n";
+      } else {
+        str << "  if(ncpyPost[" << count << "].postAsync == false) { \n";
+        // Error checking if posted buffer is larger than the source buffer
+        str << "    if(impl_cnt_" << name << " < " ;
+        if(isSDAGGen)
+           str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ")\n";
+        else
+          str << " sizeof(" << dt << ") * "<< arrLen << ".t)\n";
+
+        str << "      CkAbort(\"Size of the posted buffer > Size of the source buffer \");\n";
+
+        // memcpy the pointer into the user passed buffer
+        str << "    memcpy(" << "ncpyBuffer_" << name << "_ptr,";
+        if(isSDAGGen)
+          str << "genClosure->";
+        str << name << ",";
+
+        if(isSDAGGen)
+          str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ");\n";
+        else
+          str << " sizeof(" << dt << ") * "<< arrLen << ".t);\n";
+        str << "  } else {\n";
+        str << "    ncpyPost[" << count << "].srcBuffer =";
+        if(isSDAGGen)
+          str << "genClosure->";
+        str << name << ";\n";
+        str << "    ncpyPost[" << count++  << "].srcSize = impl_cnt_" << name << ";\n";
+        str << "  }\n";
+      }
+    }
+  }
+}
+
+
+
+void Parameter::copyFromPostedPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count) {
+  Type* dt = type->deref();  // Type, without &
+
+  if (isRdma()) {
+    bool hostPath = !device && !isDevice();
+    bool devicePath = device && isDevice();
+
+    if (hostPath) {
+      if (genRdma) {
+        //TODO: Uncomment this later
+        str << "      if(ncpyPost[" << count << "].postAsync == false ) {\n";
+        // Error checking if posted buffer is larger than the source buffer
+        str << "        if( ";
+        if(isSDAGGen)
+          str << "genClosure->";
+        str << "ncpyBuffer_" << name << ".cnt < " ;
+        if(isSDAGGen)
+           str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ")\n";
+        else
+          str << " sizeof(" << dt << ") * "<< arrLen << ".t)\n";
+        str << "          CkAbort(\"Size of the posted buffer > Size of the source buffer \");\n";
+
+        str << "        memcpy(" << "ncpyBuffer_" << name << "_ptr,";
+        if(isSDAGGen)
+          str << "genClosure->";
+        str << "ncpyBuffer_" << name << ".ptr,";
+        if(isSDAGGen)
+          str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ");\n";
+        else
+          str << " sizeof(" << dt << ") * "<< arrLen << ".t);\n";
+        str << "        ncpyPost[" << count << "].ncpyEmInfo->counter++;\n";
+        str << "        setPosted(tagArray, env, myIndex, ";
+
+        if(isSDAGGen)
+          str << " genClosure->num_rdma_fields,";
+        else
+          str << " impl_num_rdma_fields,";
+        str << count++ << ");\n";
+        str << "      }\n";
+      } else {
+        str << "  if(ncpyPost[" << count << "].postAsync == false) { \n";
+        // Error checking if posted buffer is larger than the source buffer
+        str << "    if(impl_cnt_" << name << " < " ;
+        if(isSDAGGen)
+           str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ")\n";
+        else
+          str << " sizeof(" << dt << ") * "<< arrLen << ".t)\n";
+
+        str << "      CkAbort(\"Size of the posted buffer > Size of the source buffer \");\n";
+
+        // memcpy the pointer into the user passed buffer
+        str << "    memcpy(" << "ncpyBuffer_" << name << "_ptr,";
+        if(isSDAGGen)
+          str << "genClosure->";
+        str << name << ",";
+
+        if(isSDAGGen)
+          str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ");\n";
+        else
+          str << " sizeof(" << dt << ") * "<< arrLen << ".t);\n";
+        str << "  } else {\n";
+        str << "    ncpyPost[" << count << "].srcBuffer =";
+        if(isSDAGGen)
+          str << "genClosure->";
+        str << name << ";\n";
+        str << "    ncpyPost[" << count++  << "].srcSize = impl_cnt_" << name << ";\n";
+        str << "  }\n";
+      }
+    }
+  }
+}
+
+
 
 void Parameter::storePostedRdmaPtrs(XStr& str, bool genRdma, bool isSDAGGen, bool device, int &count) {
   Type* dt = type->deref();  // Type, without &
@@ -684,58 +870,12 @@ void Parameter::storePostedRdmaPtrs(XStr& str, bool genRdma, bool isSDAGGen, boo
 
     if (hostPath) {
       if (genRdma) {
-        str << "  if(CMI_IS_ZC_RECV(env)) {\n";
         str << "    buffPtrs[" << count << "] = (void *)" << "ncpyBuffer_";
         str << name << "_ptr;\n";
         if(isSDAGGen)
           str << "    buffSizes[" << count++ << "] = sizeof(" << dt << ") * genClosure->"<< arrLen << ";\n";
         else
           str << "    buffSizes[" << count++ << "] = sizeof(" << dt << ") * " << arrLen << ".t;\n";
-        str <<  "  }\n";
-        str << "  else if(CMI_ZC_MSGTYPE(env) == CMK_ZC_BCAST_RECV_DONE_MSG) {\n";
-
-        // Error checking if posted buffer is larger than the source buffer
-        str << "  if( ";
-        if(isSDAGGen)
-          str << "genClosure->";
-        str << "ncpyBuffer_" << name << ".cnt < " ;
-        if(isSDAGGen)
-           str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ")\n";
-        else
-          str << " sizeof(" << dt << ") * "<< arrLen << ".t)\n";
-
-        str << "    CkAbort(\"Size of the posted buffer > Size of the source buffer \");\n";
-
-        str << "    memcpy(" << "ncpyBuffer_" << name << "_ptr,";
-        if(isSDAGGen)
-          str << "genClosure->";
-        str << "ncpyBuffer_" << name << ".ptr,";
-        if(isSDAGGen)
-          str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ");\n";
-        else
-          str << " sizeof(" << dt << ") * "<< arrLen << ".t);\n";
-
-        str << "  }\n";
-      } else {
-        // Error checking if posted buffer is larger than the source buffer
-        str << "  if(impl_cnt_" << name << " < " ;
-        if(isSDAGGen)
-           str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ")\n";
-        else
-          str << " sizeof(" << dt << ") * "<< arrLen << ".t)\n";
-
-        str << "    CkAbort(\"Size of the posted buffer > Size of the source buffer \");\n";
-
-        // memcpy the pointer into the user passed buffer
-        str << "  memcpy(" << "ncpyBuffer_" << name << "_ptr,";
-        if(isSDAGGen)
-          str << "genClosure->";
-        str << name << ",";
-
-        if(isSDAGGen)
-          str << " sizeof(" << dt << ") * genClosure->"<< arrLen << ");\n";
-        else
-          str << " sizeof(" << dt << ") * "<< arrLen << ".t);\n";
       }
     } else if (devicePath) {
       str << "  if(CMI_IS_ZC_DEVICE(env)) {\n";
@@ -863,9 +1003,9 @@ void ParamList::beginUnmarshallSDAGCall(XStr& str, bool usesImplBuf) {
       } else {
         if (hasRecvRdma()) {
           str << "  CkNcpyBufferPost ncpyPost[" << entry->numRdmaRecvParams << "];\n";
+          str << "    int numPostAsync=0;\n";
           for (int index = 0; index < entry->numRdmaRecvParams; index++) {
-            str << "  ncpyPost[" << index << "].regMode = CK_BUFFER_REG;\n";
-            str << "  ncpyPost[" << index << "].deregMode = CK_BUFFER_DEREG;\n";
+            str << "  initPostStruct(ncpyPost, " << index << " );\n";
           }
         }
         str << "  char *impl_buf_begin = impl_buf;\n";
