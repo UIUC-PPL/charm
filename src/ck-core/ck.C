@@ -33,6 +33,9 @@ CkpvDeclare(ArrayObjMap, array_objs);
 
 #define CK_MSG_SKIP_OR_IMM    (CK_MSG_EXPEDITED | CK_MSG_IMMEDIATE)
 
+using ObjectStack = std::vector<Chare *>;
+CkpvDeclare(ObjectStack, runningObjs);
+
 VidBlock::VidBlock() { state = UNFILLED; msgQ = new PtrQ(); _MEMCHECK(msgQ); }
 
 int CMessage_CkMessage::__idx=-1;
@@ -55,6 +58,7 @@ void _initChareTables()
   CkpvAccess(currentChareIdx) = -1;
 #endif
 
+  CkpvInitialize(ObjectStack, runningObjs);
   CkpvInitialize(ArrayObjMap, array_objs);
 }
 
@@ -62,6 +66,7 @@ void _initChareTables()
 Chare::Chare(void) {
   thishandle.onPE=CkMyPe();
   thishandle.objPtr=this;
+  this->ckInitialized=true;
 #if CMK_ERROR_CHECKING
   magic = CHARE_MAGIC;
 #endif
@@ -80,6 +85,7 @@ Chare::Chare(void) {
 Chare::Chare(CkMigrateMessage* m) {
   thishandle.onPE=CkMyPe();
   thishandle.objPtr=this;
+  this->ckInitialized=false;
 #if CMK_ERROR_CHECKING
   magic = 0;
 #endif
@@ -98,6 +104,8 @@ void Chare::CkEnableObjQ()
 }
 
 Chare::~Chare() {
+  CkCallstackUnwind(this);
+
 #ifndef CMK_CHARE_USE_PTR
 /*
   if (chareIdx >= 0 && chareIdx < CpvAccess(chare_objs).size() && CpvAccess(chare_objs)[chareIdx] == this) 
@@ -132,6 +140,7 @@ void Chare::pup(PUP::er &p)
   p(chareIdx);
   if (chareIdx != -1) thishandle.objPtr=(void*)(CmiIntPtr)chareIdx;
 #endif
+  p(ckInitialized);
 #if CMK_ERROR_CHECKING
   p(magic);
 #endif
@@ -154,10 +163,35 @@ void Chare::ckDebugPup(PUP::er &p) {
   pup(p);
 }
 
+using CkThreadListener = struct CthThreadListener;
+
+struct CkChareThreadListener: public CkThreadListener {
+  Chare *obj;
+  CkChareThreadListener(Chare *ch): obj(ch) {}
+};
+
+static void CkChareThreadListener_suspend(CkThreadListener *l) {
+  CkCallstackPop(((CkChareThreadListener *)l)->obj);
+}
+
+static void CkChareThreadListener_resume(CkThreadListener *l) {
+  CkCallstackPush(((CkChareThreadListener *)l)->obj);
+}
+
+static void CkChareThreadListener_free(CkThreadListener *l) {
+  delete (CkChareThreadListener *)l;
+}
+
 /// This method is called before starting a [threaded] entry method.
 void Chare::CkAddThreadListeners(CthThread th, void *msg) {
   CthSetThreadID(th, thishandle.onPE, (int)(((char *)thishandle.objPtr)-(char *)0), 0);
   traceAddThreadListeners(th, UsrToEnv(msg));
+
+  auto *l = new CkChareThreadListener(this);
+  l->suspend = CkChareThreadListener_suspend;
+  l->resume = CkChareThreadListener_resume;
+  l->free = CkChareThreadListener_free;
+  CthAddListener(th, l);
 }
 
 void CkMessage::ckDebugPup(PUP::er &p,void *msg) {
@@ -360,9 +394,8 @@ void CProxy::pup(PUP::er &p) {
 
       // create a dummy object for calling DelegatePointerPup
       int objId = _entryTable[migCtor]->chareIdx; 
-      size_t objSize = _chareTable[objId]->size;
-      void *obj = malloc(objSize); 
-      _entryTable[migCtor]->call(NULL, obj); 
+      auto *obj = CkAllocateChare(objId); 
+      CkInvokeEP(obj, migCtor, NULL);
       delegatedPtr = static_cast<CkDelegateMgr *> (obj)
         ->DelegatePointerPup(p, delegatedPtr);           
       free(obj);
@@ -539,6 +572,85 @@ int CkGetArgc(void) {
 	return CmiGetArgc(CkpvAccess(Ck_argv));
 }
 
+Chare *CkActiveObj(void) {
+  auto &objs = *(&CkpvAccess(runningObjs));
+  if (objs.empty()) {
+    return nullptr;
+  } else {
+    return objs.back();
+  }
+}
+
+inline void _pushObj(Chare *obj) {
+  CkpvAccess(runningObjs).emplace_back(obj);
+}
+
+inline Chare *_popObj(void) {
+  auto &objs = *(&CkpvAccess(runningObjs));
+  if (objs.empty()) {
+    return nullptr;
+  } else {
+    auto *obj = objs.back();
+    objs.pop_back();
+    return obj;
+  }
+}
+
+inline void _ckStartTiming(void) {
+#if CMK_LBDB_ON
+  auto *active = CkActiveLocRec();
+  if (active) active->startTiming();
+#endif
+}
+
+inline void _ckStopTiming(void) {
+#if CMK_LBDB_ON
+  auto *active = CkActiveLocRec();
+  if (active) active->stopTiming();
+#endif
+}
+
+// puts ( obj ) on the stack (and manages timing)
+void CkCallstackPush(Chare *obj) {
+  _ckStopTiming();    // suspend timing of the previous obj
+  _pushObj(obj);      // push the current object onto the stack
+  _ckStartTiming();   // start timing the current obj
+}
+
+// removes all instances of ( obj ) from the stack
+void CkCallstackUnwind(Chare *obj) {
+  CkAssertMsg(obj != nullptr, "expected a valid object!");
+  auto &objs = *(&CkpvAccess(runningObjs));
+  auto start = std::begin(objs);
+  auto end = std::end(objs);
+  // ensures that all copies of the object are null'd
+  while (end != (start = std::find(start, end, obj))) {
+    *start = nullptr;
+    start += 1;                 // avoids redundant checks!
+  }
+  obj->ckInitialized = false;   // proactively prevents failures
+}
+
+// pops ( obj ) from the stack (and manages timing)
+void CkCallstackPop(Chare *obj) {
+  _ckStopTiming();        // stop timing the current obj
+  auto *popd = _popObj(); // pop it from the stack
+  CkAssertMsg(!popd || popd == obj, "object tracking mismatch");
+  _ckStartTiming();       // resume timing of the previous obj
+}
+
+#if CMK_LBDB_ON
+CkLocRec *CkActiveLocRec(void) {
+  auto *obj = CkActiveObj();
+  if (obj && obj->ckInitialized) {
+    auto *mgt = dynamic_cast<CkMigratable *>(obj);
+    return mgt ? mgt->getCkLocRec() : nullptr;
+  } else {
+    return nullptr;
+  }
+}
+#endif
+
 /******************** Basic support *****************/
 void CkDeliverMessageFree(int epIdx,void *msg,void *obj)
 {
@@ -546,7 +658,7 @@ void CkDeliverMessageFree(int epIdx,void *msg,void *obj)
   CpdBeforeEp(epIdx, obj, msg);
 #endif    
   const auto msgtype = (msg == NULL) ? LAST_CK_ENVELOPE_TYPE : UsrToEnv(msg)->getMsgtype();
-  _entryTable[epIdx]->call(msg, obj);
+  CkInvokeEP((Chare *)obj, epIdx, msg);
 #if CMK_CHARMDEBUG
   CpdAfterEp(epIdx);
 #endif
@@ -580,7 +692,7 @@ void CkDeliverMessageReadonly(int epIdx,const void *msg,void *obj)
 #if CMK_CHARMDEBUG
   CpdBeforeEp(epIdx, obj, (void*)msg);
 #endif
-  _entryTable[epIdx]->call(deliverMsg, obj);
+  CkInvokeEP((Chare *)obj, epIdx, deliverMsg);
 #if CMK_CHARMDEBUG
   CpdAfterEp(epIdx);
 #endif
@@ -659,9 +771,7 @@ void CkCreateChare(int cIdx, int eIdx, void *msg, CkChareID *pCid, int destPE)
 void CkCreateLocalGroup(CkGroupID groupID, int epIdx, envelope *env)
 {
   int gIdx = _entryTable[epIdx]->chareIdx;
-  void *obj = malloc(_chareTable[gIdx]->size);
-  _MEMCHECK(obj);
-  setMemoryTypeChare(obj);
+  void *obj = CkAllocateChare(gIdx);
   CmiImmediateLock(CkpvAccess(_groupTableImmLock));
   CkpvAccess(_groupTable)->find(groupID).setObj(obj);
   CkpvAccess(_groupTable)->find(groupID).setcIdx(gIdx);
@@ -696,10 +806,7 @@ void CkCreateLocalGroup(CkGroupID groupID, int epIdx, envelope *env)
 void CkCreateLocalNodeGroup(CkGroupID groupID, int epIdx, envelope *env)
 {
   int gIdx = _entryTable[epIdx]->chareIdx;
-  size_t objSize=_chareTable[gIdx]->size;
-  void *obj = malloc(objSize);
-  _MEMCHECK(obj);
-  setMemoryTypeChare(obj);
+  void *obj = CkAllocateChare(gIdx);
   CkpvAccess(_currentGroup) = groupID;
 
 // Now that the NodeGroup is created, add it to the table.
@@ -858,17 +965,24 @@ CkGroupID CkCreateNodeGroup(int cIdx, int eIdx, void *msg)
   return gid;
 }
 
+Chare *CkAllocateChare(const int &objId) {
+  const auto &objSize = _chareTable[objId]->size;
+  auto *obj = (Chare *)malloc(objSize);
+  _MEMCHECK(obj);
+  setMemoryTypeChare(obj);
+  obj->ckInitialized = false;
+  return obj;
+}
+
 static inline void *_allocNewChare(envelope *env, int &idx)
 {
   int chareIdx = _entryTable[env->getEpIdx()]->chareIdx;
-  void *tmp=malloc(_chareTable[chareIdx]->size);
-  _MEMCHECK(tmp);
+  auto *tmp = CkAllocateChare(chareIdx);
 #ifndef CMK_CHARE_USE_PTR
   CkpvAccess(chare_objs).push_back(tmp);
   CkpvAccess(chare_types).push_back(chareIdx);
   idx = CkpvAccess(chare_objs).size()-1;
 #endif
-  setMemoryTypeChare(tmp);
   return tmp;
 }
 
@@ -1043,17 +1157,6 @@ IrrGroup *lookupGroupAndBufferIfNotThere(CkCoreState *ck,envelope *env,const CkG
 
 static inline void _deliverForBocMsg(CkCoreState *ck,int epIdx,envelope *env,IrrGroup *obj)
 {
-#if CMK_LBDB_ON
-  // if there is a running obj being measured, stop it temporarily
-  LDObjHandle objHandle;
-  int objstopped = 0;
-  LBManager *the_lbmgr = (LBManager *)CkLocalBranch(_lbmgr);
-  if (the_lbmgr->RunningObject(&objHandle)) {
-    objstopped = 1;
-    the_lbmgr->ObjectStop(objHandle);
-  }
-#endif
-
 #if CMK_SMP
   unsigned short int msgType = CMI_ZC_MSGTYPE(env); // store msgType as msg could be freed
 #endif
@@ -1066,9 +1169,6 @@ static inline void _deliverForBocMsg(CkCoreState *ck,int epIdx,envelope *env,Irr
   }
 #endif
 
-#if CMK_LBDB_ON
-  if (objstopped) the_lbmgr->ObjectStart(objHandle);
-#endif
   _STATS_RECORD_PROCESS_BRANCH_1();
 }
 

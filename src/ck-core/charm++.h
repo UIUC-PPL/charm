@@ -222,6 +222,7 @@ class Chare {
     CkObjectMsgQ objQ;                // object message queue
 #endif
   public:
+    bool ckInitialized;
 #if CMK_ERROR_CHECKING
     int magic;
 #endif
@@ -270,6 +271,19 @@ class Chare {
     }
 #endif
 };
+
+void CkCallstackPop(Chare *obj);
+void CkCallstackPush(Chare *obj);
+void CkCallstackUnwind(Chare *obj);
+
+Chare *CkActiveObj(void);
+Chare *CkAllocateChare(const int &objId);
+
+static inline void CkInvokeEP(Chare *obj, const int &epIdx, void *msg) {
+  CkCallstackPush(obj);
+  _entryTable[epIdx]->call(msg, obj);
+  CkCallstackPop(obj);
+}
 
 #if CMK_HAS_IS_CONSTRUCTIBLE
 #include <type_traits>

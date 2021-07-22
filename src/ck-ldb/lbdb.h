@@ -65,6 +65,10 @@ struct LDOMHandle {
   LDOMid id;
   int handle;		// index to LBOM
   inline void pup(PUP::er &p);
+
+  bool operator==(const LDOMHandle &obj) const {
+    return (this->handle == obj.handle && this->id == obj.id);
+  }
 };
 
 /* LDObjKey uniquely identify one object */
@@ -98,6 +102,13 @@ struct LDObjHandle {
   inline const LDOMid &omID() const { return omhandle.id; }
   inline const CmiUInt8 &objID() const { return id; }
   inline void pup(PUP::er &p);
+  
+  inline bool operator==(const LDObjHandle &obj) const {
+    return (this == &obj) || ((this->id == obj.id) &&
+      (this->handle == obj.handle) &&
+      (this->omhandle == obj.omhandle)
+    );
+  }
 };
 
 /* defines user data layout  */

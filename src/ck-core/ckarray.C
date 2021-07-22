@@ -1020,11 +1020,7 @@ ArrayElement* CkArray::allocate(int elChareType, CkMessage* msg, bool fromMigrat
   init.fromMigration = fromMigration;
 
   // Build the element
-  size_t elSize = _chareTable[elChareType]->size;
-  ArrayElement* elem = (ArrayElement*)malloc(elSize);
-  if (elem != NULL)
-    setMemoryTypeChare(elem);
-  return elem;
+  return (ArrayElement *)CkAllocateChare(elChareType);
 }
 
 void CkArray::insertElement(CkMarshalledMessage&& m, const CkArrayIndex& idx,

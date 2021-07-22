@@ -228,10 +228,6 @@ class TCharm: public CBase_TCharm
 	inline int getElement() const noexcept {return threadInfo.thisElement;}
 	inline int getNumElements() const noexcept {return threadInfo.numElements;}
 
-	//Start/stop load balancer measurements
-	inline void stopTiming() noexcept {ckStopTiming();}
-	inline void startTiming() noexcept {ckStartTiming();}
-
 	//Block our thread, run the scheduler, and come back
 	CMI_WARN_UNUSED_RESULT TCharm * schedule() noexcept {
 		DBG("thread schedule");
@@ -248,7 +244,8 @@ class TCharm: public CBase_TCharm
 		if (tcharm_nothreads)
 			CkAbort("Cannot make blocking calls using +tcharm_nothreads!\n");
 		#endif
-		stopTiming();
+		// this should be triggered via array listeners?
+		// stopTiming();
 		isStopped=true;
 		DBG("thread suspended");
 
@@ -266,7 +263,8 @@ class TCharm: public CBase_TCharm
 		TCharm *dis=TCharm::get();
 		TCharm::activateThread();
 		dis->isStopped=false;
-		dis->startTiming();
+		// this should be triggered via array listeners?
+		// dis->startTiming();
 		return dis;
 	}
 

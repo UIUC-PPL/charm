@@ -63,7 +63,7 @@ public:
 public:
   inline LBManager *getLBMgr(void) const {return lbmgr;}
   inline MetaBalancer *getMetaBalancer(void) const {return the_metalb;}
-  inline LDObjHandle getLdHandle() const{return ldHandle;}
+  inline const LDObjHandle& getLdHandle() const{ return ldHandle; }
   static void staticMigrate(LDObjHandle h, int dest);
   static void staticMetaLBResumeWaitingChares(LDObjHandle h, int lb_ideal_period);
   static void staticMetaLBCallLBOnChares(LDObjHandle h);

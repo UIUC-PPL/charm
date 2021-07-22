@@ -290,8 +290,6 @@ class LBManager : public CBase_LBManager
   void CollectStatsOn(void) { lbdb_obj->CollectStatsOn(); }
   void CollectStatsOff(void) { lbdb_obj->CollectStatsOff(); }
   bool StatsOn(void) { return lbdb_obj->StatsOn(); }
-  int RunningObject(LDObjHandle* _o) const { return lbdb_obj->RunningObject(_o); }
-  const LDObjHandle* RunningObject() { return lbdb_obj->RunningObject(); }
   void ObjTime(LDObjHandle h, double walltime, double cputime)
   {
     lbdb_obj->ObjTime(h, walltime, cputime);
@@ -566,15 +564,8 @@ class SystemLoad
   LBManager* lbmgr;
 
  public:
-  SystemLoad()
-  {
-    lbmgr = LBManagerObj();
-    objHandle = lbmgr->RunningObject();
-    if (objHandle != NULL)
-    {
-      lbmgr->ObjectStop(*objHandle);
-    }
-  }
+  SystemLoad();
+
   ~SystemLoad()
   {
     if (objHandle) lbmgr->ObjectStart(*objHandle);

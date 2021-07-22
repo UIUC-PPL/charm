@@ -237,9 +237,26 @@ extern bool useNodeBlkMapping;
 extern int quietMode;
 extern int quietModeRequested;
 
-void CkCallWhenIdle(int epIdx, void* obj) {
-  auto fn = reinterpret_cast<CcdVoidFn>(_entryTable[epIdx]->call);
-  CcdCallOnCondition(CcdPROCESSOR_STILL_IDLE, fn, obj);
+class CkWhenIdleRecord {
+  int epIdx_;
+  Chare *obj_;
+
+ public:
+  CkWhenIdleRecord(const int &epIdx, void *obj)
+  : epIdx_(epIdx), obj_(static_cast<Chare *>(obj)) {}
+
+  static void onIdle(CkWhenIdleRecord *self, double curWallTime) {
+    CkCallstackPush(self->obj_);
+    ((CcdVoidFn)_entryTable[self->epIdx_]->call)(self->obj_, curWallTime);
+    CkCallstackPop(self->obj_);
+    delete self;
+  }
+};
+
+void CkCallWhenIdle(int epIdx, void *obj) {
+  auto *record = new CkWhenIdleRecord(epIdx, obj);
+  CcdCallOnCondition(CcdPROCESSOR_STILL_IDLE,
+                    (CcdVoidFn)CkWhenIdleRecord::onIdle, record);
 }
 
 // Modules are required to register command line opts they will parse. These
@@ -1678,18 +1695,17 @@ void _initCharm(int unused_argc, char **argv)
 
 		for(i=0;i<nMains;i++)  /* Create all mainchares */
 		{
-			size_t size = _chareTable[_mainTable[i]->chareIdx]->size;
-			void *obj = malloc(size);
-			_MEMCHECK(obj);
+			const auto &chareIdx = _mainTable[i]->chareIdx;
+			auto *obj = CkAllocateChare(chareIdx);
 			_mainTable[i]->setObj(obj);
 			CkpvAccess(_currentChare) = obj;
 			CkpvAccess(_currentChareType) = _mainTable[i]->chareIdx;
 			CkArgMsg *msg = (CkArgMsg *)CkAllocMsg(0, sizeof(CkArgMsg), 0, GroupDepNum{});
 			msg->argc = CmiGetArgc(argv);
 			msg->argv = argv;
-      quietMode = 0;  // allow printing any mainchare user messages
-			_entryTable[_mainTable[i]->entryIdx]->call(msg, obj);
-      if (quietModeRequested) quietMode = 1;
+			quietMode = 0;  // allow printing any mainchare user messages
+			CkInvokeEP(obj, _mainTable[i]->entryIdx, msg);
+			if (quietModeRequested) quietMode = 1;
 		}
                 _mainDone = true;
 

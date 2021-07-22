@@ -440,18 +440,17 @@ void CkPupMainChareData(PUP::er &p, CkArgMsg *args)
 	int nMains=_mainTable.size();
 	DEBCHK("[%d] CkPupMainChareData %s: nMains = %d\n", CkMyPe(),p.typeString(),nMains);
 	for(int i=0;i<nMains;i++){  /* Create all mainchares */
-		ChareInfo *entry = _chareTable[_mainTable[i]->chareIdx];
+		const auto& chareIdx = _mainTable[i]->chareIdx;
+		ChareInfo *entry = _chareTable[chareIdx];
 		int entryMigCtor = entry->getMigCtor();
 		if(entryMigCtor!=-1) {
 			Chare* obj;
 			if (p.isUnpacking()) {
-				int size = entry->size;
-				DEBCHK("MainChare PUP'ed: name = %s, idx = %d, size = %d\n", entry->name, i, size);
-				obj = (Chare*)malloc(size);
-				_MEMCHECK(obj);
+				DEBCHK("MainChare PUP'ed: name = %s, idx = %d, size = %d\n", entry->name, i, entry->size);
+				obj = CkAllocateChare(chareIdx);
 				_mainTable[i]->setObj(obj);
 				//void *m = CkAllocSysMsg();
-				_entryTable[entryMigCtor]->call(args, obj);
+				CkInvokeEP(obj, entryMigCtor, args);
 			}
 			else 
 			 	obj = (Chare *)_mainTable[i]->getObj();

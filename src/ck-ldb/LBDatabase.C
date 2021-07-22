@@ -1,14 +1,26 @@
 #include "LBDatabase.h"
 #include "cksyncbarrier.h"
 
+#include "ck.h"
+
 LBDatabase::LBDatabase() {
   omCount = omsRegistering = 0;
   obj_walltime = 0;
   statsAreOn = false;
-  obj_running = false;
   objsEmptyHead = -1;
   commTable = new LBCommTable;
   syncBarrier = CkSyncBarrier::object();
+}
+
+void LBDatabase::CollectStatsOn(void){
+  if (!StatsOn()) {
+    auto *activeRec = CkActiveLocRec();
+    if (activeRec) {
+      const LDObjHandle &runObj = activeRec->getLdHandle();
+      LbObj(runObj)->StartTimer();
+    }
+    TurnStatsOn();
+  }
 }
 
 LDOMHandle LBDatabase::RegisterOM(LDOMid userID, void* userPtr, LDCallbacks cb) {
@@ -121,8 +133,9 @@ void LBDatabase::Send(const LDOMHandle &destOM, const CmiUInt8 &destID, unsigned
   if (force || (StatsOn() && _lb_args.traceComm())) {
     LBCommData* item_ptr;
 
-    if (obj_running) {
-      const LDObjHandle &runObj = RunningObj();
+    auto *activeRec = CkActiveLocRec();
+    if (activeRec) {
+      const LDObjHandle &runObj = activeRec->getLdHandle();
 
       // Don't record self-messages from an object to an object
       if (runObj.omhandle.id == destOM.id
@@ -148,8 +161,10 @@ void LBDatabase::MulticastSend(const LDOMHandle &destOM, CmiUInt8 *destIDs, int 
 #if CMK_LBDB_ON
   if (StatsOn() && _lb_args.traceComm()) {
     LBCommData* item_ptr;
-    if (obj_running) {
-      const LDObjHandle &runObj = RunningObj();
+
+    auto *activeRec = CkActiveLocRec();
+    if (activeRec) {
+      const LDObjHandle &runObj = activeRec->getLdHandle();
 
       LBCommData item(runObj, destOM.id, destIDs, nDests);
       item_ptr = commTable->HashInsertUnique(item);
