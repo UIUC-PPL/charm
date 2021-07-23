@@ -390,6 +390,7 @@ FLINKAGE void FTN_NAME(TCHARM_USER_SETUP,tcharm_user_setup)(void);
 
 /* For internal use only: semantics subject to change. */
 CLINKAGE void TCHARM_Node_Setup(int numelements);
+CLINKAGE void TCHARM_Element_Setup(int myelement, int numelements, CmiIsomallocContext ctx);
 
 #endif
 

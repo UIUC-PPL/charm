@@ -11678,6 +11678,10 @@ void TCHARM_Node_Setup(int numelements)
 {
   AMPI_Node_Setup(numelements);
 }
+void TCHARM_Element_Setup(int myelement, int numelements, CmiIsomallocContext ctx)
+{
+  AMPI_Rank_Setup(myelement, numelements, ctx);
+}
 
 #if defined _WIN32 || CMK_DLL_USE_DLOPEN
 static ampi_maintype AMPI_Main_Get_C(SharedObject myexe)

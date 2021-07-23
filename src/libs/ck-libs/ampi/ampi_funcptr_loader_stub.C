@@ -1,13 +1,12 @@
 
 #include "ampi_funcptr_loader.h"
 
-void AMPI_FuncPtr_Pack(struct AMPI_FuncPtr_Transport * funcptrs)
+int AMPI_FuncPtr_Pack(struct AMPI_FuncPtr_Transport *, size_t)
 {
-  (void)funcptrs;
+  return 0;
 }
 
-AMPI_FuncPtr_Unpack_t AMPI_FuncPtr_Unpack_Locate(SharedObject myexe)
+AMPI_FuncPtr_Unpack_t AMPI_FuncPtr_Unpack_Locate(SharedObject)
 {
-  (void)myexe;
   return nullptr;
 }

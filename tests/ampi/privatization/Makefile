@@ -18,6 +18,7 @@ VARIANTS := \
   roseomptlsglobals \
   fsglobals \
   pipglobals \
+  pieglobals \
 
 PHONIES := \
   everything \
@@ -31,7 +32,7 @@ ifeq (1,$(CMK_SUPPORTS_FSGLOBALS))
   CANDIDATES += fsglobals
 endif
 ifeq (1,$(CMK_SUPPORTS_PIPGLOBALS))
-  CANDIDATES += pipglobals
+  CANDIDATES += pipglobals pieglobals
 endif
 
 
@@ -48,6 +49,7 @@ FEATURES_cxx_tlsglobals := migration staticvars sharedlib
 FEATURES_cxx_roseomptlsglobals := migration staticvars sharedlib
 FEATURES_cxx_fsglobals := staticvars
 FEATURES_cxx_pipglobals := staticvars sharedlib
+FEATURES_cxx_pieglobals := migration staticvars sharedlib
 
 
 # Determine which methods to test in the current environment and target.

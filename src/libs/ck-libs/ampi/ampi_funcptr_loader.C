@@ -9,8 +9,11 @@
 #include <stdio.h>
 #include <string.h>
 
-void AMPI_FuncPtr_Pack(struct AMPI_FuncPtr_Transport * funcptrs)
+int AMPI_FuncPtr_Pack(struct AMPI_FuncPtr_Transport * funcptrs, size_t size)
 {
+  if (sizeof(*funcptrs) != size)
+    return 1;
+
 #define AMPI_CUSTOM_FUNC(return_type, function_name, ...) \
     funcptrs->function_name = &function_name;
 #if AMPI_HAVE_PMPI
@@ -27,6 +30,8 @@ void AMPI_FuncPtr_Pack(struct AMPI_FuncPtr_Transport * funcptrs)
 #undef AMPI_FUNC
 #undef AMPI_FUNC_NOIMPL
 #undef AMPI_CUSTOM_FUNC
+
+  return 0;
 }
 
 AMPI_FuncPtr_Unpack_t AMPI_FuncPtr_Unpack_Locate(SharedObject myexe)
