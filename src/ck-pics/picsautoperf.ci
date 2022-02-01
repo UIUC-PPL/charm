@@ -25,7 +25,7 @@ module TraceAutoPerf {
     entry void registerPerfGoal(int goalIndex);
     entry void setAutoPerfDoneCallback(CkCallback cb);
     entry void setUserDefinedGoal(double value);
-    entry void setNumOfPhases(int num, char names[num*40]);
+    entry void setNumOfPhases(int num, char names[num*40], CkCallback cb);
     entry [expedited,inline] void startStep();
     entry [expedited,inline] void endStep(bool fromGlobal, int pe, int incSteps);
     entry [expedited,inline] void endPhaseAndStep(bool fromGlobal, int pe);

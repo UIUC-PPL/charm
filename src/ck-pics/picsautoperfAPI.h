@@ -7,8 +7,26 @@
     extern "C" {
 #endif
 
+struct PicsConfig {
+  bool fromGlobal;
+  int numPhases;
+  int collectionMode;
+  int evaluationMode;
+  int warmupSteps;
+  int pauseSteps;
+  char **phaseNames;
+  PicsConfig() {
+    fromGlobal = true;
+    numPhases = PICS_INVALID;
+    collectionMode = PICS_INVALID;
+    evaluationMode = PICS_INVALID;
+    warmupSteps = PICS_INVALID;
+    pauseSteps = PICS_INVALID;
+    phaseNames = nullptr;
+  }
+};
+
 void PICS_registerAutoPerfDone(CkCallback cb, int frameworkShouldAdvancePhase);
-void PICS_setNumOfPhases(bool fromGlobal, int num, char *names[]);
 
 void PICS_startStep(bool fromGlobal);
 void PICS_endStep(bool fromGlobal);
@@ -24,17 +42,11 @@ void PICS_autoPerfRunResumeCb(CkCallback cb);
 
 void PICS_SetAutoTimer();
 
-void PICS_setCollectionMode(int m) ;
-
-void PICS_setEvaluationMode(int m) ;
-
 void PICS_markLDBStart(int appStep);
 
 void PICS_markLDBEnd();
 
-void PICS_setWarmUpSteps(int steps);
-
-void PICS_setPauseSteps(int steps);
+void PICS_configure(PicsConfig config, CkCallback cb);
 
 #ifdef __cplusplus 
     }
