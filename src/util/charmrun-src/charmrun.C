@@ -2363,7 +2363,7 @@ static int req_handle_realloc(ChMessage *msg, SOCKET fd)
   const char **ret = (const char **) malloc(sizeof(char *) * (saved_argc + additional_args));
 
   int newP = ChMessageInt(*(ChMessageInt_t *)msg->data);
-  int oldP = arg_requested_pes;
+  int oldP = pe_to_process_map.size();
   printf("Charmrun> newp =  %d oldP = %d \n \n \n", newP, oldP);
 
   for (int i = 0; i < saved_argc; i++) {
