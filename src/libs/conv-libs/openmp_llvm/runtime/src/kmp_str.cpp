@@ -4,10 +4,9 @@
 
 //===----------------------------------------------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is dual licensed under the MIT and the University of Illinois Open
-// Source Licenses. See LICENSE.txt for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -78,7 +77,7 @@ void __kmp_str_buf_clear(kmp_str_buf_t *buffer) {
   KMP_STR_BUF_INVARIANT(buffer);
 } // __kmp_str_buf_clear
 
-void __kmp_str_buf_reserve(kmp_str_buf_t *buffer, int size) {
+void __kmp_str_buf_reserve(kmp_str_buf_t *buffer, size_t size) {
   KMP_STR_BUF_INVARIANT(buffer);
   KMP_DEBUG_ASSERT(size >= 0);
 
@@ -132,24 +131,40 @@ void __kmp_str_buf_free(kmp_str_buf_t *buffer) {
   KMP_STR_BUF_INVARIANT(buffer);
 } // __kmp_str_buf_free
 
-void __kmp_str_buf_cat(kmp_str_buf_t *buffer, char const *str, int len) {
+void __kmp_str_buf_cat(kmp_str_buf_t *buffer, char const *str, size_t len) {
   KMP_STR_BUF_INVARIANT(buffer);
   KMP_DEBUG_ASSERT(str != NULL);
   KMP_DEBUG_ASSERT(len >= 0);
+
   __kmp_str_buf_reserve(buffer, buffer->used + len + 1);
   KMP_MEMCPY(buffer->str + buffer->used, str, len);
   buffer->str[buffer->used + len] = 0;
-  buffer->used += len;
+  __kmp_type_convert(buffer->used + len, &(buffer->used));
   KMP_STR_BUF_INVARIANT(buffer);
 } // __kmp_str_buf_cat
 
-void __kmp_str_buf_vprint(kmp_str_buf_t *buffer, char const *format,
-                          va_list args) {
+void __kmp_str_buf_catbuf(kmp_str_buf_t *dest, const kmp_str_buf_t *src) {
+  KMP_DEBUG_ASSERT(dest);
+  KMP_DEBUG_ASSERT(src);
+  KMP_STR_BUF_INVARIANT(dest);
+  KMP_STR_BUF_INVARIANT(src);
+  if (!src->str || !src->used)
+    return;
+  __kmp_str_buf_reserve(dest, dest->used + src->used + 1);
+  KMP_MEMCPY(dest->str + dest->used, src->str, src->used);
+  dest->str[dest->used + src->used] = 0;
+  dest->used += src->used;
+  KMP_STR_BUF_INVARIANT(dest);
+} // __kmp_str_buf_catbuf
+
+// Return the number of characters written
+int __kmp_str_buf_vprint(kmp_str_buf_t *buffer, char const *format,
+                         va_list args) {
+  int rc;
   KMP_STR_BUF_INVARIANT(buffer);
 
   for (;;) {
     int const free = buffer->size - buffer->used;
-    int rc;
     int size;
 
     // Try to format string.
@@ -198,13 +213,17 @@ void __kmp_str_buf_vprint(kmp_str_buf_t *buffer, char const *format,
 
   KMP_DEBUG_ASSERT(buffer->size > 0);
   KMP_STR_BUF_INVARIANT(buffer);
+  return rc;
 } // __kmp_str_buf_vprint
 
-void __kmp_str_buf_print(kmp_str_buf_t *buffer, char const *format, ...) {
+// Return the number of characters written
+int __kmp_str_buf_print(kmp_str_buf_t *buffer, char const *format, ...) {
+  int rc;
   va_list args;
   va_start(args, format);
-  __kmp_str_buf_vprint(buffer, format, args);
+  rc = __kmp_str_buf_vprint(buffer, format, args);
   va_end(args);
+  return rc;
 } // __kmp_str_buf_print
 
 /* The function prints specified size to buffer. Size is expressed using biggest
@@ -233,7 +252,7 @@ void __kmp_str_fname_init(kmp_str_fname_t *fname, char const *path) {
     char *base = NULL; // Pointer to the beginning of basename.
     fname->path = __kmp_str_format("%s", path);
     // Original code used strdup() function to copy a string, but on Windows* OS
-    // Intel(R) 64 it causes assertioon id debug heap, so I had to replace
+    // Intel(R) 64 it causes assertion id debug heap, so I had to replace
     // strdup with __kmp_str_format().
     if (KMP_OS_WINDOWS) {
       __kmp_str_replace(fname->path, '\\', '/');
@@ -242,7 +261,7 @@ void __kmp_str_fname_init(kmp_str_fname_t *fname, char const *path) {
     slash = strrchr(fname->dir, '/');
     if (KMP_OS_WINDOWS &&
         slash == NULL) { // On Windows* OS, if slash not found,
-      char first = TOLOWER(fname->dir[0]); // look for drive.
+      char first = (char)TOLOWER(fname->dir[0]); // look for drive.
       if ('a' <= first && first <= 'z' && fname->dir[1] == ':') {
         slash = &fname->dir[1];
       }
@@ -255,9 +274,9 @@ void __kmp_str_fname_init(kmp_str_fname_t *fname, char const *path) {
 } // kmp_str_fname_init
 
 void __kmp_str_fname_free(kmp_str_fname_t *fname) {
-  __kmp_str_free(CCAST(char const **, &fname->path));
-  __kmp_str_free(CCAST(char const **, &fname->dir));
-  __kmp_str_free(CCAST(char const **, &fname->base));
+  __kmp_str_free(&fname->path);
+  __kmp_str_free(&fname->dir);
+  __kmp_str_free(&fname->base);
 } // kmp_str_fname_free
 
 int __kmp_str_fname_match(kmp_str_fname_t const *fname, char const *pattern) {
@@ -277,7 +296,54 @@ int __kmp_str_fname_match(kmp_str_fname_t const *fname, char const *pattern) {
   return dir_match && base_match;
 } // __kmp_str_fname_match
 
-kmp_str_loc_t __kmp_str_loc_init(char const *psource, int init_fname) {
+// Get the numeric fields from source location string.
+// For clang these fields are Line/Col of the start of the construct.
+// For icc these are LineBegin/LineEnd of the construct.
+// Function is fast as it does not duplicate string (which involves memory
+// allocation), and parses the string in place.
+void __kmp_str_loc_numbers(char const *Psource, int *LineBeg,
+                           int *LineEndOrCol) {
+  char *Str;
+  KMP_DEBUG_ASSERT(LineBeg);
+  KMP_DEBUG_ASSERT(LineEndOrCol);
+  // Parse Psource string ";file;func;line;line_end_or_column;;" to get
+  // numbers only, skipping string fields "file" and "func".
+
+  // Find 1-st semicolon.
+  KMP_DEBUG_ASSERT(Psource);
+#ifdef __cplusplus
+  Str = strchr(CCAST(char *, Psource), ';');
+#else
+  Str = strchr(Psource, ';');
+#endif
+  // Check returned pointer to see if the format of Psource is broken.
+  if (Str) {
+    // Find 2-nd semicolon.
+    Str = strchr(Str + 1, ';');
+  }
+  if (Str) {
+    // Find 3-rd semicolon.
+    Str = strchr(Str + 1, ';');
+  }
+  if (Str) {
+    // Read begin line number.
+    *LineBeg = atoi(Str + 1);
+    // Find 4-th semicolon.
+    Str = strchr(Str + 1, ';');
+  } else {
+    // Broken format of input string, cannot read the number.
+    *LineBeg = 0;
+  }
+  if (Str) {
+    // Read end line or column number.
+    *LineEndOrCol = atoi(Str + 1);
+  } else {
+    // Broken format of input string, cannot read the number.
+    *LineEndOrCol = 0;
+  }
+}
+
+kmp_str_loc_t __kmp_str_loc_init(char const *psource, bool init_fname) {
   kmp_str_loc_t loc;
 
   loc._bulk = NULL;
@@ -325,7 +391,7 @@ kmp_str_loc_t __kmp_str_loc_init(char const *psource, int init_fname) {
 
 void __kmp_str_loc_free(kmp_str_loc_t *loc) {
   __kmp_str_fname_free(&loc->fname);
-  __kmp_str_free(CCAST(const char **, &(loc->_bulk)));
+  __kmp_str_free(&(loc->_bulk));
   loc->file = NULL;
   loc->func = NULL;
 } // kmp_str_loc_free
@@ -424,9 +490,9 @@ char *__kmp_str_format( // Allocated string.
   return buffer;
 } // func __kmp_str_format
 
-void __kmp_str_free(char const **str) {
+void __kmp_str_free(char **str) {
   KMP_DEBUG_ASSERT(str != NULL);
-  KMP_INTERNAL_FREE(CCAST(char *, *str));
+  KMP_INTERNAL_FREE(*str);
   *str = NULL;
 } // func __kmp_str_free
 
@@ -452,7 +518,8 @@ int __kmp_str_match_false(char const *data) {
   int result =
       __kmp_str_match("false", 1, data) || __kmp_str_match("off", 2, data) ||
       __kmp_str_match("0", 1, data) || __kmp_str_match(".false.", 2, data) ||
-      __kmp_str_match(".f.", 2, data) || __kmp_str_match("no", 1, data);
+      __kmp_str_match(".f.", 2, data) || __kmp_str_match("no", 1, data) ||
+      __kmp_str_match("disabled", 0, data);
   return result;
 } // __kmp_str_match_false
 
@@ -460,7 +527,8 @@ int __kmp_str_match_true(char const *data) {
   int result =
       __kmp_str_match("true", 1, data) || __kmp_str_match("on", 2, data) ||
       __kmp_str_match("1", 1, data) || __kmp_str_match(".true.", 2, data) ||
-      __kmp_str_match(".t.", 2, data) || __kmp_str_match("yes", 1, data);
+      __kmp_str_match(".t.", 2, data) || __kmp_str_match("yes", 1, data) ||
+      __kmp_str_match("enabled", 0, data);
   return result;
 } // __kmp_str_match_true
 

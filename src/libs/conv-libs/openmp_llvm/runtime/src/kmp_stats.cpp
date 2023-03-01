@@ -4,10 +4,9 @@
 
 //===----------------------------------------------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is dual licensed under the MIT and the University of Illinois Open
-// Source Licenses. See LICENSE.txt for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -21,6 +20,7 @@
 #include <iomanip>
 #include <sstream>
 #include <stdlib.h> // for atexit
+#include <cmath>
 
 #define STRINGIZE2(x) #x
 #define STRINGIZE(x) STRINGIZE2(x)
@@ -67,9 +67,20 @@ static uint32_t statsPrinted = 0;
 // output interface
 static kmp_stats_output_module *__kmp_stats_global_output = NULL;
 
+double logHistogram::binMax[] = {1.e1l, 1.e2l, 1.e3l, 1.e4l, 1.e5l, 1.e6l,
+                                 1.e7l, 1.e8l, 1.e9l, 1.e10l, 1.e11l, 1.e12l,
+                                 1.e13l, 1.e14l, 1.e15l, 1.e16l, 1.e17l, 1.e18l,
+                                 1.e19l, 1.e20l, 1.e21l, 1.e22l, 1.e23l, 1.e24l,
+                                 1.e25l, 1.e26l, 1.e27l, 1.e28l, 1.e29l, 1.e30l,
+                                 // Always have infinity be the last value
+                                 std::numeric_limits<double>::infinity()};
+
 /* ************* statistic member functions ************* */
 
 void statistic::addSample(double sample) {
+  sample -= offset;
+  KMP_DEBUG_ASSERT(std::isfinite(sample));
+
   double delta = sample - meanVal;
 
   sampleCount = sampleCount + 1;
@@ -78,9 +89,14 @@ void statistic::addSample(double sample) {
 
   minVal = std::min(minVal, sample);
   maxVal = std::max(maxVal, sample);
+  if (collectingHist)
+    hist.addSample(sample);
 }
 
 statistic &statistic::operator+=(const statistic &other) {
+  if (other.sampleCount == 0)
+    return *this;
+
   if (sampleCount == 0) {
     *this = other;
     return *this;
@@ -104,6 +120,8 @@ statistic &statistic::operator+=(const statistic &other) {
   minVal = std::min(minVal, other.minVal);
   maxVal = std::max(maxVal, other.maxVal);
   sampleCount = newSampleCount;
+  if (collectingHist)
+    hist += other.hist;
 
   return *this;
 }
@@ -117,7 +135,7 @@ void statistic::scale(double factor) {
 }
 
 std::string statistic::format(char unit, bool total) const {
-  std::string result = formatSI(sampleCount, 9, ' ');
+  std::string result = formatSI((double)sampleCount, 9, ' ');
 
   if (sampleCount == 0) {
     result = result + std::string(", ") + formatSI(0.0, 9, unit);
@@ -138,10 +156,90 @@ std::string statistic::format(char unit, bool total) const {
   return result;
 }
 
+/* ************* histogram member functions ************* */
+
+// Lowest bin that has anything in it
+int logHistogram::minBin() const {
+  for (int i = 0; i < numBins; i++) {
+    if (bins[i].count != 0)
+      return i - logOffset;
+  }
+  return -logOffset;
+}
+
+// Highest bin that has anything in it
+int logHistogram::maxBin() const {
+  for (int i = numBins - 1; i >= 0; i--) {
+    if (bins[i].count != 0)
+      return i - logOffset;
+  }
+  return -logOffset;
+}
+
+// Which bin does this sample belong in ?
+uint32_t logHistogram::findBin(double sample) {
+  double v = std::fabs(sample);
+  // Simply loop up looking which bin to put it in.
+  // According to a micro-architect this is likely to be faster than a binary
+  // search, since
+  // it will only have one branch mis-predict
+  for (int b = 0; b < numBins - 1; b++)
+    if (binMax[b] > v)
+      return b;
+  return numBins - 1;
+}
+
+void logHistogram::addSample(double sample) {
+  if (sample == 0.0) {
+    zeroCount += 1;
+#ifdef KMP_DEBUG
+    _total++;
+    check();
+#endif
+    return;
+  }
+  KMP_DEBUG_ASSERT(std::isfinite(sample));
+  uint32_t bin = findBin(sample);
+  KMP_DEBUG_ASSERT(0 <= bin && bin < numBins);
+
+  bins[bin].count += 1;
+  bins[bin].total += sample;
+#ifdef KMP_DEBUG
+  _total++;
+  check();
+#endif
+}
+
+// This may not be the format we want, but it'll do for now
+std::string logHistogram::format(char unit) const {
+  std::stringstream result;
+
+  result << "Bin,                Count,     Total\n";
+  if (zeroCount) {
+    result << "0,              " << formatSI(zeroCount, 9, ' ') << ", ",
+        formatSI(0.0, 9, unit);
+    if (count(minBin()) == 0)
+      return result.str();
+    result << "\n";
+  }
+  for (int i = minBin(); i <= maxBin(); i++) {
+    result << "10**" << i << "<=v<";
+    if (i + 1 == numBins - 1)
+      result << "infinity, ";
+    else
+      result << "10**" << (i + 1) << ", ";
+    result << formatSI(count(i), 9, ' ') << ", " << formatSI(total(i), 9, unit);
+    if (i != maxBin())
+      result << "\n";
+  }
+
+  return result.str();
+}
+
 /* ************* explicitTimer member functions ************* */
 
-void explicitTimer::start(timer_e timerEnumValue) {
-  startTime = tsc_tick_count::now();
+void explicitTimer::start(tsc_tick_count tick) {
+  startTime = tick;
   totalPauseTime = 0;
   if (timeStat::logEvent(timerEnumValue)) {
     __kmp_stats_thread_ptr->incrementNestValue();
@@ -149,22 +247,19 @@ void explicitTimer::start(timer_e timerEnumValue) {
   return;
 }
 
-void explicitTimer::stop(timer_e timerEnumValue,
+void explicitTimer::stop(tsc_tick_count tick,
                          kmp_stats_list *stats_ptr /* = nullptr */) {
   if (startTime.getValue() == 0)
     return;
 
-  tsc_tick_count finishTime = tsc_tick_count::now();
-
-  // stat->addSample ((tsc_tick_count::now() - startTime).ticks());
-  stat->addSample(((finishTime - startTime) - totalPauseTime).ticks());
+  stat->addSample(((tick - startTime) - totalPauseTime).ticks());
 
   if (timeStat::logEvent(timerEnumValue)) {
     if (!stats_ptr)
       stats_ptr = __kmp_stats_thread_ptr;
     stats_ptr->push_event(
         startTime.getValue() - __kmp_stats_start_time.getValue(),
-        finishTime.getValue() - __kmp_stats_start_time.getValue(),
+        tick.getValue() - __kmp_stats_start_time.getValue(),
         __kmp_stats_thread_ptr->getNestValue(), timerEnumValue);
     stats_ptr->decrementNestValue();
   }
@@ -178,52 +273,67 @@ void explicitTimer::stop(timer_e timerEnumValue,
 /* ************* partitionedTimers member functions ************* */
 partitionedTimers::partitionedTimers() { timer_stack.reserve(8); }
 
-// add a timer to this collection of partitioned timers.
-void partitionedTimers::add_timer(explicit_timer_e timer_index,
-                                  explicitTimer *timer_pointer) {
-  KMP_DEBUG_ASSERT((int)timer_index < (int)EXPLICIT_TIMER_LAST + 1);
-  timers[timer_index] = timer_pointer;
-}
-
-// initialize the paritioned timers to an initial timer
-void partitionedTimers::init(timerPair init_timer_pair) {
+// initialize the partitioned timers to an initial timer
+void partitionedTimers::init(explicitTimer timer) {
   KMP_DEBUG_ASSERT(this->timer_stack.size() == 0);
-  timer_stack.push_back(init_timer_pair);
-  timers[init_timer_pair.get_index()]->start(init_timer_pair.get_timer());
+  timer_stack.push_back(timer);
+  timer_stack.back().start(tsc_tick_count::now());
 }
 
 // stop/save the current timer, and start the new timer (timer_pair)
 // There is a special condition where if the current timer is equal to
 // the one you are trying to push, then it only manipulates the stack,
 // and it won't stop/start the currently running timer.
-void partitionedTimers::push(timerPair timer_pair) {
+void partitionedTimers::push(explicitTimer timer) {
   // get the current timer
-  // stop current timer
+  // pause current timer
   // push new timer
   // start the new timer
+  explicitTimer *current_timer, *new_timer;
+  size_t stack_size;
   KMP_DEBUG_ASSERT(this->timer_stack.size() > 0);
-  timerPair current_timer = timer_stack.back();
-  timer_stack.push_back(timer_pair);
-  if (current_timer != timer_pair) {
-    timers[current_timer.get_index()]->pause();
-    timers[timer_pair.get_index()]->start(timer_pair.get_timer());
-  }
+  timer_stack.push_back(timer);
+  stack_size = timer_stack.size();
+  current_timer = &(timer_stack[stack_size - 2]);
+  new_timer = &(timer_stack[stack_size - 1]);
+  tsc_tick_count tick = tsc_tick_count::now();
+  current_timer->pause(tick);
+  new_timer->start(tick);
 }
 
 // stop/discard the current timer, and start the previously saved timer
 void partitionedTimers::pop() {
   // get the current timer
-  // stop current timer
+  // stop current timer (record event/sample)
   // pop current timer
-  // get the new current timer and start it back up
-  KMP_DEBUG_ASSERT(this->timer_stack.size() > 1);
-  timerPair current_timer = timer_stack.back();
+  // get the new current timer and resume
+  explicitTimer *old_timer, *new_timer;
+  size_t stack_size = timer_stack.size();
+  KMP_DEBUG_ASSERT(stack_size > 1);
+  old_timer = &(timer_stack[stack_size - 1]);
+  new_timer = &(timer_stack[stack_size - 2]);
+  tsc_tick_count tick = tsc_tick_count::now();
+  old_timer->stop(tick);
+  new_timer->resume(tick);
   timer_stack.pop_back();
-  timerPair new_timer = timer_stack.back();
-  if (current_timer != new_timer) {
-    timers[current_timer.get_index()]->stop(current_timer.get_timer());
-    timers[new_timer.get_index()]->resume();
-  }
+}
+
+void partitionedTimers::exchange(explicitTimer timer) {
+  // get the current timer
+  // stop current timer (record event/sample)
+  // push new timer
+  // start the new timer
+  explicitTimer *current_timer, *new_timer;
+  size_t stack_size;
+  KMP_DEBUG_ASSERT(this->timer_stack.size() > 0);
+  tsc_tick_count tick = tsc_tick_count::now();
+  stack_size = timer_stack.size();
+  current_timer = &(timer_stack[stack_size - 1]);
+  current_timer->stop(tick);
+  timer_stack.pop_back();
+  timer_stack.push_back(timer);
+  new_timer = &(timer_stack[stack_size - 1]);
+  new_timer->start(tick);
 }
 
 // Wind up all the currently running timers.
@@ -234,10 +344,10 @@ void partitionedTimers::windup() {
   while (timer_stack.size() > 1) {
     this->pop();
   }
+  // Pop the timer from the init() call
   if (timer_stack.size() > 0) {
-    timerPair last_timer = timer_stack.back();
+    timer_stack.back().stop(tsc_tick_count::now());
     timer_stack.pop_back();
-    timers[last_timer.get_index()]->stop(last_timer.get_timer());
   }
 }
 
@@ -255,8 +365,8 @@ void kmp_stats_event_vector::deallocate() {
 // event2 or zero if event1 == event2. This sorts by start time (lowest to
 // highest).
 int compare_two_events(const void *event1, const void *event2) {
-  kmp_stats_event *ev1 = (kmp_stats_event *)event1;
-  kmp_stats_event *ev2 = (kmp_stats_event *)event2;
+  const kmp_stats_event *ev1 = RCAST(const kmp_stats_event *, event1);
+  const kmp_stats_event *ev2 = RCAST(const kmp_stats_event *, event2);
 
   if (ev1->getStart() < ev2->getStart())
     return -1;
@@ -353,9 +463,92 @@ const char *kmp_stats_output_module::plotFileName = NULL;
 int kmp_stats_output_module::printPerThreadFlag = 0;
 int kmp_stats_output_module::printPerThreadEventsFlag = 0;
 
+static char const *lastName(char *name) {
+  int l = (int)strlen(name);
+  for (int i = l - 1; i >= 0; --i) {
+    if (name[i] == '.')
+      name[i] = '_';
+    if (name[i] == '/')
+      return name + i + 1;
+  }
+  return name;
+}
+
+/* Read the name of the executable from /proc/self/cmdline */
+static char const *getImageName(char *buffer, size_t buflen) {
+  FILE *f = fopen("/proc/self/cmdline", "r");
+  buffer[0] = char(0);
+  if (!f)
+    return buffer;
+
+  // The file contains char(0) delimited words from the commandline.
+  // This just returns the last filename component of the first word on the
+  // line.
+  size_t n = fread(buffer, 1, buflen, f);
+  if (n == 0) {
+    fclose(f);
+    KMP_CHECK_SYSFAIL("fread", 1)
+  }
+  fclose(f);
+  buffer[buflen - 1] = char(0);
+  return lastName(buffer);
+}
+
+static void getTime(char *buffer, size_t buflen, bool underscores = false) {
+  time_t timer;
+
+  time(&timer);
+
+  struct tm *tm_info = localtime(&timer);
+  if (underscores)
+    strftime(buffer, buflen, "%Y-%m-%d_%H%M%S", tm_info);
+  else
+    strftime(buffer, buflen, "%Y-%m-%d %H%M%S", tm_info);
+}
+
+/* Generate a stats file name, expanding prototypes */
+static std::string generateFilename(char const *prototype,
+                                    char const *imageName) {
+  std::string res;
+
+  for (int i = 0; prototype[i] != char(0); i++) {
+    char ch = prototype[i];
+
+    if (ch == '%') {
+      i++;
+      if (prototype[i] == char(0))
+        break;
+
+      switch (prototype[i]) {
+      case 't': // Insert time and date
+      {
+        char date[26];
+        getTime(date, sizeof(date), true);
+        res += date;
+      } break;
+      case 'e': // Insert executable name
+        res += imageName;
+        break;
+      case 'p': // Insert pid
+      {
+        std::stringstream ss;
+        ss << getpid();
+        res += ss.str();
+      } break;
+      default:
+        res += prototype[i];
+        break;
+      }
+    } else
+      res += ch;
+  }
+  return res;
+}
+
 // init() is called very near the beginning of execution time in the constructor
 // of __kmp_stats_global_output
 void kmp_stats_output_module::init() {
+
   char *statsFileName = getenv("KMP_STATS_FILE");
   eventsFileName = getenv("KMP_STATS_EVENTS_FILE");
   plotFileName = getenv("KMP_STATS_PLOT_FILE");
@@ -364,22 +557,10 @@ void kmp_stats_output_module::init() {
 
   // set the stats output filenames based on environment variables and defaults
   if (statsFileName) {
-    // append the process id to the output filename
-    // events.csv --> events-pid.csv
-    size_t index;
-    std::string baseFileName, pid, suffix;
-    std::stringstream ss;
-    outputFileName = std::string(statsFileName);
-    index = outputFileName.find_last_of('.');
-    if (index == std::string::npos) {
-      baseFileName = outputFileName;
-    } else {
-      baseFileName = outputFileName.substr(0, index);
-      suffix = outputFileName.substr(index);
-    }
-    ss << getpid();
-    pid = ss.str();
-    outputFileName = baseFileName + "-" + pid + suffix;
+    char imageName[1024];
+    // Process any escapes (e.g., %p, %e, %t) in the name
+    outputFileName = generateFilename(
+        statsFileName, getImageName(&imageName[0], sizeof(imageName)));
   }
   eventsFileName = eventsFileName ? eventsFileName : "events.dat";
   plotFileName = plotFileName ? plotFileName : "events.plt";
@@ -396,8 +577,6 @@ void kmp_stats_output_module::init() {
     // will clear flag so that no event will be logged
     timeStat::clearEventFlags();
   }
-
-  return;
 }
 
 void kmp_stats_output_module::setupEventColors() {
@@ -410,27 +589,42 @@ void kmp_stats_output_module::setupEventColors() {
       globalColorIndex = (globalColorIndex + 1) % numGlobalColors;
     }
   }
-  return;
 }
 
 void kmp_stats_output_module::printTimerStats(FILE *statsOut,
                                               statistic const *theStats,
                                               statistic const *totalStats) {
-  fprintf(statsOut, "Timer,                      SampleCount,    Min,      "
-                    "Mean,       Max,     Total,        SD\n");
+  fprintf(statsOut,
+          "Timer,                             SampleCount,    Min,      "
+          "Mean,       Max,     Total,        SD\n");
   for (timer_e s = timer_e(0); s < TIMER_LAST; s = timer_e(s + 1)) {
     statistic const *stat = &theStats[s];
     char tag = timeStat::noUnits(s) ? ' ' : 'T';
 
-    fprintf(statsOut, "%-28s, %s\n", timeStat::name(s),
+    fprintf(statsOut, "%-35s, %s\n", timeStat::name(s),
             stat->format(tag, true).c_str());
   }
   // Also print the Total_ versions of times.
   for (timer_e s = timer_e(0); s < TIMER_LAST; s = timer_e(s + 1)) {
     char tag = timeStat::noUnits(s) ? ' ' : 'T';
     if (totalStats && !timeStat::noTotal(s))
-      fprintf(statsOut, "Total_%-22s, %s\n", timeStat::name(s),
+      fprintf(statsOut, "Total_%-29s, %s\n", timeStat::name(s),
               totalStats[s].format(tag, true).c_str());
+  }
+
+  // Print histogram of statistics
+  if (theStats[0].haveHist()) {
+    fprintf(statsOut, "\nTimer distributions\n");
+    for (int s = 0; s < TIMER_LAST; s++) {
+      statistic const *stat = &theStats[s];
+
+      if (stat->getCount() != 0) {
+        char tag = timeStat::noUnits(timer_e(s)) ? ' ' : 'T';
+
+        fprintf(statsOut, "%s\n", timeStat::name(timer_e(s)));
+        fprintf(statsOut, "%s\n", stat->getHist()->format(tag).c_str());
+      }
+    }
   }
 }
 
@@ -443,6 +637,18 @@ void kmp_stats_output_module::printCounterStats(FILE *statsOut,
     fprintf(statsOut, "%-25s, %s\n", counter::name(counter_e(s)),
             stat->format(' ', true).c_str());
   }
+  // Print histogram of counters
+  if (theStats[0].haveHist()) {
+    fprintf(statsOut, "\nCounter distributions\n");
+    for (int s = 0; s < COUNTER_LAST; s++) {
+      statistic const *stat = &theStats[s];
+
+      if (stat->getCount() != 0) {
+        fprintf(statsOut, "%s\n", counter::name(counter_e(s)));
+        fprintf(statsOut, "%s\n", stat->getHist()->format(' ').c_str());
+      }
+    }
+  }
 }
 
 void kmp_stats_output_module::printCounters(FILE *statsOut,
@@ -453,7 +659,7 @@ void kmp_stats_output_module::printCounters(FILE *statsOut,
   for (int c = 0; c < COUNTER_LAST; c++) {
     counter const *stat = &theCounters[c];
     fprintf(statsOut, "%-25s, %s\n", counter::name(counter_e(c)),
-            formatSI(stat->getValue(), 9, ' ').c_str());
+            formatSI((double)stat->getValue(), 9, ' ').c_str());
   }
 }
 
@@ -465,32 +671,31 @@ void kmp_stats_output_module::printEvents(FILE *eventsOut,
   for (int i = 0; i < theEvents->size(); i++) {
     kmp_stats_event ev = theEvents->at(i);
     rgb_color color = getEventColor(ev.getTimerName());
-    fprintf(eventsOut, "%d %lu %lu %1.1f rgb(%1.1f,%1.1f,%1.1f) %s\n", gtid,
-            ev.getStart(), ev.getStop(), 1.2 - (ev.getNestLevel() * 0.2),
-            color.r, color.g, color.b, timeStat::name(ev.getTimerName()));
+    fprintf(eventsOut, "%d %llu %llu %1.1f rgb(%1.1f,%1.1f,%1.1f) %s\n", gtid,
+            static_cast<unsigned long long>(ev.getStart()),
+            static_cast<unsigned long long>(ev.getStop()),
+            1.2 - (ev.getNestLevel() * 0.2), color.r, color.g, color.b,
+            timeStat::name(ev.getTimerName()));
   }
   return;
 }
 
 void kmp_stats_output_module::windupExplicitTimers() {
   // Wind up any explicit timers. We assume that it's fair at this point to just
-  // walk all the explcit timers in all threads and say "it's over".
+  // walk all the explicit timers in all threads and say "it's over".
   // If the timer wasn't running, this won't record anything anyway.
   kmp_stats_list::iterator it;
   for (it = __kmp_stats_list->begin(); it != __kmp_stats_list->end(); it++) {
     kmp_stats_list *ptr = *it;
     ptr->getPartitionedTimers()->windup();
-    for (int timer = 0; timer < EXPLICIT_TIMER_LAST; timer++) {
-      ptr->getExplicitTimer(explicit_timer_e(timer))->stop((timer_e)timer, ptr);
-    }
+    ptr->endLife();
   }
 }
 
 void kmp_stats_output_module::printPloticusFile() {
   int i;
   int size = __kmp_stats_list->size();
-  FILE *plotOut = fopen(plotFileName, "w+");
-
+  kmp_safe_raii_file_t plotOut(plotFileName, "w+");
   fprintf(plotOut, "#proc page\n"
                    "   pagesize: 15 10\n"
                    "   scale: 1.0\n\n");
@@ -543,8 +748,12 @@ void kmp_stats_output_module::printPloticusFile() {
   fprintf(plotOut, "#proc legend\n"
                    "   format: down\n"
                    "   location: max max\n\n");
-  fclose(plotOut);
   return;
+}
+
+static void outputEnvVariable(FILE *statsOut, char const *name) {
+  char const *value = getenv(name);
+  fprintf(statsOut, "# %s = %s\n", name, value ? value : "*unspecified*");
 }
 
 /* Print some useful information about
@@ -570,6 +779,11 @@ void kmp_stats_output_module::printHeaderInfo(FILE *statsOut) {
   else
     fprintf(statsOut, "# Nominal frequency: %sz\n",
             formatSI(double(__kmp_cpuinfo.frequency), 9, 'H').c_str());
+  outputEnvVariable(statsOut, "KMP_HW_SUBSET");
+  outputEnvVariable(statsOut, "KMP_AFFINITY");
+  outputEnvVariable(statsOut, "KMP_BLOCKTIME");
+  outputEnvVariable(statsOut, "KMP_LIBRARY");
+  fprintf(statsOut, "# Production runtime built " __DATE__ " " __TIME__ "\n");
 #endif
 }
 
@@ -584,14 +798,16 @@ void kmp_stats_output_module::outputStats(const char *heading) {
                                        normal timer stats */
   statistic allCounters[COUNTER_LAST];
 
-  FILE *statsOut =
-      !outputFileName.empty() ? fopen(outputFileName.c_str(), "a+") : stderr;
-  if (!statsOut)
-    statsOut = stderr;
+  kmp_safe_raii_file_t statsOut;
+  if (!outputFileName.empty()) {
+    statsOut.open(outputFileName.c_str(), "a+");
+  } else {
+    statsOut.set_stderr();
+  }
 
-  FILE *eventsOut;
+  kmp_safe_raii_file_t eventsOut;
   if (eventPrintingEnabled()) {
-    eventsOut = fopen(eventsFileName, "w+");
+    eventsOut.open(eventsFileName, "w+");
   }
 
   printHeaderInfo(statsOut);
@@ -636,22 +852,18 @@ void kmp_stats_output_module::outputStats(const char *heading) {
     for (counter_e c = counter_e(0); c < COUNTER_LAST; c = counter_e(c + 1)) {
       if (counter::masterOnly(c) && t != 0)
         continue;
-      allCounters[c].addSample((*it)->getCounter(c)->getValue());
+      allCounters[c].addSample((double)(*it)->getCounter(c)->getValue());
     }
   }
 
   if (eventPrintingEnabled()) {
     printPloticusFile();
-    fclose(eventsOut);
   }
 
   fprintf(statsOut, "Aggregate for all threads\n");
   printTimerStats(statsOut, &allStats[0], &totalStats[0]);
   fprintf(statsOut, "\n");
   printCounterStats(statsOut, &allCounters[0]);
-
-  if (statsOut != stderr)
-    fclose(statsOut);
 }
 
 /* *************  exported C functions ************** */
@@ -665,16 +877,12 @@ void __kmp_reset_stats() {
   for (it = __kmp_stats_list->begin(); it != __kmp_stats_list->end(); it++) {
     timeStat *timers = (*it)->getTimers();
     counter *counters = (*it)->getCounters();
-    explicitTimer *eTimers = (*it)->getExplicitTimers();
 
     for (int t = 0; t < TIMER_LAST; t++)
       timers[t].reset();
 
     for (int c = 0; c < COUNTER_LAST; c++)
       counters[c].reset();
-
-    for (int t = 0; t < EXPLICIT_TIMER_LAST; t++)
-      eTimers[t].reset();
 
     // reset the event vector so all previous events are "erased"
     (*it)->resetEventVector();

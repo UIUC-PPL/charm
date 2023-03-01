@@ -41,7 +41,7 @@ $ mkdir build && cd build
 $ cmake path/to/openmp -DCMAKE_C_COMPILER=<C compiler> -DCMAKE_CXX_COMPILER=<C++ compiler>
 $ make
 
-For details about building, please look at Build_With_CMake.txt
+For details about building, please look at README.rst in the parent directory.
 
 Architectures Supported
 =======================
@@ -53,6 +53,7 @@ Architectures Supported
 * IBM(R) Power architecture (big endian)
 * IBM(R) Power architecture (little endian)
 * MIPS and MIPS64 architecture
+* RISCV64 architecture
 
 Supported RTL Build Configurations
 ==================================
