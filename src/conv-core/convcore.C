@@ -4066,6 +4066,9 @@ void ConverseCommonInit(char **argv)
   useCMAForZC = true;
   if (CmiGetArgFlagDesc(argv, "+noCMAForZC", "When Cross Memory Attach (CMA) is supported, the program does not use CMA when using the Zerocopy API")) {
     useCMAForZC = false;
+  } else {
+    if(CmiMyNode() == 0 && CmiMyRank() == 0 && CmiDoesCMAWork())
+      CmiPrintf("Charm++> CMA will be used for same node inter process Zerocopy API transfers\n");
   }
 
 #if CMK_ERROR_CHECKING
