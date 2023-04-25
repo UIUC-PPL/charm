@@ -218,7 +218,11 @@ void Entry::setChare(Chare* c) {
                    "CkArgMsg* if that's how they're implemented.\n";
     }
     if (container->isArray()) {
+#if CMK_NO_RTTI
+      Array* a = (Array *)c;
+#else
       Array* a = dynamic_cast<Array*>(c);
+#endif
       a->hasVoidConstructor = true;
     }
   }

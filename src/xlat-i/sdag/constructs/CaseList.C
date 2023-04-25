@@ -42,7 +42,11 @@ void CaseListConstruct::propagateState(std::list<EncapState*> encap,
 
     for (std::list<SdagConstruct*>::iterator iter = constructs->begin();
          iter != constructs->end(); ++iter) {
+#if CMK_NO_RTTI
+      ((WhenConstruct *)*iter)->speculativeState = sv;
+#else
       dynamic_cast<WhenConstruct*>(*iter)->speculativeState = sv;
+#endif
     }
     std::list<CStateVar*> lst;
     lst.push_back(sv);

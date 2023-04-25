@@ -262,7 +262,11 @@ static void disambig_proxy(XStr& str, const XStr& super) {
 XStr Chare::virtualPupDef(const XStr& name) {
   XStr str;
   str << "virtual_pup(PUP::er &p) {"
+#if CMK_NO_RTTI
+      << "\n    recursive_pup<" << name << ">((" << name << " *)this), p);"
+#else
       << "\n    recursive_pup<" << name << ">(dynamic_cast<" << name << "*>(this), p);"
+#endif
       << "\n}";
   return str;
 }

@@ -83,12 +83,21 @@ static PyObject *CkPy_myindex(PyObject *self, PyObject *args) {
   PyObject *dict = PyModule_GetDict(PyImport_AddModule("__main__"));
   PythonObject *object = (PythonObject*)PyLong_AsVoidPtr(PyDict_GetItemString(dict,"__charmObject__"));
   //CmiLock(CsvAccess(pyLock));
+#if CMK_NO_RTTI
+  ArrayElement1D *pyArray1 = (ArrayElement1D *)object;
+  ArrayElement2D *pyArray2 = (ArrayElement2D *)object;
+  ArrayElement3D *pyArray3 = (ArrayElement3D *)object;
+  ArrayElement4D *pyArray4 = (ArrayElement4D *)object;
+  ArrayElement5D *pyArray5 = (ArrayElement5D *)object;
+  ArrayElement6D *pyArray6 = (ArrayElement6D *)object;
+#else
   ArrayElement1D *pyArray1 = dynamic_cast<ArrayElement1D*>(object);
   ArrayElement2D *pyArray2 = dynamic_cast<ArrayElement2D*>(object);
   ArrayElement3D *pyArray3 = dynamic_cast<ArrayElement3D*>(object);
   ArrayElement4D *pyArray4 = dynamic_cast<ArrayElement4D*>(object);
   ArrayElement5D *pyArray5 = dynamic_cast<ArrayElement5D*>(object);
   ArrayElement6D *pyArray6 = dynamic_cast<ArrayElement6D*>(object);
+#endif
   //CmiUnlock(CsvAccess(pyLock));
   if (pyArray1) return Py_BuildValue("(i)", pyArray1->thisIndex);
   else if (pyArray2) return Py_BuildValue("(ii)", pyArray2->thisIndex.x, pyArray2->thisIndex.y);
@@ -165,8 +174,13 @@ void PythonObject::replyIntValue(PythonObject *obj, CcsDelayedReply *reply, CmiU
   forward.reply = *reply;
   forward.value = *value;
   CkCallback cb(CkIndex_PythonCCS::forwardInt(0), pythonCcsProxy);
+#if CMK_NO_RTTI
+  ArrayElement *array = (ArrayElement *)obj;
+  Group *group = (Group *)obj;
+#else
   ArrayElement *array = dynamic_cast<ArrayElement *>(obj);
   Group *group = dynamic_cast<Group *>(obj);
+#endif
   if (array != NULL) array->contribute(sizeof(PythonReplyInt), &forward, CkReduction::bitvec_and, cb);
   else if (group != NULL) group->contribute(sizeof(PythonReplyInt), &forward, CkReduction::bitvec_and, cb);
   else CcsSendDelayedReply(*reply, sizeof(CmiUInt4), (void *)value);
@@ -232,8 +246,13 @@ void PythonObject::print (PythonPrint *pyMsg, CcsDelayedReply *reply) {
       forward->reply = *reply;
       memcpy(forward->data, str, length);
       CkCallback cb(CkIndex_PythonCCS::forwardString(0), pythonCcsProxy);
+#if CMK_NO_RTTI
+      ArrayElement *array = (ArrayElement *)this;
+      Group *group = (Group *)this;
+#else
       ArrayElement *array = dynamic_cast<ArrayElement *>(this);
       Group *group = dynamic_cast<Group *>(this);
+#endif
       if (array != NULL) array->contribute(sizeof(CcsDelayedReply)+length, forward, PythonCCS::reduceString, cb);
       else if (group != NULL) group->contribute(sizeof(CcsDelayedReply)+length, forward, PythonCCS::reduceString, cb);
       else CcsSendDelayedReply(*reply, length, str);
