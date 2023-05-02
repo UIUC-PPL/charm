@@ -7,7 +7,7 @@ jobs:
   # Since NAMD requires a secret to download its source from Gitlab, CI builds from outside PPl
   # always fail in this test since the secret is not available.
   build-and-test-namd:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v2
