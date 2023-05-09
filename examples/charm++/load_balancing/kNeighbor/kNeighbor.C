@@ -8,8 +8,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define STRIDEK		1
+
 #define CALCPERSTEP	100
+
+/*
+ * Variance in values in computation and communication loads
+ */
+#define COMM_VAR        1
+#define COMP_VAR        1
+#define STEPS           1
+//Default value used to initialize parameter to define how many neighbours we communicate with
+#define STRIDEK		1
 
 #define DEBUG		0
 
@@ -18,6 +27,13 @@
 /* readonly */ int num_chares;
 /* readonly */ int gMsgSize;
 /* readonly */ int gLBFreq;
+/* readonly */ int comm_var;
+/* readonly */ int comp_var;
+/* readonly */ int steps;
+/* readonly */ int comm_neigh;
+/* readonly */ int factor;
+/* readonly */ int frequency;
+/* readonly */ int max_frequency;
 
 int cmpFunc(const void *a, const void *b) {
   if(*(double *)a < *(double *)b) return -1;
@@ -34,7 +50,7 @@ class toNeighborMsg: public CMessage_toNeighborMsg {
 
   public:
     toNeighborMsg() {};
-    toNeighborMsg(int s): size(s) {  
+    toNeighborMsg(int s): size(s) {
     }
 
     void setMsgSrc(int X, int id) {
@@ -65,8 +81,16 @@ class Main: public CBase_Main {
       mainProxy = thisProxy;
       CkPrintf("\nStarting kNeighbor ...\n");
 
-      if (m->argc!=4 && m->argc!=5) {
-	CkPrintf("Usage: %s <#elements> <#iterations> <msg size> [ldb freq]\n", m->argv[0]);
+      comm_var = COMM_VAR;
+      comp_var = COMP_VAR;
+      steps = STEPS;
+      comm_neigh = STRIDEK;
+      factor = 0;
+      frequency = 1;
+      max_frequency = 1;
+
+      if (m->argc < 4) {
+	CkPrintf("Usage: %s <#elements> <#iterations> <msg size> [ldb freq] [comm var] [comp var] [steps] [comm neighbours] [factor] [frequency] [max_frequency]\n", m->argv[0]);
 	delete m;
 	CkExit(1);
       }
@@ -81,8 +105,36 @@ class Main: public CBase_Main {
       currentMsgSize = atoi(m->argv[3]);
 
       gLBFreq = 100000;
-      if(m->argc==5) {
+      if(m->argc>=5) {
 	gLBFreq = atoi(m->argv[4]);
+      }
+
+      if(m->argc >= 6) {
+        comm_var = atoi(m->argv[5]);
+      }
+
+      if(m->argc >= 7) {
+        comp_var = atoi(m->argv[6]);
+      }
+
+      if(m->argc >= 8) {
+        steps = atoi(m->argv[7]);
+      }
+
+      if(m->argc >= 9) {
+        comm_neigh = atoi(m->argv[8]);
+      }
+
+      if(m->argc >= 10) {
+        factor = atoi(m->argv[9]);
+      }
+
+      if(m->argc >= 11) {
+        frequency = atoi(m->argv[10]);
+      }
+
+      if(m->argc >= 12) {
+        max_frequency = atoi(m->argv[11]);
       }
 
 #if TURN_ON_LDB
@@ -170,20 +222,35 @@ class Block: public CBase_Block {
     int *neighbors;
     double *recvTimes;
     double startTime;
+    int msg_var;
 
     int random;
     int curIterMsgSize;
     int internalStepCnt;
     int sum;
+    int compute_work;
+    int compute_var;
+
+    int l_factor;
+    int l_frequency;
+    int l_max_frequency;
 
     toNeighborMsg **iterMsg;
 
   public:
     Block() {
-      //srand(thisIndex.x+thisIndex.y);
+      srand(thisIndex);
       usesAtSync = true;
 
-      numNeighbors = 2*STRIDEK;
+      numNeighbors = 2*comm_neigh;
+      msg_var = comm_var;
+      compute_work = steps;
+      compute_var = comp_var;
+
+      l_factor = factor;
+      l_frequency = frequency;
+      l_max_frequency = max_frequency;
+
       neighbors = new int[numNeighbors];
       recvTimes = new double[numNeighbors];
       int nidx=0;
@@ -238,6 +305,13 @@ class Block: public CBase_Block {
       p(curIterMsgSize);
       p(internalStepCnt);
       p(sum);
+      p(msg_var);
+      p(compute_work);
+      p(compute_var);
+      p(l_factor);
+      p(l_frequency);
+      p(l_max_frequency);
+
       if(p.isUnpacking()) iterMsg = new toNeighborMsg *[numNeighbors];
       for(int i=0; i<numNeighbors; i++){
 	CkPupMessage(p, (void **)&iterMsg[i]);
@@ -265,14 +339,22 @@ class Block: public CBase_Block {
 
       numNborsRcvd = 0;
       /* 1: pick a work size and do some computation */
-      int N = (thisIndex * thisIndex / num_chares) * 100;
+      /*
+       * The next statement helps decide the computation load in each iteration
+       * compute_work is the base work done by this chare
+       * compte_var adds some randomness (if we decide to add it) to the base load
+       * factor and frequency variables decide how much the computation changes with each iteration
+      */
+      int N = (thisIndex * thisIndex / num_chares) * compute_work * (rand()%compute_var + 1) + l_factor*l_frequency;
+      l_frequency = (l_frequency+1)%l_max_frequency;
+
       for (int i=0; i<N; i++)
 	for (int j=0; j<N; j++) {
-	  sum += (thisIndex * i + j);
+	  sum += (thisIndex * i + j)%100;
 	}
 
       /* 2. send msg to K neighbors */
-      int msgSize = curIterMsgSize;
+      //int msgSize = curIterMsgSize*(rand()%msg_var + 1);
 
       // Send msgs to neighbors
       for (int i=0; i<numNeighbors; i++) {

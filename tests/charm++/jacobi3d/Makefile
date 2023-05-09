@@ -29,6 +29,9 @@ mpisyncfttest: jacobi3d
 	$(call run, ./jacobi3d 256 256 256 64 64 32 150 50 +p10 +wp8 +balancer DummyLB +killFile kill_05.txt )
 	$(call run, ./jacobi3d 256 256 256 64 64 32 150 50 +p10 +wp8 +balancer DummyLB +killFile kill_06.txt )
 
+vartest: jacobi3d
+	$(call run, ./jacobi3d 256 256 256 64 64 32 150 50 2048 +p10 +balancer DummyLB)
+
 clean:
 	rm -f *.decl.h *.def.h conv-host *.o jacobi3d jacobi3d.prj charmrun *~
 

@@ -3,6 +3,13 @@ mainmodule kNeighbor {
   readonly int num_chares;
   readonly int gMsgSize;
   readonly int gLBFreq;
+  readonly int comm_var;
+  readonly int comp_var;
+  readonly int steps;
+  readonly int comm_neigh;
+  readonly int factor;
+  readonly int frequency;
+  readonly int max_frequency;
 
   message toNeighborMsg {
     int data[];
