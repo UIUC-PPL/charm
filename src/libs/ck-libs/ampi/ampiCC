@@ -89,7 +89,6 @@ do
   -pieglobals)
      GLOBALS='pie'
      GLOBALS_SHARED='1'
-     GLOBALS_FUNCPTR='1'
      ;;
 
   -c)
@@ -168,6 +167,8 @@ fi
 
 if [[ -n "$GLOBALS" ]]
 then
+  [[ "$CMK_SUPPORTS_TLSGLOBALS" = '1' ]] && ARGS+=(-tlsglobals)
+
   USER_SUFFIX="$CMK_USER_SUFFIX.$CMK_SHARED_SUF"
   SHIM_OPTS=(-seq)
   SHARED_OPTS=()

@@ -76,6 +76,100 @@ struct pieglobalsstruct
 };
 
 
+#if PIEGLOBALS_DEBUG >= 1
+static const char * phdr_get_dynamic_type_name(uintptr_t type)
+{
+  switch (type)
+  {
+    case DT_NULL: return "DT_NULL";
+    case DT_NEEDED: return "DT_NEEDED";
+    case DT_PLTRELSZ: return "DT_PLTRELSZ";
+    case DT_PLTGOT: return "DT_PLTGOT";
+    case DT_HASH: return "DT_HASH";
+    case DT_STRTAB: return "DT_STRTAB";
+    case DT_SYMTAB: return "DT_SYMTAB";
+    case DT_RELA: return "DT_RELA";
+    case DT_RELASZ: return "DT_RELASZ";
+    case DT_RELAENT: return "DT_RELAENT";
+    case DT_STRSZ: return "DT_STRSZ";
+    case DT_SYMENT: return "DT_SYMENT";
+    case DT_INIT: return "DT_INIT";
+    case DT_FINI: return "DT_FINI";
+    case DT_SONAME: return "DT_SONAME";
+    case DT_RPATH: return "DT_RPATH";
+    case DT_SYMBOLIC: return "DT_SYMBOLIC";
+    case DT_REL: return "DT_REL";
+    case DT_RELSZ: return "DT_RELSZ";
+    case DT_RELENT: return "DT_RELENT";
+    case DT_PLTREL: return "DT_PLTREL";
+    case DT_DEBUG: return "DT_DEBUG";
+    case DT_TEXTREL: return "DT_TEXTREL";
+    case DT_JMPREL: return "DT_JMPREL";
+    case DT_BIND_NOW: return "DT_BIND_NOW";
+    case DT_INIT_ARRAY: return "DT_INIT_ARRAY";
+    case DT_FINI_ARRAY: return "DT_FINI_ARRAY";
+    case DT_INIT_ARRAYSZ: return "DT_INIT_ARRAYSZ";
+    case DT_FINI_ARRAYSZ: return "DT_FINI_ARRAYSZ";
+    case DT_RUNPATH: return "DT_RUNPATH";
+    case DT_FLAGS: return "DT_FLAGS";
+    case DT_PREINIT_ARRAY: return "DT_PREINIT_ARRAY";
+    case DT_PREINIT_ARRAYSZ: return "DT_PREINIT_ARRAYSZ";
+    case DT_SYMTAB_SHNDX: return "DT_SYMTAB_SHNDX";
+#if 0
+    case DT_RELRSZ: return "DT_RELRSZ";
+    case DT_RELR: return "DT_RELR";
+    case DT_RELRENT: return "DT_RELRENT";
+    case DT_ENCODING: return "DT_ENCODING";
+#endif
+    case DT_LOOS: return "DT_LOOS";
+    case DT_HIOS: return "DT_HIOS";
+    case DT_LOPROC: return "DT_LOPROC";
+    case DT_HIPROC: return "DT_HIPROC";
+    case DT_VALRNGLO: return "DT_VALRNGLO";
+    // case DT_GNU_FLAGS_1: return "DT_GNU_FLAGS_1";
+    case DT_GNU_PRELINKED: return "DT_GNU_PRELINKED";
+    case DT_GNU_CONFLICTSZ: return "DT_GNU_CONFLICTSZ";
+    case DT_GNU_LIBLISTSZ: return "DT_GNU_LIBLISTSZ";
+    case DT_CHECKSUM: return "DT_CHECKSUM";
+    case DT_PLTPADSZ: return "DT_PLTPADSZ";
+    case DT_MOVEENT: return "DT_MOVEENT";
+    case DT_MOVESZ: return "DT_MOVESZ";
+    // case DT_FEATURE: return "DT_FEATURE";
+    case DT_POSFLAG_1: return "DT_POSFLAG_1";
+    case DT_SYMINSZ: return "DT_SYMINSZ";
+    case DT_SYMINENT: return "DT_SYMINENT";
+    // case DT_VALRNGHI: return "DT_VALRNGHI";
+    case DT_ADDRRNGLO: return "DT_ADDRRNGLO";
+    case DT_GNU_HASH: return "DT_GNU_HASH";
+    case DT_TLSDESC_PLT: return "DT_TLSDESC_PLT";
+    case DT_TLSDESC_GOT: return "DT_TLSDESC_GOT";
+    case DT_GNU_CONFLICT: return "DT_GNU_CONFLICT";
+    case DT_GNU_LIBLIST: return "DT_GNU_LIBLIST";
+    case DT_CONFIG: return "DT_CONFIG";
+    case DT_DEPAUDIT: return "DT_DEPAUDIT";
+    case DT_AUDIT: return "DT_AUDIT";
+    case DT_PLTPAD: return "DT_PLTPAD";
+    case DT_MOVETAB: return "DT_MOVETAB";
+    case DT_SYMINFO: return "DT_SYMINFO";
+    // case DT_ADDRRNGHI: return "DT_ADDRRNGHI";
+    case DT_RELACOUNT: return "DT_RELACOUNT";
+    case DT_RELCOUNT: return "DT_RELCOUNT";
+    case DT_FLAGS_1: return "DT_FLAGS_1";
+    case DT_VERDEF: return "DT_VERDEF";
+    case DT_VERDEFNUM: return "DT_VERDEFNUM";
+    case DT_VERNEED: return "DT_VERNEED";
+    case DT_VERNEEDNUM: return "DT_VERNEEDNUM";
+    case DT_VERSYM: return "DT_VERSYM";
+#if 0
+    case DT_AUXILIARY: return "DT_AUXILIARY";
+    case DT_USED: return "DT_USED";
+    case DT_FILTER: return "DT_FILTER";
+#endif
+    default: return "";
+  }
+}
+#endif
+
 static int phdr_print(struct dl_phdr_info * info, size_t size, void * data)
 {
   auto & numobjects = *(size_t *)data;
@@ -93,9 +187,6 @@ static int phdr_print(struct dl_phdr_info * info, size_t size, void * data)
   {
     const auto & phdr = info->dlpi_phdr[j];
     const int p_type = phdr.p_type;
-
-    if (p_type == PT_TLS)
-      CmiError("AMPI> Warning: Use of thread_local detected in pieglobals binary!\n");
 
 #if PIEGLOBALS_DEBUG >= 1
     const char * type;
@@ -116,9 +207,10 @@ static int phdr_print(struct dl_phdr_info * info, size_t size, void * data)
     }
 
     const uintptr_t start = (uintptr_t)info->dlpi_addr + phdr.p_vaddr;
+    const uintptr_t end = start + phdr.p_memsz;
     CmiPrintf("    %2d: [0x%012" PRIxPTR ", 0x%012" PRIxPTR "); memsz: 0x%07lx; align: 0x%04lx; flags: %c%c%c + 0x%x; ", j,
            start,
-           start + phdr.p_memsz,
+           end,
            phdr.p_memsz,
            phdr.p_align,
            (phdr.p_flags & PF_R) ? 'R' : '-',
@@ -129,6 +221,17 @@ static int phdr_print(struct dl_phdr_info * info, size_t size, void * data)
       CmiPrintf("%s\n", type);
     else
       CmiPrintf("[other (0x%x)]\n", p_type);
+
+    if (p_type == PT_DYNAMIC)
+    {
+      const auto item_start = (const uintptr_t *)start, item_end = (const uintptr_t *)end;
+      for (auto item = item_start; item + 1 < item_end && item[0] != DT_NULL; item += 2)
+      {
+        const char * const item_type_name = phdr_get_dynamic_type_name(item[0]);
+        CmiPrintf("     - %2zu: 0x%08" PRIxPTR " = 0x%012" PRIxPTR "; %s\n",
+          (item - item_start) / 2, item[0], item[1], item_type_name);
+      }
+    }
 #endif
   }
 
@@ -297,7 +400,8 @@ void AMPI_Node_Setup(int numranks)
 
   int flags = RTLD_NOW|RTLD_LOCAL;
 #if CMK_HAS_RTLD_DEEPBIND
-  flags |= RTLD_DEEPBIND;
+  if (AMPI_FuncPtr_Active())
+    flags |= RTLD_DEEPBIND;
 #endif
   SharedObject myexe = dlopen(binary_path_str, flags);
 
@@ -340,6 +444,10 @@ void AMPI_Node_Setup(int numranks)
   CmiAssert(!pieglobalsdata.objects.empty());
 
   atexit(ampiMarkAtexit);
+
+#if CMK_HAS_TLS_VARIABLES
+  CmiTLSStatsInit();
+#endif
 }
 
 

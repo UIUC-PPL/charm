@@ -46,6 +46,7 @@ extern "C" {
 #endif
 
 void CmiTLSInit(tlsseg_t * newThreadParent);
+void CmiTLSStatsInit(void);
 
 tlsdesc_t CmiTLSGetDescription(void);
 void CmiTLSCreateSegUsingPtr(const tlsseg_t * threadParent, tlsseg_t * t, void * ptr);

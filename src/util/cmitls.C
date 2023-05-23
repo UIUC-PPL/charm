@@ -163,7 +163,7 @@ static int count_tls_sizes(struct dl_phdr_info* info, size_t size, void* data)
   return 0;
 }
 
-static inline void CmiTLSStatsInit()
+void CmiTLSStatsInit()
 {
   CmiTLSDescription.size = 0;
   CmiTLSDescription.align = 0;
@@ -239,7 +239,7 @@ struct TLVDescriptor
 };
 
 
-static inline void CmiTLSStatsInit()
+void CmiTLSStatsInit()
 {
   size_t totalsize = 0;
   size_t total_emutls_num = 0;
@@ -461,7 +461,7 @@ Phdr* getTLSPhdrEntry()
   return NULL;
 }
 
-static void CmiTLSStatsInit()
+void CmiTLSStatsInit()
 {
   /* Use dynamic linking in case Charm++ shared objects are used by a binary lacking
    * conv-static.o, such as in the case of Charm4py. */
@@ -481,7 +481,7 @@ static void CmiTLSStatsInit()
 
 #else
 
-static inline void CmiTLSStatsInit()
+void CmiTLSStatsInit()
 {
 }
 

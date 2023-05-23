@@ -40,9 +40,6 @@ void AMPI_Node_Setup(int numranks)
   {
     const Lmid_t lmid = LM_ID_NEWLM;
     int flags = RTLD_NOW|RTLD_LOCAL;
-#if CMK_HAS_RTLD_DEEPBIND
-    flags |= RTLD_DEEPBIND;
-#endif
     SharedObject myexe = dlmopen(lmid, binary_path.c_str(), flags);
 
     if (myexe == nullptr)

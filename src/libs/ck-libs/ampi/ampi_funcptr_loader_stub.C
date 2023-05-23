@@ -10,3 +10,8 @@ AMPI_FuncPtr_Unpack_t AMPI_FuncPtr_Unpack_Locate(SharedObject)
 {
   return nullptr;
 }
+
+int AMPI_FuncPtr_Active()
+{
+  return 0;
+}

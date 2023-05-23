@@ -46,3 +46,8 @@ AMPI_FuncPtr_Unpack_t AMPI_FuncPtr_Unpack_Locate(SharedObject myexe)
 
   return myPtrUnpack;
 }
+
+int AMPI_FuncPtr_Active()
+{
+  return 1;
+}
