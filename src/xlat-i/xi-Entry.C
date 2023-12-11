@@ -934,6 +934,12 @@ void Entry::genGroupDefs(XStr& str) {
           str << "     ckDelegatedTo()->" << node << "GroupSend(ckDelegatedPtr(),"
               << parampg << ");\n";
         }
+        if (container->isNodeGroup() && !param->isMessage()) {
+          str << "  } else if (impl_e_opts && (impl_e_opts->getNodeGroupPe() != CK_PE_ANY)) {\n";
+          str << "    int impl_pe = impl_e_opts->getNodeGroupPe();\n";
+          str << "    CkAssert(CkNodeOf(impl_pe) == this->ckGetGroupPe());\n";
+          str << "    CkSendMsgNodeBranchPe(" << epIdx() << ",impl_msg,impl_pe,ckGetGroupID()" << opts << ");\n";
+        }
         str << "  } else {\n";
         str << "    CkSendMsg" << node << "Branch"
             << "(" << parampg << opts << ");\n";

@@ -395,6 +395,7 @@ extern void CkSendMsgBranchMulti(int eIdx, void *msg, CkGroupID gID, int npes, c
 extern void CkSendMsgBranchGroup(int eIdx,void *msg,CkGroupID gID,CmiGroup grp, int opts CK_MSGOPTIONAL);
 extern void CkSendMsgNodeBranch(int eIdx, void *msg, int destNode, CkGroupID gID, int opts CK_MSGOPTIONAL);
 extern void CkSendMsgNodeBranchInline(int eIdx, void *msg, int destNode, CkGroupID gID, int opts CK_MSGOPTIONAL);
+extern void CkSendMsgNodeBranchPe(int eIdx, void *msg, int destPe, CkGroupID gID, int opts CK_MSGOPTIONAL);
 extern void CkSendMsgNodeBranchMulti(int eIdx, void *msg, CkGroupID gID, int npes, const int *nodes, int opts CK_MSGOPTIONAL);
 extern void CkBroadcastWithinNode(int eIdx, void *msg, CkGroupID gID, int opts CK_MSGOPTIONAL);
 extern void CkBroadcastMsgBranch(int eIdx, void *msg, CkGroupID gID, int opts CK_MSGOPTIONAL);

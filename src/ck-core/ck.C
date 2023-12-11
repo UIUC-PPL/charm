@@ -2080,6 +2080,24 @@ void CkSendMsgNodeBranch(int eIdx, void *msg, int node, CkGroupID gID, int opts)
   CkpvAccess(_coreState)->create();
 }
 
+void CkSendMsgNodeBranchPe(int eIdx, void *msg, int pe, CkGroupID gID, int opts) {
+  // TODO ( expand support for these options at some point... )
+  CkAssertMsg(!((opts & CK_MSG_INLINE) || (opts & CK_MSG_IMMEDIATE)),
+              "pe-level inline and immediate sends to node branchs unsupported");
+  int numPes = (pe == CK_PE_ALL) ? CkNumPes() : 1;
+  envelope *env = _prepareMsgBranch(eIdx, msg, gID, ForNodeBocMsg);
+  _TRACE_ONLY(numPes);
+  _TRACE_CREATION_N(env, numPes);
+  if (opts & CK_MSG_SKIP_OR_IMM) {
+    _noCldEnqueue(pe, env);
+  } else {
+    _skipCldEnqueue(pe, env, _infoIdx);
+  }
+  _TRACE_CREATION_DONE(numPes);
+  _STATS_RECORD_SEND_NODE_BRANCH_1();
+  CkpvAccess(_coreState)->create();
+}
+
 void CkSendMsgNodeBranchMultiImmediate(int eIdx,void *msg,CkGroupID gID,int npes,const int *nodes)
 {
 #if CMK_IMMEDIATE_MSG && ! CMK_SMP

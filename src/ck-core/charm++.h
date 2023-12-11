@@ -67,6 +67,7 @@ class CkMarshalledMessage {
  * It is only used with parameter marshalling.
  */
 class CkEntryOptions : public CkNoncopyable {
+	int destPe; // for directing node-group sends
 	int queueingtype; //CK_QUEUEING type
 	int prioBits; //Number of bits of priority to use
 	typedef unsigned int prio_t; //Datatype used to represent priorities
@@ -74,8 +75,9 @@ class CkEntryOptions : public CkNoncopyable {
 	prio_t prioStore; //For short priorities, stores the priority value
 	std::vector<CkGroupID> depGroupIDs;  // group dependencies
 public:
-	CkEntryOptions(void): queueingtype(CK_QUEUEING_FIFO), prioBits(0), 
-                              prioPtr(NULL), prioStore(0) {
+	CkEntryOptions(void)
+	: destPe(CK_PE_ANY), queueingtype(CK_QUEUEING_FIFO),
+	  prioBits(0), prioPtr(NULL), prioStore(0) {
 	}
 
 	~CkEntryOptions() {
@@ -147,6 +149,9 @@ public:
 	inline int getGroupDepSize() const { return sizeof(CkGroupID)*(depGroupIDs.size()); }
 	inline int getGroupDepNum() const { return depGroupIDs.size(); }
 	inline const CkGroupID *getGroupDepPtr() const { return &(depGroupIDs[0]); }
+
+	inline int getNodeGroupPe() const { return this->destPe; }
+	inline void setNodeGroupPe(int pe) { this->destPe = pe; }
 };
 
 #include "ckmarshall.h"
