@@ -40,6 +40,7 @@ class CkLBArgs
   double _lb_targetRatio;  // Specifies the target load ratio for LBs that aim for a
                            // particular load ratio
   bool _lb_metaLbOn;
+  bool _lb_treeMetaLbOn;
   char* _lb_metaLbModelDir;
   char* _lb_treeLBFile = (char*)"treelb.json";
 
@@ -57,6 +58,7 @@ class CkLBArgs
     _lb_maxDistPhases = 10;
     _lb_targetRatio = 1.05;
     _lb_metaLbOn = false;
+    _lb_treeMetaLbOn = false;
     _lb_metaLbModelDir = nullptr;
   }
   inline char*& treeLBFile() { return _lb_treeLBFile; }
@@ -79,6 +81,7 @@ class CkLBArgs
   inline int& maxDistPhases() { return _lb_maxDistPhases; }
   inline double& targetRatio() { return _lb_targetRatio; }
   inline bool& metaLbOn() { return _lb_metaLbOn; }
+  inline bool& treeMetaLbOn() {return _lb_treeMetaLbOn; }
   inline char*& metaLbModelDir() { return _lb_metaLbModelDir; }
 };
 

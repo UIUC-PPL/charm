@@ -155,6 +155,7 @@ set(conv-util-cxx-sources
     src/util/pup_util.C
     src/util/pup_xlater.C
     src/util/spanningTree.C
+        src/util/fastforest.C
 )
 
 if(CMK_CAN_LINK_FORTRAN)

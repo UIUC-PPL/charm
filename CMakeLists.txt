@@ -813,7 +813,7 @@ set(src-util-h-sources src/util/SSE-Double.h src/util/SSE-Float.h
     src/util/treeStrategy_nodeAware_minBytes.h
     src/util/treeStrategy_nodeAware_minGens.h src/util/treeStrategy_topoUnaware.h
     src/util/uFcontext.h src/util/uJcontext.h src/util/valgrind.h
-    src/util/vector2d.h)
+    src/util/vector2d.h src/util/fastforest.h)
 
 if(CMK_CAN_LINK_FORTRAN)
     set(src-util-h-sources
