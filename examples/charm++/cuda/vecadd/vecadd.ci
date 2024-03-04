@@ -1,9 +1,15 @@
 mainmodule vecadd {
-  readonly int vectorSize;
   readonly CProxy_Main mainProxy;
+  readonly int vectorSize;
+  readonly int numChares;
+  readonly int numIters;
+  readonly int numWarmups;
+  readonly bool cudaSync;
+  readonly bool noMemcpy;
 
   mainchare Main {
     entry Main(CkArgMsg* m);
+    entry [reductiontarget] void warmupDone();
     entry [reductiontarget] void done();
   };
 

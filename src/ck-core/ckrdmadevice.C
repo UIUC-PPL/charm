@@ -316,7 +316,7 @@ void CkRdmaDeviceIssueRgets(envelope *env, int numops, void **arrPtrs, int *arrS
     DeviceRdmaOp* save_op = (DeviceRdmaOp*)((char*)rdma_data
         + sizeof(DeviceRdmaInfo) + sizeof(DeviceRdmaOp) * i);
     QdCreate(1);
-    CmiRecvDevice(save_op, DEVICE_RECV_TYPE_CHARM);
+    CmiRecvDevice(save_op, COMM_TYPE_CHARM);
   }
 #endif
 }

@@ -28,18 +28,18 @@ void CmiSendDevice(int dest_pe, const void*& ptr, size_t size, uint64_t& tag) {
   LrtsSendDevice(dest_pe, ptr, size, tag);
 }
 
-void CmiRecvDevice(DeviceRdmaOp* op, DeviceRecvType type) {
+void CmiRecvDevice(DeviceRdmaOp* op, CommType type) {
   LrtsRecvDevice(op, type);
 }
 
 RdmaAckHandlerFn rdmaDeviceRecvHandlerFn;
 
-void CmiRdmaDeviceRecvInit(RdmaAckHandlerFn fn) {
+void CmiDeviceRecvHandlerInit(RdmaAckHandlerFn fn) {
   // Set handler function that gets invoked when data transfer is complete (on receiver)
   rdmaDeviceRecvHandlerFn = fn;
 }
 
-void CmiInvokeRecvHandler(void* data) {
+void CmiDeviceRecvHandler(void* data) {
   rdmaDeviceRecvHandlerFn(data);
 }
 #endif // CMK_GPU_COMM

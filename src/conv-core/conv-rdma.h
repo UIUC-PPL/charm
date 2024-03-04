@@ -303,4 +303,13 @@ zcPupSourceInfo *zcPupAddSource(CmiNcpyBuffer &src, std::function<void (void *)>
 
 void zcPupGet(CmiNcpyBuffer &src, CmiNcpyBuffer &dest);
 
+/****************************** Channel API ******************************/
+
+#if CMK_GPU_COMM
+void CmiChannelSend(int dest_pe, int id, const void*& ptr, size_t size, void* metadata, uint64_t tag);
+void CmiChannelRecv(int id, const void*& ptr, size_t size, void* metadata, uint64_t tag);
+void CmiChannelHandlerInit(RdmaAckCallerFn fn);
+void CmiChannelHandler(void* data);
+#endif
+
 #endif
