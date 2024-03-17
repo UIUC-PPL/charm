@@ -204,7 +204,7 @@ following command:
 
 .. code-block:: bash
 
-   ./charmrun +p14 ./pgm ++ppn 7 +commap 0 +pemap 1-7
+   ./charmrun ++n 2 ./pgm ++ppn 7 +commap 0 +pemap 1-7
 
 See :ref:`sec-smpopts` of the Charm++ manual for more information.
 

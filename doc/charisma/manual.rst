@@ -483,7 +483,7 @@ Turing Cluster, use the customized job launcher ``rjq`` or ``rj``).
 
 .. code-block:: bash
 
-   $ charmrun pgm +p4
+   $ charmrun pgm ++n 4
 
 Please refer to Charm++'s manual and tutorial for more details of
 building and running a Charm++ program.
@@ -619,7 +619,7 @@ instance, the following command uses ``RefineLB``.
 
 .. code-block:: bash
 
-   $ ./charmrun ./pgm +p16 +balancer RefineLB
+   $ ./charmrun ./pgm ++n 16 +balancer RefineLB
 
 .. _secsparse:
 
