@@ -56,11 +56,13 @@ module ampi {
     entry EXPEDITED void genericRdma(nocopy char buf[size], int size, CMK_REFNUM_TYPE seq, int tag, int srcRank);
     entry EXPEDITED void completedSend(int sreqIdx);
     entry EXPEDITED_NOKEEP void completedRdmaSend(CkDataMsg *msg);
+    entry EXPEDITED_NOKEEP void completedRdmaBcastSend(CkDataMsg *msg);
     entry EXPEDITED_NOKEEP void completedRdmaRecv(CkDataMsg *msg);
     entry EXPEDITED void requestPut(MPI_Request req, CkNcpyBuffer targetInfo);
     entry EXPEDITED_REDN void barrierResult(void);
     entry EXPEDITED_REDN void ibarrierResult(void);
     entry EXPEDITED_NOKEEP void bcastResult(AmpiMsg *);
+    entry EXPEDITED void bcastResultRdma(nocopy char buf[size], int size, CMK_REFNUM_TYPE seq, int tag, int srcRank);
     entry EXPEDITED_NOKEEP void rednResult(CkReductionMsg *msg);
     entry EXPEDITED_NOKEEP void irednResult(CkReductionMsg *msg);
     entry EXPEDITED_THREADED void splitPhase1(CkReductionMsg *msg);
