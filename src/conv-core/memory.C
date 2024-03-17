@@ -137,7 +137,10 @@ void * (*mm_impl_pvalloc)(size_t) = initialize_memory_wrapper_pvalloc;
 void initialize_memory_wrapper_cfree(void *ptr);
 void (*mm_impl_cfree)(void*) = initialize_memory_wrapper_cfree;
 #endif
-#if CMK_HAS_MALLINFO
+#if CMK_HAS_MALLINFO2
+struct mallinfo2;
+struct mallinfo2 (*mm_impl_mallinfo)(void) = NULL;
+#elif CMK_HAS_MALLINFO
 struct mallinfo;
 struct mallinfo (*mm_impl_mallinfo)(void) = NULL;
 #endif
@@ -614,7 +617,7 @@ INLINE static CMK_TYPEDEF_UINT8 MemusageProcSelfStat(void){
     return vsz;
 }
 
-#if ! CMK_HAS_MALLINFO
+#if !CMK_HAS_MALLINFO && !CMK_HAS_MALLINFO2
 INLINE static CMK_TYPEDEF_UINT8 MemusageMallinfo(void){ return 0;}
 #else
 #if CMK_HAS_MALLOC_H
@@ -624,11 +627,17 @@ INLINE static CMK_TYPEDEF_UINT8 MemusageMallinfo(void){
     /* IA64 seems to ignore mi.uordblks, but updates mi.hblkhd correctly */
     if (skip_mallinfo) return 0;
     else {
+#if CMK_HAS_MALLINFO2 && !CMK_MEMORY_BUILD_GNU_HOOKS
+    struct mallinfo2 mi;
+#else
     struct mallinfo mi;
+#endif
 #if CMK_MEMORY_BUILD_OS_WRAPPED && !CMK_MEMORY_BUILD_GNU_HOOKS
     if (mm_impl_mallinfo == NULL)
       initialize_memory_wrapper();
     mi = (*mm_impl_mallinfo)();
+#elif CMK_HAS_MALLINFO2 && !CMK_MEMORY_BUILD_GNU_HOOKS
+    mi = mallinfo2();
 #else
 #ifdef __GNUC__
 #pragma GCC diagnostic push

@@ -33,7 +33,10 @@ extern void * (*mm_impl_pvalloc)(size_t);
 #if CMK_HAS_CFREE
 extern void (*mm_impl_cfree)(void*);
 #endif
-#if CMK_HAS_MALLINFO
+#if CMK_HAS_MALLINFO2
+struct mallinfo2;
+extern struct mallinfo2 (*mm_impl_mallinfo)(void);
+#elif CMK_HAS_MALLINFO
 struct mallinfo;
 extern struct mallinfo (*mm_impl_mallinfo)(void);
 #endif
@@ -64,7 +67,9 @@ void initialize_memory_wrapper() {
 #if CMK_HAS_CFREE
   auto os_cfree = (void (*)(void*)) dlsym(RTLD_NEXT, "cfree");
 #endif
-#if CMK_HAS_MALLINFO
+#if CMK_HAS_MALLINFO2
+  auto os_mallinfo2 = (struct mallinfo2 (*)(void)) dlsym(RTLD_NEXT, "mallinfo2");
+#elif CMK_HAS_MALLINFO
   auto os_mallinfo = (struct mallinfo (*)(void)) dlsym(RTLD_NEXT, "mallinfo");
 #endif
 
@@ -86,7 +91,9 @@ void initialize_memory_wrapper() {
 #if CMK_HAS_CFREE
   mm_impl_cfree = os_cfree;
 #endif
-#if CMK_HAS_MALLINFO
+#if CMK_HAS_MALLINFO2
+  mm_impl_mallinfo = os_mallinfo2;
+#elif CMK_HAS_MALLINFO
   mm_impl_mallinfo = os_mallinfo;
 #endif
 }
