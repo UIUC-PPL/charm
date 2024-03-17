@@ -11,6 +11,9 @@ else()
 endif()
 set(CMAKE_REQUIRED_DEFINITIONS -D_GNU_SOURCE)
 
+string(REPLACE " " ";" CMAKE_REQUIRED_INCLUDES_add "${ADDITIONAL_INCLUDE_DIRS}")
+set(CMAKE_REQUIRED_INCLUDES ${CMAKE_REQUIRED_INCLUDES} ${CMAKE_REQUIRED_INCLUDES_add})
+
 # C types and type sizes
 check_type_size("size_t" size_t_size)
 if(${size_t_size} EQUAL 8)
