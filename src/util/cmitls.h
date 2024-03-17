@@ -35,6 +35,7 @@ typedef void * Addr;
 typedef struct tlsdesc {
   size_t size;
   size_t align;
+  size_t offset;
 } tlsdesc_t;
 
 typedef struct tlsseg {

@@ -369,7 +369,8 @@ overhead. AMPI provides runtime support for privatizing thread-local
 variables to user-level threads by changing the TLS segment register
 when context switching between user-level threads. The runtime overhead
 is that of changing a single pointer per user-level thread context
-switch. Currently, Charm++ supports it for x86/x86_64 platforms when
+switch. Currently, Charm++ supports it for x86, x86_64, AArch64, and
+POWER platforms when
 using GNU or LLVM compilers, as well as macOS on all supported
 architectures.
 
@@ -571,13 +572,13 @@ different schemes.
 .. _tab:portability:
 .. table:: Portability of current implementations of three privatization schemes. "Yes" means we have implemented this technique. "Maybe" indicates there are no theoretical problems, but no implementation exists. "No" indicates the technique is impossible on this platform.
 
-   ==================== ===== ====== ======= === ====== ===== =====
-   Privatization Scheme Linux Mac OS Windows x86 x86_64 PPC   ARM7
-   ==================== ===== ====== ======= === ====== ===== =====
-   Manual Code Editing  Yes   Yes    Yes     Yes Yes    Yes   Yes
-   PIEglobals           Yes   No     No      Yes Yes    Yes   Yes
-   TLSglobals           Yes   Yes    Maybe   Yes Yes    Maybe Maybe
-   PiPglobals           Yes   No     No      Yes Yes    Yes   Yes
-   FSglobals            Yes   Yes    Yes     Yes Yes    Yes   Yes
-   Swapglobals          Yes   No     No      Yes Yes    Yes   Yes
-   ==================== ===== ====== ======= === ====== ===== =====
+   ==================== ===== ====== ======= === ====== ===== ===== =======
+   Privatization Scheme Linux Mac OS Windows x86 x86_64 POWER ARMv7 AArch64
+   ==================== ===== ====== ======= === ====== ===== ===== =======
+   Manual Code Editing  Yes   Yes    Yes     Yes Yes    Yes   Yes   Yes
+   PIEglobals           Yes   No     No      Yes Yes    Yes   Yes   Yes
+   TLSglobals           Yes   Yes    Maybe   Yes Yes    Yes   No    Yes
+   PiPglobals           Yes   No     No      Yes Yes    Yes   Yes   Yes
+   FSglobals            Yes   Yes    Yes     Yes Yes    Yes   Yes   Yes
+   Swapglobals          Yes   No     No      Yes Yes    Yes   Yes   Yes
+   ==================== ===== ====== ======= === ====== ===== ===== =======
