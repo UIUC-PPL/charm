@@ -1129,6 +1129,12 @@ typedef struct {
   void *localQ;
   Queue nodeQ;
   Queue schedQ;
+  unsigned short iter; // counting number of sched iterations (hopefully of for it to roll over	 
+  unsigned short nodeGrpFreq; // call nodegroup queue once every 2^nodeGrpFreq iterations with high prio 
+	// should add a function to change this from the program for advanced users. One obstacle: 
+        // it is inside a struct that is on stack, and so not accessible for standalone functions. Need to
+        // resolve this by making a schedule a c++ object, but even then we need a ptr to the currently-running scheduler
+	// 0 means do not check nodegroup queue with high prio.. will be checked with low prio after other Qs
   int *localCounter;
 #if CMK_OBJECT_QUEUE_AVAILABLE
   Queue objQ;
