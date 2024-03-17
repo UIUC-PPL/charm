@@ -1008,19 +1008,20 @@ struct isommap
       }
 #endif
 
-      p.pup_buffer(localstart, totalsize,
-                   [localstart](size_t totalsize) -> void *
-                   {
-                     void * const mapped = map_global_memory(localstart, totalsize);
-                     if (mapped == nullptr)
-                       CmiAbort("Failed to unpack Isomalloc memory region!");
-                     return mapped;
-                   },
-                   [totalsize](void * start)
-                   {
-                     unmap_global_memory(start, totalsize);
-                   }
-                   );
+      p.pup_buffer_async(
+        localstart, totalsize,
+        [localstart](size_t totalsize) -> void *
+        {
+          void * const mapped = map_global_memory(localstart, totalsize);
+          if (mapped == nullptr)
+            CmiAbort("Failed to unpack Isomalloc memory region!");
+          return mapped;
+        },
+        [totalsize](void * start)
+        {
+          unmap_global_memory(start, totalsize);
+        }
+      );
 
       if (p.isDeleting())
         allocated_extent = start; // the context no longer owns the mmapped region
