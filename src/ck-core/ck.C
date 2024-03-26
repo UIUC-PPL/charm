@@ -1728,7 +1728,7 @@ void CkSendMsg(int entryIdx, void *msg,const CkChareID *pCid, int opts)
   _TRACE_CREATION_1(env);
   if (destPE!=-1) {
     CpvAccess(_qd)->create();
-    if (opts & CK_MSG_SKIP_OR_IMM)
+    if (PRIORITIES_DISABLED ||  opts & CK_MSG_SKIP_OR_IMM)
       _noCldEnqueue(destPE, env);
     else
       _CldEnqueue(destPE, env, _infoIdx);
@@ -1824,7 +1824,7 @@ static inline void _sendMsgBranch(int eIdx, void *msg, CkGroupID gID,
 
   _TRACE_ONLY(numPes = (pe==CLD_BROADCAST_ALL?CkNumPes():1));
   _TRACE_CREATION_N(env, numPes);
-  if (opts & CK_MSG_SKIP_OR_IMM)
+  if (PRIORITIES_DISABLED || opts & CK_MSG_SKIP_OR_IMM)
     _noCldEnqueue(pe, env);
   else
     _skipCldEnqueue(pe, env, _infoIdx);
@@ -1998,7 +1998,7 @@ static inline void _sendMsgNodeBranch(int eIdx, void *msg, CkGroupID gID,
     }
   numPes = (node==CLD_BROADCAST_ALL?CkNumNodes():1);
   _TRACE_CREATION_N(env, numPes);
-  if (opts & CK_MSG_SKIP_OR_IMM) {
+  if (PRIORITIES_DISABLED || opts & CK_MSG_SKIP_OR_IMM) {
     _noCldNodeEnqueue(node, env);
   }
   else
@@ -2150,7 +2150,7 @@ void CkArrayManagerDeliver(int pe,void *msg, int opts) {
   _prepareOutgoingArrayMsg(env,ForArrayEltMsg);
   if (opts & CK_MSG_IMMEDIATE)
     CmiBecomeImmediate(env);
-  if (opts & CK_MSG_SKIP_OR_IMM)
+  if (PRIORITIES_DISABLED || opts & CK_MSG_SKIP_OR_IMM)
     _noCldEnqueue(pe, env);
   else
     _skipCldEnqueue(pe, env, _infoIdx);

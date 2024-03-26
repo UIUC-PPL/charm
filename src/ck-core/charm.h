@@ -381,6 +381,12 @@ typedef enum {
 #define CK_MSG_EXPEDITED	0x4
 #define CK_MSG_LB_NOTRACE	0x8   /* load balancer doesn't trace */
 
+#if CK_ENABLE_MSG_PRIORITIES
+#define PRIORITIES_DISABLED 0
+#else
+#define PRIORITIES_DISABLED 1
+#endif // CK_ENABLE_MSG_PRIORITIES
+
 #ifdef __cplusplus
 #define CK_MSGOPTIONAL =0
 #else

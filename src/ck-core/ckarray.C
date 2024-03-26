@@ -1521,7 +1521,7 @@ void CProxy_ArrayBase::ckBroadcast(CkArrayMessage* msg, int ep, int opts) const
     // Broadcast message via serializer node
     _TRACE_CREATION_DETAILED(UsrToEnv(msg), ep);
     static constexpr int serializer = 0;
-    int skipsched = opts & CK_MSG_EXPEDITED;
+    int skipsched = PRIORITIES_DISABLED || (opts & CK_MSG_EXPEDITED);
     CProxy_CkArray ap(_aid);
 
     if (CkMyPe() != serializer)
@@ -1582,7 +1582,7 @@ void CkArray::incrementBcastNoAndSendBack(int srcPe, MsgPointerWrapper w)
 
 void CkArray::sendZCBroadcast(MsgPointerWrapper w)
 {
-  int skipsched = w.opts & CK_MSG_EXPEDITED;
+  int skipsched = PRIORITIES_DISABLED || (w.opts & CK_MSG_EXPEDITED);
   int nokeep = _entryTable[w.ep]->noKeep;
   UsrToEnv(w.msg)->setGroupEpoch(w.epoch);
   if (skipsched && nokeep)
