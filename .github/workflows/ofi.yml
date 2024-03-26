@@ -1,0 +1,28 @@
+name: OFI Linux
+
+on: [pull_request, merge_group]
+
+jobs:
+  build:
+    timeout-minutes: 90
+
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v2
+    # Uncomment the lines below to set up a tmate session for debugging.
+    # See https://github.com/marketplace/actions/debugging-with-tmate for details.
+    # This can't be enabled all the time as the tmate session will wait for a user to connect before running
+    # the build.
+    #- name: Tmate session for debugging
+    #  uses: mxschmitt/action-tmate@v2
+    - name: install-prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install libfabric-dev libpmix-dev openmpi-bin
+    - name: build
+      run: ./build all-test ofi-linux-x86_64 openpmix --with-production -j4 -g -I/usr/lib/x86_64-linux-gnu/pmix2/include/
+    - name: test
+      run: |
+        export OMPI_MCA_rmaps_base_oversubscribe=1
+        make -C ofi-linux-x86_64-openpmix/tmp test TESTOPTS="+ofi_runtime_tcp"
