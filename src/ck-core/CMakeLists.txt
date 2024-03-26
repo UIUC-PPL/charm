@@ -31,7 +31,7 @@ set(ck-cxx-sources
 set(ck-h-sources XArraySectionReducer.h charm++.h charm++_type_traits.h
     charm-api.h charm.h ck.h ckIgetControl.h ckarray.h ckarrayindex.h
     ckarrayoptions.h ckcallback-ccs.h ckcallback.h ckcheckpoint.h
-    ckmarshall.h ckfutures.h cklocation.h cklocrec.h
+    ckmarshall.h ckentryopts.h ckfutures.h cklocation.h cklocrec.h
     ckmemcheckpoint.h ckmessage.h ckmigratable.h ckmulticast.h
     ckobjQ.h ckrdma.h ckrdmadevice.h ckreduction.h cksection.h
     ckstream.h cksyncbarrier.h debug-charm.h envelope-path.h envelope.h init.h

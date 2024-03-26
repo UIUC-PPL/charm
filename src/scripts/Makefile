@@ -188,7 +188,7 @@ ifeq (1,$(CMK_CAN_LINK_FORTRAN))
 endif
 
 CKHEADERS=ck.h ckstream.h objid.h envelope.h init.h qd.h charm.h charm++.h \
-	  ckmarshall.h ckfutures.h ckIgetControl.h debug-charm.h\
+	  ckmarshall.h ckfutures.h ckentryopts.h ckIgetControl.h debug-charm.h\
 	  ckcallback.h CkCallback.decl.h ckcallback-ccs.h 	\
 	  cksection.h ckmessage.h cklocrec.h ckmigratable.h \
 	  ckarrayindex.h ckarrayoptions.h ckarray.h cklocation.h ckmulticast.h ckreduction.h \
