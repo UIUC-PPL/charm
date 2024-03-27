@@ -874,11 +874,11 @@ EOF
       fi
   done
 
-  if test -z $got_opt_whole_archive
-  then
-    echo "Don't know how to build libcharm.so for Charm4py"
-    test_finish 1
-  fi
+  # if test -z $got_opt_whole_archive
+  # then
+    # echo "Don't know how to build libcharm.so for Charm4py"
+    # test_finish 1
+  # fi
 fi
 
 # Figure out if the user has asked to enable the latest language standards

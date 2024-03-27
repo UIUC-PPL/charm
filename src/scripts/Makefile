@@ -82,7 +82,7 @@ AMPIC AMPIF: AMPI
 f90charm: charm++
 
 libcharm: charm++
-	cd $(L) ; $(CHARMC) -standalone -whole-archive -c++stl -shared -o libcharm.so $(LIBCHARM_LIBS)
+	cd $(L) ; $(CHARMC) -standalone -whole-archive -c++stl -shared -o libcharm.$(CMK_SHARED_SUF) $(LIBCHARM_LIBS)
 
 charm4py: libcharm
 
