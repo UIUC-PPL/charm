@@ -334,7 +334,11 @@ public:
     p((char*)elt,size);
   }
 };
-
+#if CMK_OFI
+// EJB TODO the fix for this belongs elsewhere, but this is ok for now
+#undef CMK_HAS_GET_MYADDRESS
+#define CMK_HAS_GET_MYADDRESS 0
+#endif
 #if CMK_HAS_GET_MYADDRESS
 #include <rpc/rpc.h>
 #endif

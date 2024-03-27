@@ -184,7 +184,39 @@ then
 elif [[ -n "$LSB_HOSTS" ]]
 then
 # Tungsten
-  runCmd cmpirun -lsf -poll -no_smp -gm_long 200000 "${args[@]}"
+    runCmd cmpirun -lsf -poll -no_smp -gm_long 200000 "${args[@]}"
+elif [[ -n "$SLURM_JOB_ID" ]]
+then
+    #use srun
+    # srun in a cray-shasta environment should support --mpi=cray-shasta regardless, the question here is how this charm was built
+    # assume built with craype  if that is loaded
+    craype=`module -t list craype 2>&1 | grep craype`
+    if [[ $SLURM_JOB_NUM_NODES -eq 1 ]]
+    then
+	NET_ARGS="--network=single_node_vni"
+    else
+	if [[ $pes -eq 1 ]]
+	then
+	    NET_ARGS="--network=single_node_vni"
+	else
+	    if [[ $nodes -eq 1 ]]
+	    then
+		NET_ARGS="--network=single_node_vni"
+	    else
+		NET_ARGS=""
+	    fi
+	fi
+    fi
+
+    if [[ $? -eq 0 ]]
+    then
+	runCmd srun --mpi=cray_shasta $NET_ARGS -n "$nodes" "${args[@]}"
+    else
+	#someday this should be pmix, but our pmix launcher needs some
+	# work and cray hasn't really adopted PMIX at this time.
+	# unclear what the right answer is in other OFI environments
+	runCmd srun --mpi=pmi2 -n "$nodes" "${args[@]}"
+    fi
 elif [[ -n "$PBS_QUEUE" || -n "$LSF_QUEUE" ]]
 then
 # Interactive mode: create, and submit a batch job

@@ -9,6 +9,9 @@
 #include "gni_pub.h"
 #include "pmi.h"
 typedef gni_mem_handle_t mem_handle_t;
+#elif CMK_OFI
+#include "rdma/fi_domain.h"
+typedef struct fid_mr* mem_handle_t;
 #else
 // in uGNI, it is memory handler, other versions, this is an integer
 // a unique integer to represent the memory block
@@ -90,6 +93,12 @@ typedef struct block_header
 #undef freelists_extra
 } block_header;
 
+typedef struct out_of_pool_header
+{
+  block_header block_head;
+  mempool_header block;
+} out_of_pool_header;
+
 typedef struct large_block_header
 {
   mem_handle_t mem_hndl;
@@ -113,7 +122,7 @@ typedef struct mempool_type
   size_t block_tail;
   size_t limit;
   size_t size;
-#if CMK_SMP && CMK_CONVERSE_UGNI
+#if CMK_SMP && (CMK_CONVERSE_UGNI || CMK_OFI)
   CmiNodeLock mempoolLock;
   char padding[CMIPADDING((6 * sizeof(size_t) + sizeof(CmiNodeLock)), 16)];
 #elif !CMK_64BIT
@@ -136,7 +145,8 @@ void mempool_destroy(mempool_type* mptr);
 void* mempool_malloc(mempool_type* mptr, size_t size, int expand);
 void* mempool_large_malloc(mempool_type* mptr, size_t size, int expand);
 void mempool_free(mempool_type* mptr, void* ptr_free);
-#if CMK_SMP && CMK_CONVERSE_UGNI
+
+#if CMK_SMP && (CMK_CONVERSE_UGNI || CMK_OFI)
 void mempool_free_thread(void* ptr_free);
 #endif
 

@@ -92,7 +92,8 @@ function parse_triplet() {
 parse_triplet
 
 extra_triplet_opts=${extra_triplet_opts//-/ }
-
+opt_build_ofi=0
+opt_cxi=0
 opt_ampi_error_checking=0
 opt_ampi_mpich_tests=0
 opt_ampi_only=0
@@ -175,6 +176,9 @@ function parse_platform_compilers() {
     cuda)
       opt_cuda=1
       ;;
+    cxi)
+      opt_cxi=1
+      ;;
     smp)
       opt_smp=1
       ;;
@@ -193,7 +197,7 @@ function parse_platform_compilers() {
     pxshm)
       opt_pxshm=1
       ;;
-    simplepmi|slurmpmi|slurmpmi2|ompipmix|openpmix)
+    simplepmi|slurmpmi|slurmpmi2|ompipmix|openpmix|slurmpmi2cray)
       opt_lrts_pmi="$arg"
       ;;
     persistent)
@@ -492,7 +496,7 @@ fi
 
 # Append certain features and compilers to the end of $builddir
 builddir_extra=""
-for flag in opt_omp opt_smp opt_tcp opt_pthreads opt_pxshm opt_syncft opt_ooc opt_persistent opt_cuda; do
+for flag in opt_omp opt_smp opt_tcp opt_pthreads opt_pxshm opt_syncft opt_ooc opt_persistent opt_cuda opt_cxi; do
   [[ $flag -eq 1 ]] && builddir_extra+="-${flag/opt_/}"
 done
 
@@ -500,10 +504,14 @@ for c in "$opt_lrts_pmi" "${opt_compiler[@]}"; do
   [[ -n "$c" ]] && builddir_extra+="-$c"
 done
 
-# Use slurmpmi2 by default for ofi builds on Cray platforms (e.g. Cray
-# Shasta/EX) since it matches the interface of cray-pmi
+if [[ "$actual_triplet" = ofi* ]]; then
+    opt_build_ofi=1
+fi
+
+# Use slurmpmi2cray by default for ofi builds on Cray platforms (e.g. Cray
+# Shasta/EX) to access cray extentions to PMI from cray-pmi
 if [[ "$actual_triplet" = ofi-cray* && -z "$opt_lrts_pmi" ]]; then
-    opt_lrts_pmi="slurmpmi2"
+    opt_lrts_pmi="slurmpmi2cray"
 fi
 
 # Default to using simplepmi on non-Cray OFI platforms
@@ -673,6 +681,8 @@ CC=$opt_CC CXX=$opt_CXX FC=$opt_FC cmake "$my_srcdir" \
   -DTCP="$opt_tcp" \
   -DTRACING="$opt_tracing" \
   -DTRACING_COMMTHREAD="$opt_tracing_commthread" \
+  -DCXI="$opt_cxi" \
+  -DCMK_BUILD_OFI="$opt_build_ofi" \
   -DZLIB="$opt_zlib"
 
 

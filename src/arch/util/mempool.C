@@ -110,6 +110,7 @@ INLINE_KEYWORD void fillblock(mempool_type* mptr, block_header* block_head, size
       {
         ((slot_header*)((char*)mptr + prev))->gnext = block_head->freelists[i];
       }
+      DEBUG_PRINT("Pow %d size %ld addr %p offset %ld block_head->freelists[i]=%p\n", head->power, head->size, head, head- (slot_header*)((char *)mptr), block_head->freelists[i]);
       prev = block_head->freelists[i];
     }
   }
@@ -224,6 +225,7 @@ void removeblocks(mempool_type* mptr)
   }
 }
 
+
 /** initialize mempool */
 mempool_type* mempool_init(size_t pool_size, mempool_newblockfn allocfn, mempool_freeblock freefn, size_t limit)
 {
@@ -241,7 +243,7 @@ mempool_type* mempool_init(size_t pool_size, mempool_newblockfn allocfn, mempool
   mptr->block_tail = 0;
   mptr->limit = limit;
   mptr->size = pool_size;
-#if CMK_SMP && CMK_CONVERSE_UGNI
+#if CMK_SMP && (CMK_CONVERSE_UGNI || CMK_OFI)
   mptr->mempoolLock = CmiCreateLock();
 #endif
   mptr->block_head.mptr = (struct mempool_type*)pool;
@@ -285,7 +287,7 @@ void mempool_destroy(mempool_type* mptr)
 // append slot_header size before the real memory buffer
 void* mempool_malloc(mempool_type* mptr, size_t size, int expand)
 {
-#if CMK_SMP && CMK_CONVERSE_UGNI
+#if CMK_SMP && (CMK_CONVERSE_UGNI || CMK_OFI)
   CmiLock(mptr->mempoolLock);
 #endif
 
@@ -375,7 +377,7 @@ void* mempool_malloc(mempool_type* mptr, size_t size, int expand)
 
     head_free->block_ptr = current;
     current->used += power;
-#if CMK_SMP && CMK_CONVERSE_UGNI
+#if CMK_SMP && (CMK_CONVERSE_UGNI || CMK_OFI)
     CmiUnlock(mptr->mempoolLock);
 #endif
     DEBUG_PRINT("Malloc done\n");
@@ -422,16 +424,18 @@ void* mempool_large_malloc(mempool_type* mptr, size_t size, int expand)
   head_free->block_ptr = (block_header*)current;
   head_free->size = expand_size - sizeof(large_block_header);
   head_free->status = -1;
-#if CMK_SMP && CMK_CONVERSE_UGNI
+#if CMK_SMP && (CMK_CONVERSE_UGNI || CMK_OFI)
   CmiUnlock(mptr->mempoolLock);
 #endif
   DEBUG_PRINT("Large malloc done\n");
   return (char*)head_free + sizeof(used_header);
 }
 
-#if CMK_SMP && CMK_CONVERSE_UGNI
+#if CMK_SMP && (CMK_CONVERSE_UGNI || CMK_OFI)
 void mempool_free_thread(void* ptr_free)
+
 {
+
   slot_header* to_free = (slot_header*)((char*)ptr_free - sizeof(used_header));
   mempool_type* mptr = to_free->status == -1
              ? (mempool_type*)(((large_block_header*)(to_free->block_ptr))->mptr)

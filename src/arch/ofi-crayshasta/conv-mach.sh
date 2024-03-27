@@ -6,26 +6,20 @@ CMK_CRAY_NOGNI=1
 #If the user doesn't pass --basedir, use defaults for libfabric headers and library
 if test -z "$USER_OPTS_LD"
 then
-    if test -z "$LIBFABRIC"
+    if test -z $"CMK_LIBFABRIC_INC"
     then
-	CMK_INCDIR="$CMK_INCDIR -I/usr/include/"
-	CMK_LIBDIR="$CMK_LIBDIR -L/usr/lib64/"
-    else
-	CMK_INCDIR="$CMK_INCDIR -I$LIBFABRIC/include/"
-	CMK_LIBDIR="$CMK_LIBDIR -L$LIBFABRIC/lib64/"
+	CMK_LIBFABRIC_INC=`pkg-config --cflags libfabric`
+	CMK_LIBFABRIC_LIBS=`pkg-config --libs libfabric`
+	CMK_LIBPALS_LIBS=`pkg-config --libs libpals`
+	CMK_LIBPALS_LDPATH=`pkg-config libpals --variable=libdir`
     fi
 fi
 
-# For cray-pmi
-if test -n "$CRAY_PMI_PREFIX"
-then
-    CMK_INCDIR="$CMK_INCDIR -I$CRAY_PMI_PREFIX/include"
-    CMK_LIBDIR="$CMK_LIBDIR -L$CRAY_PMI_PREFIX/lib"
-fi
-
-CMK_LIBS="$CMK_LIBS -lfabric"
 # Use PMI2 by default on Cray systems with cray-pmi
-. $CHARMINC/conv-mach-slurmpmi2.sh
+. $CHARMINC/conv-mach-slurmpmi2cray.sh
+
+CMK_INCDIR="$CMK_PMI_INC -I/usr/include/slurm/ $CMK_LIBFABRIC_INC $CMK_INCDIR "
+CMK_LIBS="-Wl,-rpath,$CMK_LIBPALS_LDPATH,-rpath,$CMK_LIBPMI_LDPATH $CMK_LIBPALS_LIBS $CMK_PMI_LIBS -L/usr/lib64/ $CMK_LIBFABRIC_LIBS $CMK_LIBS "
 
 # For runtime
 CMK_INCDIR="$CMK_INCDIR -I./proc_management/"

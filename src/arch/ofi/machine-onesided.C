@@ -1,23 +1,36 @@
+
+// if FI_MR_VIRT_ADDR is not enabled, then we use offset from the
+// registered address which would be a 0 offset in this case.
+#define DETERMINE_OFFSET(x) ((FI_MR_SCALABLE == context.mr_mode) || ( FI_MR_VIRT_ADDR & context.mr_mode)==0) ? 0 : (const char*)((x))
+
 void registerDirectMemory(void *info, const void *addr, int size) {
   CmiOfiRdmaPtr_t *rdmaInfo = (CmiOfiRdmaPtr_t *)info;
   uint64_t requested_key = 0;
   int err;
 
-  if(FI_MR_SCALABLE == context.mr_mode) {
+  if(FI_MR_ENDPOINT & context.mr_mode)
+    {
+      ofi_reg_bind_enable(addr, size, &(rdmaInfo->mr),&context);
+    }
+  else if(FI_MR_SCALABLE == context.mr_mode){
     requested_key = __sync_fetch_and_add(&(context.mr_counter), 1);
-  }
-  err = fi_mr_reg(context.domain,
-                  addr,
-                  size,
-                  FI_REMOTE_READ | FI_REMOTE_WRITE | FI_READ | FI_WRITE,
-                  0ULL,
-                  requested_key,
-                  0ULL,
-                  &(rdmaInfo->mr),
-                  NULL);
-  if (err) {
-    CmiAbort("registerDirectMemory: fi_mr_reg failed!\n");
-  }
+      err = fi_mr_reg(context.domain,
+		      addr,
+		      size,
+		      FI_REMOTE_READ | FI_REMOTE_WRITE | FI_READ | FI_WRITE,
+		      0ULL,
+		      requested_key,
+		      0ULL,
+		      &(rdmaInfo->mr),
+		      NULL);
+      if (err) {
+	CmiAbort("registerDirectMemory: fi_mr_reg failed!\n");
+      }
+    }
+  else
+    {
+      CmiAbort("registerDirectMemory: fi_mr_reg failed!\n");
+    }
   rdmaInfo->key = fi_mr_key(rdmaInfo->mr);
 }
 
@@ -142,8 +155,7 @@ void process_onesided_reg_and_put(struct fi_cq_tagged_entry *e, OFIRequest *req)
                        ncpyOpInfo->srcSize);
 
   ncpyOpInfo->isSrcRegistered = 1; // Set isSrcRegistered to 1 after registration
-
-  const char *rbuf  = (FI_MR_SCALABLE == context.mr_mode) ? 0 : (const char*)(ncpyOpInfo->destPtr);
+  const char *rbuf  = DETERMINE_OFFSET(ncpyOpInfo->destPtr);
 
   // Allocate a completion object for tracking write completion and ack handling
   CmiOfiRdmaComp_t* rdmaComp = (CmiOfiRdmaComp_t *)malloc(sizeof(CmiOfiRdmaComp_t));
@@ -181,8 +193,7 @@ void process_onesided_reg_and_get(struct fi_cq_tagged_entry *e, OFIRequest *req)
                        ncpyOpInfo->destSize);
 
   ncpyOpInfo->isDestRegistered = 1; // Set isDestRegistered to 1 after registration
-
-  const char *rbuf  = (FI_MR_SCALABLE == context.mr_mode) ? 0 : (const char*)(ncpyOpInfo->srcPtr);
+  const char *rbuf  = DETERMINE_OFFSET(ncpyOpInfo->srcPtr);
 
   // Allocate a completion object for tracking write completion and ack handling
   CmiOfiRdmaComp_t* rdmaComp = (CmiOfiRdmaComp_t *)malloc(sizeof(CmiOfiRdmaComp_t));
@@ -232,18 +243,29 @@ void LrtsIssueRget(NcpyOperationInfo *ncpyOpInfo) {
     req->size     = ncpyOpInfo->ncpyOpInfoSize;
     req->callback = send_short_callback;
     req->data.short_msg = ncpyOpInfo;
-
-    ofi_send(ncpyOpInfo,
+    // in CXI we cannot just send this unregistered thing
+    //
+#if CMK_OFI_CXI
+        ofi_register_and_send(ncpyOpInfo,
              ncpyOpInfo->ncpyOpInfoSize,
              CmiNodeOf(ncpyOpInfo->srcPe),
              OFI_RDMA_DIRECT_REG_AND_PUT,
              req);
+
+#else
+	CmiOfiRdmaPtr_t *dest_info = (CmiOfiRdmaPtr_t *)((char *)ncpyOpInfo->destLayerInfo + CmiGetRdmaCommonInfoSize());
+	ofi_send_reg(ncpyOpInfo,
+             ncpyOpInfo->ncpyOpInfoSize,
+             CmiNodeOf(ncpyOpInfo->srcPe),
+             OFI_RDMA_DIRECT_REG_AND_PUT,
+		     req, dest_info->mr);
+#endif
   } else {
 
     CmiOfiRdmaPtr_t *dest_info = (CmiOfiRdmaPtr_t *)((char *)ncpyOpInfo->destLayerInfo + CmiGetRdmaCommonInfoSize());
     CmiOfiRdmaPtr_t *src_info = (CmiOfiRdmaPtr_t *)((char *)ncpyOpInfo->srcLayerInfo + CmiGetRdmaCommonInfoSize());
 
-    const char *rbuf        = (FI_MR_SCALABLE == context.mr_mode) ? 0 : (const char*)(ncpyOpInfo->srcPtr);
+    const char *rbuf  = DETERMINE_OFFSET(ncpyOpInfo->srcPtr);
 
     // Allocate a completion object for tracking read completion and ack handling
     CmiOfiRdmaComp_t* rdmaComp = (CmiOfiRdmaComp_t *)malloc(sizeof(CmiOfiRdmaComp_t));
@@ -285,18 +307,25 @@ void LrtsIssueRput(NcpyOperationInfo *ncpyOpInfo) {
     req->size     = ncpyOpInfo->ncpyOpInfoSize;
     req->callback = send_short_callback;
     req->data.short_msg = ncpyOpInfo;
-
+#if CMK_OFI_CXI
+    ofi_register_and_send(ncpyOpInfo,
+			  ncpyOpInfo->ncpyOpInfoSize,
+			  CmiNodeOf(ncpyOpInfo->destPe),
+			  OFI_RDMA_DIRECT_REG_AND_GET,
+			  req);
+#else
     ofi_send(ncpyOpInfo,
              ncpyOpInfo->ncpyOpInfoSize,
              CmiNodeOf(ncpyOpInfo->destPe),
              OFI_RDMA_DIRECT_REG_AND_GET,
              req);
+#endif
   } else {
 
     CmiOfiRdmaPtr_t *dest_info = (CmiOfiRdmaPtr_t *)((char *)(ncpyOpInfo->destLayerInfo) + CmiGetRdmaCommonInfoSize());
     CmiOfiRdmaPtr_t *src_info = (CmiOfiRdmaPtr_t *)((char *)(ncpyOpInfo->srcLayerInfo) + CmiGetRdmaCommonInfoSize());
 
-    const char *rbuf        = (FI_MR_SCALABLE == context.mr_mode) ? 0 : (const char*)(ncpyOpInfo->destPtr);
+    const char *rbuf  = DETERMINE_OFFSET(ncpyOpInfo->destPtr);
 
     // Allocate a completion object for tracking write completion and ack handling
     CmiOfiRdmaComp_t* rdmaComp = (CmiOfiRdmaComp_t *)malloc(sizeof(CmiOfiRdmaComp_t));

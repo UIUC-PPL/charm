@@ -22,7 +22,10 @@ There are three options here for synchronization:
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
-
+#include <sys/ioctl.h>
+#if CMK_CXI
+#include <pmi_cray.h>
+#endif
 #include "xpmem.h"
 
 /************** 
@@ -36,7 +39,9 @@ There are three options here for synchronization:
 /* Default to using fences */
 #define XPMEM_FENCE 1
 #endif
-
+#if CMK_CXI
+#define CmiGetMsgSize(msg)  ((((CmiMsgHeaderBasic *)msg)->size))
+#endif
 #define MEMDEBUG(x) //x
 
 #define XPMEM_STATS    0
@@ -70,7 +75,7 @@ There are three options here for synchronization:
 #endif
 
 #if CMK_SMP
-#error  "PXSHM can only be used in non-smp build of Charm++"
+#error  "XPMEM can only be used in non-smp build of Charm++"
 #endif
 
 /***************************************************************************************/
@@ -225,7 +230,7 @@ void CmiInitXpmem(char **argv){
             CmiAbort("Opening /dev/xpmem");
         }
 
-#if CMK_CRAYXE || CMK_CRAYXC
+#if CMK_CRAYXE || CMK_CRAYXC || CMK_OFI
         srand(getpid());
         int Cmi_charmrun_pid = rand();
         PMI_Bcast(&Cmi_charmrun_pid, sizeof(int));
@@ -345,8 +350,8 @@ void CmiSendMessageXpmem(char *msg, int size, int dstnode, int *refcount)
 	int dstRank = XpmemRank(dstnode);
 	MEMDEBUG(CmiMemoryCheck());
   
-	MACHSTATE4(3,"Send Msg Xpmem ogm %p size %d dst %d dstRank %d",ogm,ogm->size,ogm->dst,dstRank);
-	MACHSTATE4(3,"Send Msg Xpmem ogm %p size %d dst %d dstRank %d",ogm,ogm->size,ogm->dst,dstRank);
+	//	MACHSTATE4(3,"Send Msg Xpmem msg %p size %d dst %d dstRank %d",msg,msg->size,msg->dst,dstRank);
+	//	MACHSTATE4(3,"Send Msg Xpmem msg %p size %d dst %d dstRank %d",msg,msg->size,msg->dst,dstRank);
 
 	CmiAssert(dstRank >=0 && dstRank != xpmemContext->noderank);
 	
@@ -397,7 +402,7 @@ void CmiSendMessageXpmem(char *msg, int size, int dstnode, int *refcount)
 		 }else{
 			(*refcount)+=2;/*this message should not get deleted when the queue is flushed*/
 			pushSendQ(sendQ,msg,size,refcount);
-			MACHSTATE3(3,"Xpmem ogm %p pushed to sendQ length %d refcount %d",ogm,sendQ->numEntries,ogm->refcount);
+			//			MACHSTATE3(3,"Xpmem msg %p pushed to sendQ length %d refcount %d",msg,sendQ->numEntries,msg->refcount);
 			int sent = flushSendQ(sendQ);
 			(*refcount)--; /*if it has been sent, can be deleted by caller, if not will be deleted when queue is flushed*/
 			MACHSTATE1(3,"Xpmem flushSendQ sent %d messages",sent);
@@ -533,7 +538,7 @@ void allocBufNameStrings(char ***bufName)
 {
 	int i,count;
 	int totalAlloc = sizeof(char)*NAMESTRLEN*(xpmemContext->nodesize-1);
-	char *tmp = malloc(totalAlloc);
+	char *tmp = (char *) malloc(totalAlloc);
 	
 	MACHSTATE2(3,"allocBufNameStrings tmp %p totalAlloc %d",tmp,totalAlloc);
 
@@ -553,7 +558,7 @@ __s64 createXpmemObject(int size,char **pPtr)
         struct xpmem_cmd_make make_info;
         int ret;
 
-        *pPtr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
+        *pPtr = (char*) mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, 0, 0);
         if (*pPtr == MAP_FAILED) {
             perror("Creating mapping.");
             return -1;
@@ -599,7 +604,7 @@ void attachXpmemObject(__s64 segid, int size, char **pPtr)
                CmiAbort("xpmem_attach");
        }
 
-       *pPtr = (void *)attach_info.vaddr;
+       *pPtr = (char *)attach_info.vaddr;
 }
 
 void createRecvXpmemAndSems(sharedBufData **bufs,char **bufNames){
@@ -608,7 +613,7 @@ void createRecvXpmemAndSems(sharedBufData **bufs,char **bufNames){
         int size, pagesize = getpagesize();
 	
 	*bufs = (sharedBufData *)calloc(xpmemContext->nodesize, sizeof(sharedBufData));
-        segid_arr = malloc(sizeof(__s64)*xpmemContext->nodesize);
+        segid_arr = (__s64 *) malloc(sizeof(__s64)*xpmemContext->nodesize);
 	
         size = XPMEMBUFLEN+sizeof(sharedBufHeader);
         size = ((~(pagesize-1))&(size+pagesize-1));
@@ -751,7 +756,7 @@ int sendMessage(char *msg, int size, int *refcount, sharedBufData *dstBuf,XpmemS
 		dstBuf->header->count++;
 		CmiMemcpy(dstBuf->data+dstBuf->header->bytes,msg,size);
 		dstBuf->header->bytes += size;
-		MACHSTATE4(3,"Xpmem send done ogm %p size %d dstBuf->header->count %d dstBuf->header->bytes %d",ogm,ogm->size,dstBuf->header->count,dstBuf->header->bytes);
+		//		MACHSTATE4(3,"Xpmem send done msg %p size %d dstBuf->header->count %d dstBuf->header->bytes %d",msg,msg->size,dstBuf->header->count,dstBuf->header->bytes);
                 CmiFree(msg);
 		return 1;
 	}
@@ -761,7 +766,7 @@ int sendMessage(char *msg, int size, int *refcount, sharedBufData *dstBuf,XpmemS
 	//printf("[%d] send buffer is too full\n", CmiMyPe());
 	pushSendQ(dstSendQ,msg,size,refcount);
 	(*refcount)++;
-	MACHSTATE3(3,"Xpmem send ogm %p size %d queued refcount %d",ogm,ogm->size,ogm->refcount);
+	//	MACHSTATE3(3,"Xpmem send msg %p size %d queued refcount %d",ogm,ogm->size,ogm->refcount);
 	return 0;
 }
 
@@ -779,7 +784,7 @@ inline int flushSendQ(XpmemSendQ  *dstSendQ){
 	while(count > 0){
 		OutgoingMsgRec *ogm = popSendQ(dstSendQ);
 		(*ogm->refcount)--;
-		MACHSTATE4(3,"Xpmem trysending ogm %p size %d to dstRank %d refcount %d",ogm,ogm->size,dstSendQ->rank,ogm->refcount);
+		//		MACHSTATE4(3,"Xpmem trysending ogm %p size %d to dstRank %d refcount %d",ogm,ogm->size,dstSendQ->rank,ogm->refcount);
 		int ret = sendMessageRec(ogm,dstBuf,dstSendQ);
 		if(ret==1){
 			sent++;

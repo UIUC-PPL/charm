@@ -165,3 +165,55 @@ int main() {
 
 # Unset workaround from above
 set(CMAKE_REQUIRED_FLAGS "")
+if(${NETWORK} STREQUAL "ofi" OR ${NETWORK} STREQUAL "ofi-crayshasta" OR ${NETWORK} STREQUAL "ofi-linux")
+# assume HPC installation with LMOD
+  include(CMakePrintHelpers)
+  find_package(EnvModules REQUIRED)
+  find_package(PkgConfig REQUIRED)
+  if(EnvModules_FOUND)
+  # we need libfabric cray-libpals and cray-pmi
+	env_module(load libfabric)
+	env_module(load cray-libpals)
+	env_module(load cray-pmi)
+  endif()
+  set(tmp ${CMAKE_REQUIRED_LIBRARIES})
+  if(${PkgConfig_FOUND})
+# this is tortured because pkg-config and cmake are infuriating
+	set(myconfigCommand "pkg-config")
+	set(myargs1 "libfabric")
+	set(myargs2 "--libs")
+	execute_process(COMMAND ${myconfigCommand} ${myargs1} ${myargs2}
+	                OUTPUT_VARIABLE PKG_CONFIG_OFI_LIBS_OUTPUT
+			RESULT_VARIABLE PKG_CONFIG_OFI_LIBS_RESULT
+			WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+			ERROR_VARIABLE thiserror
+			)
+	string(STRIP ${PKG_CONFIG_OFI_LIBS_OUTPUT} CMAKE_PKG_CONFIG_OFI_LIBS)
+	set(myargs2 "--cflags")
+	execute_process(COMMAND ${myconfigCommand} ${myargs1} ${myargs2}
+			OUTPUT_VARIABLE PKG_CONFIG_OFI_CFLAGS_OUTPUT
+			RESULT_VARIABLE PKG_CONFIG_OFI_CFLAGS_RESULT
+			WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+			ERROR_VARIABLE $thaterror
+			)
+	string(STRIP ${PKG_CONFIG_OFI_CFLAGS_OUTPUT} CMAKE_PKG_CONFIG_OFI_CFLAGS)
+	set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} ${CMAKE_PKG_CONFIG_OFI_CFLAGS}")
+	set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES} ${CMAKE_PKG_CONFIG_OFI_LIBS}")
+  else()
+	message(WARNING "cmake can't find pkg-config")
+	set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES}")
+  endif()
+    set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} ${CMAKE_PKG_CONFIG_OFI_CFLAGS}")
+    set(CMAKE_REQUIRED_LIBRARIES "${CMAKE_REQUIRED_LIBRARIES} ${CMAKE_PKG_CONFIG_OFI_LIBS}")
+
+check_cxx_source_compiles("
+    #include <rdma/fabric.h>
+    #include <rdma/fi_cxi_ext.h>
+    int main(int argc, char **argv)
+    {
+      struct fi_info *providers;
+      int ret = fi_getinfo(FI_VERSION(1,0), NULL, NULL, 0ULL, NULL, &providers);
+      return 0;
+    }
+  " CMK_BUILD_ON_CXI)
+endif()
