@@ -32,6 +32,7 @@
 
 #include "LBManager.h"
 #include "RandomForestModel.h"
+#include "fastforest.h"
 #include <vector>
 
 #include "MetaBalancer.decl.h"
@@ -89,7 +90,9 @@ public:
  MetaBalancer(void) : rFmodel(NULL) { init(); }
  MetaBalancer(CkMigrateMessage* m) : CBase_MetaBalancer(m) { init(); }
  ~MetaBalancer() {
-   if (CkMyPe() == 0) delete rFmodel;
+   if (CkMyPe() == 0) {
+     delete rFmodel;
+   }
  }
 
 private:
@@ -176,6 +179,7 @@ private:
   int total_ovld_pes;
   int current_balancer;
   ForestModel* rFmodel;
+  fastforest::FastForest xgboost;
 
   struct AdaptiveData {
     double iteration;

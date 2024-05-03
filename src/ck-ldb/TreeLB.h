@@ -6,12 +6,18 @@
 #include "BaseLB.h"
 #include "TreeLB.decl.h"
 #include "json.hpp"
+#include "fastforest.h"
 #include <vector>
 using json = nlohmann::json;
+//using namespace rfmodel;
 
 #define DEBUG__TREE_LB_L1 0
 #define DEBUG__TREE_LB_L2 0
 #define DEBUG__TREE_LB_L3 0
+#define STATS_COUNT 29
+#define CLASSES 3
+
+extern CkLBArgs _lb_args;
 
 void CreateTreeLB();
 
@@ -24,12 +30,28 @@ class TreeLBMessage
 {
  public:
   uint8_t level;
+  //TODO Metabalancer stats
+  double lb_data[STATS_COUNT];
   // WARNING: don't add any virtual methods here
 };
 
 class LevelLogic
 {
  public:
+
+    //TODO: Initialize if only Metabalancer called
+    LevelLogic() {
+      //rfModel = new ForestModel;
+      //rfmodel->readModel(_lb_args.metaLbModelDir());
+      if(_lb_args.treeMetaLbOn()) {
+        std::vector <std::string> features{"f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11",
+                                           "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22",
+                                           "f23", "f24"};
+        xgboost = fastforest::load_txt("model_tree/model.txt", features, CLASSES);
+      }
+    }
+
+
   virtual ~LevelLogic() {}
 
   /// return msg with lb stats for this PE. only needed at leaves
@@ -125,6 +147,9 @@ class LevelLogic
 
  protected:
   std::vector<TreeLBMessage*> stats_msgs;
+  //TODO Meta model
+  //ForestModel* rfmodel;
+  fastforest::FastForest xgboost;
 };
 
 class LBTreeBuilder;
@@ -140,6 +165,7 @@ class TreeLB : public CBase_TreeLB
     loadConfigFile(opts);
     init(opts);
   }
+
   TreeLB(CkMigrateMessage* m) : CBase_TreeLB(m) {}
   virtual ~TreeLB();
 

@@ -9,12 +9,52 @@
 #include "TreeStrategyFactory.h"
 #include <cmath>
 #include <limits>  // std::numeric_limits
+#include "json_fwd.hpp"
+#include "json.hpp"
 
 #define FLOAT_TO_INT_MULT 10000
+//#define STATS_COUNT 29
+//#define CLASSES 3
 
 // ----------------------- msgs -----------------------
 
 #include "TreeLevel.decl.h"
+using namespace TreeStrategy;
+using json = nlohmann::json;
+
+//TODO: Metabalancer match index with appropriate lb type
+/*enum metalb_stats_types{
+    ITER_NO,
+    NUM_PROCS,
+    TOTAL_LOAD,
+    MAX_LOAD,
+    IDLE_TIME,
+    UTILIZATION,
+    TOTAL_LOAD_W_BG,
+    MAX_LOAD_W_BG,
+    TOTAL_KBYTES,
+    TOTAL_KMSGS,
+    WITHIN_PE_KBYTES,
+    OUTSIDE_PE_KBYTES,
+    SUM_COMM_NEIGHBORS,
+    MAX_COMM_NEIGHBORS,
+    SUM_OBJ_COUNT,
+    MAX_OBJ_COUNT,
+    SUM_OBJ_LOAD,
+    MAX_OBJ_LOAD,
+    SUM_HOPS,
+    SUM_HOP_KBYTES,
+    LOAD_STDEV2,
+    MAX_UTIL,
+    MIN_LOAD,
+    MIN_BG,
+    MIN_OBJ_LOAD,
+    MAX_ITER_TIME,
+    LOAD_SKEWNESS,
+    LOAD_KURTOSIS,
+    TOTAL_OVERLOADED_PES,
+};*/
+std::string LB[CLASSES] = {"Greedy", "RefineA", "GreedyRefine"};
 
 class LLBMigrateMsg : public TreeLBMessage, public CMessage_LLBMigrateMsg
 {
@@ -44,6 +84,7 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
   unsigned int*
       order;  // list of obj ids sorted by load (ids are determined by position in oloads)
 
+      //Metebalancer statistics merge
   static TreeLBMessage* merge(std::vector<TreeLBMessage*>& msgs)
   {
     // TODO ideally have option of sorting objects
@@ -72,9 +113,8 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
     newMsg->nPes = nPes;
     int pe_cnt = 0;
     int obj_cnt = 0;
-    for (int i = 0; i < msgs.size(); i++)
-    {
-      LBStatsMsg_1* msg = (LBStatsMsg_1*)msgs[i];
+    for (int i = 0; i < msgs.size(); i++) {
+      LBStatsMsg_1 *msg = (LBStatsMsg_1 *) msgs[i];
       const int msg_npes = msg->nPes;
       memcpy(newMsg->pe_ids + pe_cnt, msg->pe_ids, sizeof(int) * msg_npes);
       memcpy(newMsg->bgloads + pe_cnt, msg->bgloads, sizeof(float) * msg_npes);
@@ -87,11 +127,209 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
 
       obj_cnt += msg->nObjs;
       pe_cnt += msg_npes;
+
+      //TODO Meta merge meta stats
+      if (_lb_args.treeMetaLbOn()) {
+        newMsg->lb_data[NUM_PROCS] += msg[i].lb_data[NUM_PROCS];
+
+        newMsg->lb_data[TOTAL_LOAD] += msg[i].lb_data[TOTAL_LOAD];
+        newMsg->lb_data[MAX_LOAD] = fmax(newMsg->lb_data[MAX_LOAD], msg[i].lb_data[MAX_LOAD]);
+        newMsg->lb_data[MIN_LOAD] = fmin(newMsg->lb_data[MIN_LOAD], msg[i].lb_data[MIN_LOAD]);
+
+        newMsg->lb_data[IDLE_TIME] += msg[i].lb_data[IDLE_TIME];
+        //Minimum utilization
+        newMsg->lb_data[UTILIZATION] = fmin(newMsg->lb_data[UTILIZATION], msg[i].lb_data[UTILIZATION]);
+        newMsg->lb_data[MAX_UTIL] = fmax(newMsg->lb_data[MAX_UTIL], msg[i].lb_data[MAX_UTIL]);
+        newMsg->lb_data[TOTAL_LOAD_W_BG] += msg[i].lb_data[TOTAL_LOAD_W_BG];
+        newMsg->lb_data[MIN_BG] = fmin(newMsg->lb_data[MIN_BG], msg[i].lb_data[MIN_BG]);
+        newMsg->lb_data[MAX_LOAD_W_BG] = fmax(newMsg->lb_data[MAX_LOAD_W_BG], msg[i].lb_data[MAX_LOAD_W_BG]);
+
+        newMsg->lb_data[TOTAL_KBYTES] += msg[i].lb_data[TOTAL_KBYTES];
+        newMsg->lb_data[TOTAL_KMSGS] += msg[i].lb_data[TOTAL_KMSGS];
+        newMsg->lb_data[WITHIN_PE_KBYTES] += msg[i].lb_data[WITHIN_PE_KBYTES];
+        newMsg->lb_data[OUTSIDE_PE_KBYTES] += msg[i].lb_data[OUTSIDE_PE_KBYTES];
+        newMsg->lb_data[SUM_COMM_NEIGHBORS] += msg[i].lb_data[SUM_COMM_NEIGHBORS];
+        newMsg->lb_data[MAX_COMM_NEIGHBORS] = fmax(msg[i].lb_data[MAX_COMM_NEIGHBORS],
+                                                   newMsg->lb_data[MAX_COMM_NEIGHBORS]);
+
+        newMsg->lb_data[SUM_OBJ_COUNT] += msg[i].lb_data[SUM_OBJ_COUNT];
+        newMsg->lb_data[MAX_OBJ_COUNT] = fmax(msg[i].lb_data[MAX_OBJ_COUNT], newMsg->lb_data[MAX_OBJ_COUNT]);
+        newMsg->lb_data[MIN_OBJ_LOAD] = fmin(msg[i].lb_data[MIN_OBJ_LOAD], newMsg->lb_data[MIN_OBJ_LOAD]);
+        newMsg->lb_data[SUM_OBJ_LOAD] += msg[i].lb_data[SUM_OBJ_LOAD];
+        newMsg->lb_data[MAX_OBJ_LOAD] = fmax(msg[i].lb_data[MAX_OBJ_LOAD], newMsg->lb_data[MAX_OBJ_LOAD]);
+        newMsg->lb_data[SUM_HOPS] += msg[i].lb_data[SUM_HOPS];
+        newMsg->lb_data[SUM_HOP_KBYTES] += msg[i].lb_data[SUM_HOP_KBYTES];
+        newMsg->lb_data[MAX_ITER_TIME] = fmax(msg[i].lb_data[MAX_ITER_TIME], newMsg->lb_data[MAX_ITER_TIME]);
+
+        newMsg->lb_data[LOAD_STDEV2] += msg[i].lb_data[LOAD_STDEV2];
+        newMsg->lb_data[LOAD_SKEWNESS] += msg[i].lb_data[LOAD_SKEWNESS];
+        newMsg->lb_data[LOAD_KURTOSIS] += msg[i].lb_data[LOAD_KURTOSIS];
+        newMsg->lb_data[TOTAL_OVERLOADED_PES] += msg[i].lb_data[TOTAL_OVERLOADED_PES];
+      }
     }
     newMsg->obj_start[pe_cnt] = obj_cnt;
 
     return newMsg;
   }
+
+    //TODO Meta Predict load balancer based on statistics for metabalancer
+    static int getPredictedLB_XG(TreeLBMessage* msg, fastforest::FastForest xgboost) {
+      double pe_count = msg->lb_data[NUM_PROCS];
+      double avg_load = msg->lb_data[TOTAL_LOAD]/msg->lb_data[NUM_PROCS];
+      double max_load = msg->lb_data[MAX_LOAD];
+      double min_load = msg->lb_data[MIN_LOAD];
+      double avg_utilization = msg->lb_data[IDLE_TIME]/msg->lb_data[NUM_PROCS];
+      double min_utilization = msg->lb_data[UTILIZATION];
+      int iteration_n = (int) msg->lb_data[ITER_NO];
+      double avg_load_bg = msg->lb_data[TOTAL_LOAD_W_BG]/msg->lb_data[NUM_PROCS];
+      double min_load_bg = msg->lb_data[MIN_BG];
+      double max_load_bg = msg->lb_data[MAX_LOAD_W_BG];
+      int total_objs = (int) msg->lb_data[SUM_OBJ_COUNT];
+      double total_Kbytes = msg->lb_data[TOTAL_KBYTES];
+      double total_Kmsgs = msg->lb_data[TOTAL_KMSGS];
+      double total_outsidepeKmsgs = msg->lb_data[WITHIN_PE_KBYTES];
+      double total_outsidepeKbytes = msg->lb_data[OUTSIDE_PE_KBYTES];
+      double avg_bg = avg_load_bg - avg_load;
+      double avg_comm_neighbors = msg->lb_data[SUM_COMM_NEIGHBORS]/total_objs;
+      double max_comm_neighbors = msg->lb_data[MAX_COMM_NEIGHBORS];
+      double avg_obj_load = msg->lb_data[SUM_OBJ_LOAD]/total_objs;
+      double min_obj_load = msg->lb_data[MIN_OBJ_LOAD];
+      double max_obj_load = msg->lb_data[MAX_OBJ_LOAD];
+      double avg_hops = msg->lb_data[SUM_HOPS]/(total_Kmsgs*1024.0); // The messages are in K
+      double avg_hop_Kbytes = msg->lb_data[SUM_HOP_KBYTES]/(total_Kmsgs*1024.0);
+      double standard_dev = sqrt(msg->lb_data[LOAD_STDEV2]/msg->lb_data[NUM_PROCS]);
+      double skewness = msg->lb_data[LOAD_SKEWNESS]/(msg->lb_data[NUM_PROCS] * standard_dev * standard_dev *
+                                                     standard_dev);
+      double kurtosis = msg->lb_data[LOAD_KURTOSIS]/(msg->lb_data[NUM_PROCS] * standard_dev * standard_dev *
+                                                     standard_dev * standard_dev) - 3;
+      int ovld_pes = (int) msg->lb_data[TOTAL_OVERLOADED_PES];
+      double max_utilization = msg->lb_data[MAX_UTIL];
+      double app_iteration_time = msg->lb_data[MAX_ITER_TIME];
+
+      // Features to be output
+      double pe_imbalance = max_load/avg_load;
+      double pe_load_std_frac = standard_dev/avg_load;
+      double pe_with_bg_imb = max_load_bg/avg_load_bg;
+      double bg_load_frac = avg_bg/avg_load;
+      double pe_gain = max_load - avg_load;
+      double mslope = max_load - min_load;
+      double aslope = avg_load - min_load;
+      double internal_bytes_frac = (total_Kbytes-total_outsidepeKbytes)/total_Kbytes;
+      double comm_comp_ratio = (_lb_args.alpha()*total_Kmsgs+_lb_args.beta()*total_Kbytes)/(avg_load*pe_count);
+
+      std::vector<double> test_data{pe_imbalance,
+                                    pe_load_std_frac,
+                                    pe_with_bg_imb,
+                                    0,
+                                    bg_load_frac,
+                                    pe_gain,
+                                    avg_utilization,
+                                    min_utilization,
+                                    max_utilization,
+                                    avg_obj_load,
+                                    min_obj_load,
+                                    max_obj_load,
+                                    total_objs / pe_count,
+                                    pe_count,
+                                    total_Kbytes,
+                                    total_Kmsgs,
+                                    total_outsidepeKbytes / total_Kbytes,
+                                    total_outsidepeKmsgs / total_Kmsgs,
+                                    internal_bytes_frac,
+                                    (total_Kbytes - total_outsidepeKbytes) / total_Kmsgs,
+                                    avg_comm_neighbors,
+                                    mslope,
+                                    aslope,
+                                    avg_hops,
+                                    avg_hop_Kbytes,
+                                    comm_comp_ratio};
+
+
+      std::vector<double> prob = xgboost.softmax(test_data.data());
+      int cur_pred = 0;
+      double cur_prob = 0.0;
+      for(int i = 0; i < prob.size(); ++i) {
+        if(prob[i] > cur_prob) {
+          cur_prob = prob[i];
+          cur_pred = i;
+        }
+      }
+      return cur_pred;
+    }
+
+  //TODO Meta Predict load balancer based on statistics for metabalancer
+  /*
+  static int getPredictedLB(TreeLBMessage* msg, ForestModel* rfmodel) {
+    double pe_count = msg->lb_data[NUM_PROCS];
+    double avg_load = msg->lb_data[TOTAL_LOAD]/msg->lb_data[NUM_PROCS];
+    double max_load = msg->lb_data[MAX_LOAD];
+    double min_load = msg->lb_data[MIN_LOAD];
+    double avg_utilization = msg->lb_data[IDLE_TIME]/msg->lb_data[NUM_PROCS];
+    double min_utilization = msg->lb_data[UTILIZATION];
+    int iteration_n = (int) msg->lb_data[ITER_NO];
+    double avg_load_bg = msg->lb_data[TOTAL_LOAD_W_BG]/msg->lb_data[NUM_PROCS];
+    double min_load_bg = msg->lb_data[MIN_BG];
+    double max_load_bg = msg->lb_data[MAX_LOAD_W_BG];
+    int total_objs = (int) msg->lb_data[SUM_OBJ_COUNT];
+    double total_Kbytes = msg->lb_data[TOTAL_KBYTES];
+    double total_Kmsgs = msg->lb_data[TOTAL_KMSGS];
+    double total_outsidepeKmsgs = msg->lb_data[WITHIN_PE_KBYTES];
+    double total_outsidepeKbytes = msg->lb_data[OUTSIDE_PE_KBYTES];
+    double avg_bg = avg_load_bg - avg_load;
+    double avg_comm_neighbors = msg->lb_data[SUM_COMM_NEIGHBORS]/total_objs;
+    double max_comm_neighbors = msg->lb_data[MAX_COMM_NEIGHBORS];
+    double avg_obj_load = msg->lb_data[SUM_OBJ_LOAD]/total_objs;
+    double min_obj_load = msg->lb_data[MIN_OBJ_LOAD];
+    double max_obj_load = msg->lb_data[MAX_OBJ_LOAD];
+    double avg_hops = msg->lb_data[SUM_HOPS]/(total_Kmsgs*1024.0); // The messages are in K
+    double avg_hop_Kbytes = msg->lb_data[SUM_HOP_KBYTES]/(total_Kmsgs*1024.0);
+    double standard_dev = sqrt(load[LOAD_STDEV2]/msg->lb_data[NUM_PROCS]);
+    double skewness = msg->lb_data[LOAD_SKEWNESS]/(msg->lb_data[NUM_PROCS] * standard_dev * standard_dev *
+                                                   standard_dev);
+    double kurtosis = msg->lb_data[LOAD_KURTOSIS]/(msg->lb_data[NUM_PROCS] * standard_dev * standard_dev *
+                                                   standard_dev * standard_dev) - 3;
+    int ovld_pes = (int) msg->lb_data[TOTAL_OVERLOADED_PES];
+    double max_utilization = msg->lb_data[MAX_UTIL];
+    double app_iteration_time = msg->lb_data[MAX_ITER_TIME];
+
+    // Features to be output
+    double pe_imbalance = max_load/avg_load;
+    double pe_load_std_frac = standard_dev/avg_load;
+    double pe_with_bg_imb = max_load_bg/avg_load_bg;
+    double bg_load_frac = avg_bg/avg_load;
+    double pe_gain = max_load - avg_load;
+    double internal_bytes_frac = (total_Kbytes-total_outsidepeKbytes)/total_Kbytes;
+    double comm_comp_ratio = (_lb_args.alpha()*total_Kmsgs+_lb_args.beta()*total_Kbytes)/(avg_load*pe_count);
+
+    std::vector<double> test_data{pe_imbalance,
+                                  pe_load_std_frac,
+                                  pe_with_bg_imb,
+                                  0,
+                                  bg_load_frac,
+                                  pe_gain,
+                                  avg_utilization,
+                                  min_utilization,
+                                  max_utilization,
+                                  avg_obj_load,
+                                  min_obj_load,
+                                  max_obj_load,
+                                  total_objs / pe_count,
+                                  pe_count,
+                                  total_Kbytes,
+                                  total_Kmsgs,
+                                  total_outsidepeKbytes / total_Kbytes,
+                                  total_outsidepeKmsgs / total_Kmsgs,
+                                  internal_bytes_frac,
+                                  (total_Kbytes - total_outsidepeKbytes) / total_Kmsgs,
+                                  avg_comm_neighbors,
+                                  mslope,
+                                  aslope,
+                                  avg_hops,
+                                  avg_hop_Kbytes,
+                                  comm_comp_ratio};
+    return rfmodel->forestTest(test_data, 1, 26);
+  }
+   */
 
   template <typename O, typename P>
   static float fill(std::vector<TreeLBMessage*> msgs, std::vector<O>& objs,
@@ -470,7 +708,7 @@ class RootLevel : public LevelLogic
                          json& config, bool repeat_strategies = false,
                          bool token_passing = true)
   {
-    using namespace TreeStrategy;
+    //using namespace TreeStrategy;
     for (auto w : wrappers) delete w;
     wrappers.clear();
     if (num_groups == -1)
@@ -524,6 +762,21 @@ class RootLevel : public LevelLogic
              num_children, nPes, nObjs);
 #endif
 
+
+    //TODO: If metabalancer LB called
+    //string predicted_lb = LB[LBStatsMsg_1::getPredictedLB(LBStatsMsg_1::fill(stats_msgs), rfmodel)];
+    if(_lb_args.treeMetaLbOn()) {
+      std::string predicted_lb = LB[LBStatsMsg_1::getPredictedLB_XG(LBStatsMsg_1::merge(stats_msgs), xgboost)];
+
+      //TODO: metabalancer Initialize LB  and add to wrappers
+      json config;
+      config["tolerance"] = 1.1;
+      this->repeat_strategies = false;
+
+      wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, false>>(
+              predicted_lb, true, config
+      ));
+    }
     if (num_groups == -1)
     {
       // msg has object loads
@@ -850,6 +1103,21 @@ class NodeSetLevel : public LevelLogic
 
   virtual TreeLBMessage* loadBalance(IDM& idm)
   {
+    if(_lb_args.treeMetaLbOn()) {
+      //TODO: If metabalancer LB called
+      //string predicted_lb = LB[LBStatsMsg_1::getPredictedLB(LBStatsMsg_1::fill(stats_msgs), rfmodel)];
+      std::string predicted_lb = LB[LBStatsMsg_1::getPredictedLB_XG(LBStatsMsg_1::merge(stats_msgs), xgboost)];
+      //TODO: Initialize LB & Add to wrappers
+      json config;
+      config["tolerance"] = 1.1;
+      this->repeat_strategies = false;
+
+      wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, false>>(
+              predicted_lb, false, config
+      ));
+      current_strategy = wrappers.size() - 1;
+    }
+
     CkAssert(wrappers.size() > current_strategy);
     IStrategyWrapper* wrapper = wrappers[current_strategy];
     CkAssert(wrapper != nullptr);
@@ -990,6 +1258,22 @@ class NodeLevel : public LevelLogic
  protected:
   LLBMigrateMsg* withinNodeLoadBalance()
   {
+
+    if(_lb_args.treeMetaLbOn()) {
+      //TODO: If meta LB called
+      //string predicted_lb = LB[LBStatsMsg_1::getPredictedLB(LBStatsMsg_1::fill(stats_msgs), rfmodel)];
+      std::string predicted_lb = LB[LBStatsMsg_1::getPredictedLB_XG(LBStatsMsg_1::merge(stats_msgs), xgboost)];
+      //TODO: Initialize LB Add to wrappers
+      json config;
+      config["tolerance"] = 1.1;
+      this->repeat_strategies = false;
+
+      wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, false>>(
+              predicted_lb, false, config
+      ));
+      current_strategy = wrappers.size() - 1;
+    }
+
     CkAssert(wrappers.size() > current_strategy);
     IStrategyWrapper* wrapper = wrappers[current_strategy];
     CkAssert(wrapper != nullptr);
@@ -1050,6 +1334,11 @@ class NodeLevel : public LevelLogic
 
 class PELevel : public LevelLogic
 {
+
+    double prev_idle;
+    double prev_load;
+    int itn;
+
  public:
   struct LDObjLoadGreater
   {
@@ -1059,7 +1348,11 @@ class PELevel : public LevelLogic
     }
   };
 
-  PELevel(LBManager* _lbmgr) : lbmgr(_lbmgr), rateAware(_lb_args.testPeSpeed()) {}
+  PELevel(LBManager* _lbmgr) : lbmgr(_lbmgr), rateAware(_lb_args.testPeSpeed()) {
+    prev_idle = 0;
+    prev_load = 0;
+    itn = 0;
+  }
 
   virtual ~PELevel() {}
 
@@ -1140,6 +1433,66 @@ class PELevel : public LevelLogic
     else
       msg->bgloads[0] = float(bg_walltime);
     // fprintf(stderr, "[%d] my bgload is %f %f\n", mype, msg->bgloads[0], bg_walltime);
+
+
+    if(_lb_args.treeMetaLbOn()) {
+      //TODO Meta Stats initialization
+      double idle_time, cpu_bgtime, load, prev_avg_load;
+      double bg_walltimed;
+      lbmgr->TotalTime(&idle_time, &load);
+      lbmgr->BackgroundLoad(&bg_walltimed, &cpu_bgtime);
+      idle_time -= prev_idle;
+      load -= prev_load;
+
+      prev_avg_load = prev_load / itn;
+      prev_idle += idle_time;
+      prev_load += load;
+      itn++;
+
+
+      int bytes, msgs, outsidepemsgs, outsidepebytes, num_nghbors, hops, hopbytes;
+      bytes = msgs = outsidepemsgs = outsidepebytes = num_nghbors = hops = hopbytes = 0;
+      if (_lb_args.traceComm()) {
+        lbmgr->GetCommInfo(bytes, msgs, outsidepemsgs,
+                           outsidepebytes, num_nghbors, hops, hopbytes);
+      }
+
+      //TODO
+      int sync_for_bg = itn;
+      bg_walltimed = bg_walltimed * lbmgr->GetObjDataSz() / sync_for_bg;
+
+      msg->lb_data[NUM_PROCS] = 1;
+      msg->lb_data[TOTAL_LOAD] = msg->lb_data[MAX_LOAD] = msg->lb_data[MIN_LOAD] = load;
+      if (load == 0.0) {
+        msg->lb_data[IDLE_TIME] = msg->lb_data[UTILIZATION] = msg->lb_data[MAX_UTIL] = 0.0;
+      } else {
+        msg->lb_data[IDLE_TIME] = msg->lb_data[UTILIZATION] = msg->lb_data[MAX_UTIL] = load / (idle_time + load);
+      }
+
+      msg->lb_data[TOTAL_LOAD_W_BG] = msg->lb_data[MIN_BG] = msg->lb_data[MAX_LOAD_W_BG] =
+              msg->lb_data[TOTAL_LOAD] + bg_walltimed;
+      msg->lb_data[TOTAL_KBYTES] = ((double) bytes / 1024.0);
+      msg->lb_data[TOTAL_KMSGS] = ((double) msgs / 1024.0);
+      msg->lb_data[WITHIN_PE_KBYTES] = ((double) outsidepemsgs / 1024.0);
+      msg->lb_data[OUTSIDE_PE_KBYTES] = ((double) outsidepebytes / 1024.0);
+      msg->lb_data[SUM_COMM_NEIGHBORS] = msg->lb_data[MAX_COMM_NEIGHBORS] = num_nghbors;
+      msg->lb_data[SUM_OBJ_COUNT] = msg->lb_data[MAX_OBJ_COUNT] = lbmgr->GetObjDataSz();
+      msg->lb_data[SUM_OBJ_LOAD] = msg->lb_data[MAX_OBJ_LOAD] = msg->lb_data[MIN_OBJ_LOAD] = load;
+      msg->lb_data[LOAD_STDEV2] = (load - prev_avg_load) *
+                                  (load - prev_avg_load);
+      msg->lb_data[LOAD_SKEWNESS] = (load - prev_avg_load) *
+                                    (load - prev_avg_load) *
+                                    (load - prev_avg_load);
+      msg->lb_data[LOAD_KURTOSIS] = msg->lb_data[LOAD_STDEV2] * msg->lb_data[LOAD_STDEV2];
+      msg->lb_data[TOTAL_OVERLOADED_PES] = (load > prev_avg_load) ? 1 : 0;
+      msg->lb_data[SUM_HOPS] = 0;
+      msg->lb_data[SUM_HOP_KBYTES] = 0;
+      if (msgs > 0) {
+        msg->lb_data[SUM_HOPS] = (double) hops;
+        msg->lb_data[SUM_HOP_KBYTES] = ((double) hopbytes / 1024.0);
+      }
+      msg->lb_data[MAX_ITER_TIME] = load + idle_time;
+    }
 
     return msg;
   }

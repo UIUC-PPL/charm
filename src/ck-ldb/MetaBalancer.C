@@ -23,6 +23,7 @@
 #define NEGLECT_IDLE 2 // Should never be == 1
 #define MIN_STATS 6
 #define STATS_COUNT 29 // The number of stats collected during reduction
+#define CLASSES 6
 
 #define MAXDOUBLE  std::numeric_limits<double>::max()
 
@@ -35,6 +36,7 @@ using std::max;
 
 CkReductionMsg* lbDataCollection(int nMsg, CkReductionMsg** msgs) {
   double *lb_data;
+  lb_data = (double*)msgs[0]->getData();
   lb_data = (double*)msgs[0]->getData();
   for (int i = 1; i < nMsg; i++) {
     CkAssert(msgs[i]->getSize() == STATS_COUNT*sizeof(double));
@@ -178,6 +180,12 @@ void MetaBalancer::init(void) {
       srand(time(NULL));
       rFmodel = new ForestModel;
       rFmodel->readModel(_lb_args.metaLbModelDir());
+
+      std::vector <std::string> features{"f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11",
+                                         "f12", "f13", "f14", "f15", "f16", "f17", "f18", "f19", "f20", "f21", "f22",
+                                         "f23", "f24"};
+      xgboost = fastforest::load_txt("model/model.txt", features, CLASSES);
+
     }
   }
 }
@@ -295,9 +303,9 @@ bool MetaBalancer::AddLoad(int it_n, double load) {
   int index = it_n % VEC_SIZE;
   total_count_vec[index]++;
   adaptive_struct.total_syncs_called++;
-  CkPrintf("At PE %d Total contribution for iteration %d is %d \
+  DEBAD(("At PE %d Total contribution for iteration %d is %d \
       total objs %d\n", CkMyPe(), it_n, total_count_vec[index],
-      lbmanager->GetObjDataSz());
+      lbmanager->GetObjDataSz()));
 
   if (it_n <= adaptive_struct.finished_iteration_no) {
     CkAbort("Error!! Received load for iteration that has contributed\n");
@@ -324,6 +332,7 @@ bool MetaBalancer::AddLoad(int it_n, double load) {
   return true;
 }
 
+//NOTE: Data Collection
 void MetaBalancer::ContributeStats(int it_n) {
 #if CMK_LBDB_ON
   int index = it_n % VEC_SIZE;
@@ -493,7 +502,7 @@ void MetaBalancer::ReceiveMinStats(double *load, int n) {
 //        avg_hops, avg_hop_bytes, _lb_args.alpha(), _lb_args.beta(),
 //        app_iteration_time);
 
-    DEBAD(
+   DEBAD(
         ("Features:%lf %lf %lf %lf %lf %lf %lf %lf \
        %lf %lf %lf %lf %lf %lf %lf %lf %lf \
        %lf %lf %lf %lf %lf %lf %lf %d %lf\n",
@@ -532,9 +541,23 @@ void MetaBalancer::ReceiveMinStats(double *load, int n) {
                                     avg_hops,
                                     avg_hop_Kbytes,
                                     comm_comp_ratio};
+
+      //Note:Predict LB
       // Model returns value [1,num_lbs]
       int predicted_lb = rFmodel->forestTest(test_data, 1, 26);
       DEBAD(("***********Final classification = %d *****************\n", predicted_lb));
+
+      std::vector<double> prob = xgboost.softmax(test_data.data());
+      int cur_pred = 1;
+      double cur_prob = 0.0;
+      for(int i = 0; i < prob.size(); ++i) {
+        if(prob[i] > cur_prob) {
+          cur_prob = prob[i];
+          cur_pred = i+1;
+        }
+      }
+
+      predicted_lb = cur_pred;
 
       // predicted_lb-1 since predicted_lb class count in the model starts at 1
       thisProxy.MetaLBSetLBOnChares(current_balancer, predicted_lb - 1);

@@ -136,6 +136,7 @@ TreeLB::~TreeLB()
 #endif
 }
 
+//Note: Each level configured with choice of load balancer
 void TreeLB::configure(LBTreeBuilder& builder, json& config)
 {
 #if CMK_LBDB_ON
