@@ -1,0 +1,29 @@
+mainmodule test {
+  readonly CProxy_Main main_proxy;
+  readonly CProxy_Array1 array1_proxy;
+
+  mainchare Main {
+    entry Main(CkArgMsg* args);
+    entry [reductiontarget] void done();
+  };
+
+  array [1d] Array1 {
+    entry Array1();
+    entry void foo() {
+      for (; iter < 100; iter++) {
+        serial {
+          send();
+        }
+
+        when recv[iter]() serial {
+          CkPrintf("[%d] recv for iter %d\n", thisIndex, iter);
+        }
+      }
+
+      serial {
+        contribute(CkCallback(CkReductionTarget(Main, done), main_proxy));
+      }
+    }
+    entry void recv();
+  };
+};
