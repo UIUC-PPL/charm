@@ -77,9 +77,8 @@ namespace {
     future(const future<T> &other) { handle_ = other.handle_; }
 
     static T unmarshall_value(void *msg) {
-      PUP::fromMem p(CkGetMsgBuffer(msg));
       PUP::detail::TemporaryObjectHolder<T> holder;
-      p | holder;
+      ck::unmarshall(static_cast<ck::marshall_msg>(msg), holder);
       return holder.t;
     }
 
@@ -91,12 +90,7 @@ namespace {
     }
 
     void set(const T &value) {
-      PUP::sizer s;
-      s | (typename std::decay<decltype(value)>::type &)value;
-      CkMarshallMsg *msg = CkAllocateMarshallMsg(s.size(), NULL);
-      PUP::toMem p((void *)msg->msgBuf);
-      p | (typename std::decay<decltype(value)>::type &)value;
-      CkSendToFuture(handle_, msg);
+      CkSendToFuture(handle_, ck::make_marshall_message(value));
     }
 
     CkFuture handle() const { return handle_; }
