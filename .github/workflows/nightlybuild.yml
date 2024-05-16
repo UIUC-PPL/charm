@@ -1,0 +1,19 @@
+name: Autobuild
+
+on:
+  schedule:
+    - cron: '01 05 * * *' # UTC, corresponds to 00:01 CDT
+
+jobs:
+  delta:
+    timeout-minutes: 120
+
+    runs-on: delta
+    name: mpi-linux-x86_64
+
+    steps:
+    - name: build
+      run: (cd ~/autobuild; ./build_local mpi-linux-x86_64)
+    - name: results
+      run: cat ~/autobuild/messages/mpi-linux-x86_64
+
