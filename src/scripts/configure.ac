@@ -1909,6 +1909,17 @@ EOT
 test_link "whether has mallinfo" "yes" "no" ""
 AC_DEFINE_UNQUOTED(CMK_HAS_MALLINFO, $pass, [whether has mallinfo])
 
+#### test for mallinfo2 ###
+cat > $t <<EOT
+#include <malloc.h>
+int main() {
+  struct mallinfo2 mi = mallinfo2();
+}
+EOT
+test_link "whether has mallinfo2" "yes" "no" ""
+AC_DEFINE_UNQUOTED(CMK_HAS_MALLINFO2, $pass, [whether has mallinfo2])
+
+
 #### test for cfree ###
 cat > $t <<EOT
 #include <stdlib.h>
