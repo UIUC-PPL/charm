@@ -111,9 +111,11 @@ opt_enable_fortran=1
 opt_error_checking= #undef
 opt_extra_opts=()
 opt_incdir=()
+opt_incdir_raw=() # Like 'opt_incdir', but without '-I' before each item
 opt_lbtime_type="double"
 opt_lbuserdata=0
 opt_libdir=()
+opt_libdir_raw=() # Like 'opt_libdir', but without '-L' before each item
 opt_lockless_queue=0
 opt_lrts_pmi=""
 opt_mempool_cutoff=26
@@ -451,16 +453,21 @@ function processArgs() {
         ;;
       --basedir=*)
         opt_incdir+=("-I${arg#*=}/include")
+        opt_incdir_raw+=("${arg#*=}/include")
         opt_libdir+=("-L${arg#*=}/lib")
+        opt_libdir_raw+=("${arg#*=}/lib")
         if [[ -d "${arg#*=}/lib64" ]]; then
           opt_libdir+=("-L${arg#*=}/lib64")
+          opt_libdir_raw+=("${arg#*=}/lib64")
         fi
         ;;
       --libdir=*)
         opt_libdir+=("-L${arg#*=}")
+        opt_libdir_raw+=("${arg#*=}")
         ;;
       --incdir=*)
         opt_incdir+=("-I${arg#*=}")
+        opt_incdir_raw+=("${arg#*=}")
         ;;
       *)
         echo "*** Note: Adding unknown option '$arg' to compiler flags."
@@ -639,6 +646,8 @@ CC=$opt_CC CXX=$opt_CXX FC=$opt_FC cmake "$my_srcdir" \
   -DARCH="$opt_arch" \
   -DCMAKE_BUILD_TYPE="$opt_production" \
   -DCMAKE_INSTALL_PREFIX="$installdir" \
+  -DADDITIONAL_INCLUDE_DIRS="${opt_incdir_raw[*]}" \
+  -DADDITIONAL_LIB_DIRS="${opt_libdir_raw[*]}" \
   -DCMK_AMPI_ONLY="$opt_ampi_only" \
   -DCMK_AMPI_WITH_ROMIO="$opt_romio" \
   -DAMPI_ERROR_CHECKING="$opt_ampi_error_checking" \
