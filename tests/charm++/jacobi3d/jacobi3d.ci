@@ -16,6 +16,8 @@ mainmodule jacobi3d {
   readonly int maxIter;
   readonly int ckptFreq;
 
+  readonly int overhead;
+
   message ghostMsg {
     double gh[];
   };
