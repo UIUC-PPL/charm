@@ -310,6 +310,14 @@ class LBManager : public CBase_LBManager
   {
     lbdb_obj->GetObjLoad(h, walltime, cputime);
   };
+  void SetObjPosition(LDObjHandle h, const std::vector<LBRealType>& pos)
+  {
+    lbdb_obj->ObjPosition(h, pos);
+  }
+  const std::vector<LBRealType>& GetObjPosition(LDObjHandle h)
+  {
+    return lbdb_obj->GetObjPosition(h);
+  }
   void* GetObjUserData(LDObjHandle& h) { return lbdb_obj->GetObjUserData(h); }
   void MetaLBCallLBOnChares() { lbdb_obj->MetaLBCallLBOnChares(); }
   void MetaLBResumeWaitingChares(int lb_period)

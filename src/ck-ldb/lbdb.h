@@ -165,6 +165,7 @@ struct LDObjData {
 #endif
   bool migratable;
   bool asyncArrival;
+  std::vector<LBRealType> position;
 #if CMK_LB_USER_DATA
   LBObjUserData   userData;
 #endif

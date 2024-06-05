@@ -79,6 +79,16 @@ public:
 #endif
   }
 
+  inline void setPosition(const std::vector<LBRealType>& pos)
+  {
+    data.position = pos;
+  }
+
+  inline const std::vector<LBRealType>& getPosition()
+  {
+    return data.position;
+  }
+
   inline LDOMHandle &parentOM() { return data.handle.omhandle; }
   inline const LDObjHandle &GetLDObjHandle() const { return data.handle; }
   inline void SetMigratable(bool mig) { data.migratable = mig; }

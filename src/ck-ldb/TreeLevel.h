@@ -6,9 +6,12 @@
 #include "TopoManager.h"
 #include "TreeLB.h"
 #include "TreeStrategyBase.h"
-#include "TreeStrategyFactory.h"
+#include "charm.h"
+
+#include <algorithm>
 #include <cmath>
 #include <limits>  // std::numeric_limits
+#include <vector>
 
 #define FLOAT_TO_INT_MULT 10000
 
@@ -32,6 +35,7 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
  public:
   unsigned int nObjs;  // num objs in this msg
   unsigned int nPes;  // num pes in this msg
+  size_t posDimension; // dimension of entries in positions
 
   int* pe_ids;              // IDs of the pes in this msg
   float* bgloads;           // bgloads[i] is background load of i-th pe in this msg
@@ -41,8 +45,7 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
 
   float* oloads;  // array of obj loads (grouped by pe), i-th obj in the array is
                   // considered to have ID i
-  unsigned int*
-      order;  // list of obj ids sorted by load (ids are determined by position in oloads)
+  float* positions; // array of object positions, if needed; indexing is same as oloads
 
   static TreeLBMessage* merge(std::vector<TreeLBMessage*>& msgs)
   {
@@ -56,20 +59,28 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
     // matter
     unsigned int nObjs = 0;
     unsigned int nPes = 0;
+    size_t minPosDimension = std::numeric_limits<size_t>::max();
+    size_t maxPosDimension = std::numeric_limits<size_t>::min();
+
     for (int i = 0; i < msgs.size(); i++)
     {
       LBStatsMsg_1* msg = (LBStatsMsg_1*)msgs[i];
       nObjs += msg->nObjs;
       nPes += msg->nPes;
+      minPosDimension = std::min(minPosDimension, msg->posDimension);
+      maxPosDimension = std::max(maxPosDimension, msg->posDimension);
     }
-
+    CkAssertMsg(msgs.empty() || minPosDimension == maxPosDimension,
+                "Position of every object for LB must be of same dimension");
+    const size_t posDimension = minPosDimension;
     LBStatsMsg_1* newMsg;
     if (rateAware)
-      newMsg = new (nPes, nPes, nPes, nPes + 1, nObjs, nObjs, 0) LBStatsMsg_1;
+      newMsg = new (nPes, nPes, nPes, nPes + 1, nObjs, nObjs * posDimension) LBStatsMsg_1;
     else
-      newMsg = new (nPes, nPes, 0, nPes + 1, nObjs, nObjs, 0) LBStatsMsg_1;
+      newMsg = new (nPes, nPes, 0, nPes + 1, nObjs, nObjs * posDimension) LBStatsMsg_1;
     newMsg->nObjs = nObjs;
     newMsg->nPes = nPes;
+    newMsg->posDimension = posDimension;
     int pe_cnt = 0;
     int obj_cnt = 0;
     for (int i = 0; i < msgs.size(); i++)
@@ -84,7 +95,8 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
       for (int j = 0; j < msg_npes; j++)
         newMsg->obj_start[pe_cnt + j] = msg->obj_start[j] + obj_cnt;
       memcpy(newMsg->oloads + obj_cnt, msg->oloads, sizeof(float) * (msg->nObjs));
-
+      memcpy(newMsg->positions + obj_cnt * posDimension, msg->positions,
+             sizeof(float) * msg->nObjs * posDimension);
       obj_cnt += msg->nObjs;
       pe_cnt += msg_npes;
     }
@@ -116,6 +128,11 @@ class LBStatsMsg_1 : public TreeLBMessage, public CMessage_LBStatsMsg_1
              k++, obj_cnt++, local_id++)
         {
           objs[obj_cnt].populate(obj_cnt, msg->oloads + k, pe);
+          if (msg->posDimension > 0)
+            objs[obj_cnt].setPosition(
+              std::vector<float>(msg->positions + k * msg->posDimension,
+                                 msg->positions + k * msg->posDimension + msg->posDimension));
+
           total_load += objs[obj_cnt].getLoad();
           migMsg->to_pes[obj_cnt] = pe;
           // if obj_local_ids.size() > 0:
@@ -256,11 +273,11 @@ class StrategyWrapper : public IStrategyWrapper
 #endif
   };
 
-  StrategyWrapper(const std::string& _strategy_name, bool _isTreeRoot, json& config)
+  StrategyWrapper(TreeStrategy::Strategy<O, P, Solution>* _strategy, const std::string& _strategy_name, bool _isTreeRoot, json& config)
   {
     strategy_name = _strategy_name;
     isTreeRoot = _isTreeRoot;
-    strategy = TreeStrategy::Factory::makeStrategy<O, P, Solution>(strategy_name, config);
+    strategy = _strategy;
   }
 
   virtual ~StrategyWrapper()
@@ -448,6 +465,21 @@ class StrategyWrapper : public IStrategyWrapper
   TreeStrategy::Strategy<O, P, Solution>* strategy;
 };
 
+#include "TreeStrategyFactory.h"
+
+template <int N>
+IStrategyWrapper* CreateStrategyWrapper(const std::string& strategy_name, bool isTreeRoot,
+                                        json& config, bool rateAware)
+{
+  if (rateAware)
+    return TreeStrategy::Factory::CreateStrategyWrapper<N, true>(
+      strategy_name, isTreeRoot, config[strategy_name]);
+  else
+    return TreeStrategy::Factory::CreateStrategyWrapper<N, false>(
+      strategy_name, isTreeRoot, config[strategy_name]);
+}
+
+
 // --------------------------------------------------------------
 
 // ---------------- RootLevel ----------------
@@ -478,16 +510,7 @@ class RootLevel : public LevelLogic
       current_strategy = 0;
       for (const std::string& strategy_name : strategies)
       {
-        if (rateAware)
-        {
-          wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, true>>(
-              strategy_name, true, config[strategy_name]));
-        }
-        else
-        {
-          wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, false>>(
-              strategy_name, true, config[strategy_name]));
-        }
+        wrappers.push_back(CreateStrategyWrapper<1>(strategy_name, true, config[strategy_name], rateAware));
       }
       this->repeat_strategies = repeat_strategies;
     }
@@ -684,16 +707,7 @@ class NodeSetLevel : public LevelLogic
     current_strategy = 0;
     for (const std::string& strategy_name : strategies)
     {
-      if (rateAware)
-      {
-        wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, true>>(
-            strategy_name, false, config[strategy_name]));
-      }
-      else
-      {
-        wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, false>>(
-            strategy_name, false, config[strategy_name]));
-      }
+      wrappers.push_back(CreateStrategyWrapper<1>(strategy_name, false, config, rateAware));
     }
     this->repeat_strategies = repeat_strategies;;
     cutoff_freq = _cutoff_freq;
@@ -938,16 +952,7 @@ class NodeLevel : public LevelLogic
     current_strategy = 0;
     for (const std::string& strategy_name : strategies)
     {
-      if (rateAware)
-      {
-        wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, true>>(
-            strategy_name, false, config[strategy_name]));
-      }
-      else
-      {
-        wrappers.push_back(new StrategyWrapper<Obj<1>, Proc<1, false>>(
-            strategy_name, false, config[strategy_name]));
-      }
+      wrappers.push_back(CreateStrategyWrapper<1>(strategy_name, false, config[strategy_name], rateAware));
     }
     this->repeat_strategies = repeat_strategies;
     cutoff_freq = _cutoff_freq;
@@ -1071,11 +1076,15 @@ class PELevel : public LevelLogic
     if (nobjs > 0) lbmgr->GetObjData(allLocalObjs.data());  // populate allLocalObjs
     myObjs.clear();
     LBRealType nonMigratableLoad = 0;
+    size_t minPosDimension = std::numeric_limits<size_t>::max();
+    size_t maxPosDimension = std::numeric_limits<size_t>::min();
     for (int i = 0; i < nobjs; i++)
     {
       if (allLocalObjs[i].migratable)
       {
         myObjs.emplace_back(allLocalObjs[i]);
+        minPosDimension = std::min(minPosDimension, allLocalObjs[i].position.size());
+        maxPosDimension = std::max(maxPosDimension, allLocalObjs[i].position.size());
       }
       else
       {
@@ -1083,7 +1092,9 @@ class PELevel : public LevelLogic
       }
     }
     nobjs = myObjs.size();
-
+    CkAssertMsg(nobjs == 0 || minPosDimension == maxPosDimension,
+                "Position of every object for LB must be of same dimension!");
+    const size_t posDimension = (nobjs == 0) ? 0 : minPosDimension;
     // TODO verify that non-migratable objects are not added to msg and are only counted
     // as background load
 
@@ -1105,13 +1116,14 @@ class PELevel : public LevelLogic
     LBStatsMsg_1* msg;
     if (rateAware)
     {
-      msg = new (1, 1, 1, 2, nobjs, nobjs, 0) LBStatsMsg_1;
+      msg = new (1, 1, 1, 2, nobjs, nobjs * posDimension) LBStatsMsg_1;
       msg->speeds[0] = float(lbmgr->ProcessorSpeed());
     }
     else
-      msg = new (1, 1, 0, 2, nobjs, nobjs, 0) LBStatsMsg_1;
+      msg = new (1, 1, 0, 2, nobjs, nobjs * posDimension) LBStatsMsg_1;
     msg->nObjs = nobjs;
     msg->nPes = 1;
+    msg->posDimension = posDimension;
     msg->pe_ids[0] = mype;
     msg->obj_start[0] = 0;
     msg->obj_start[1] = nobjs;
@@ -1123,7 +1135,11 @@ class PELevel : public LevelLogic
         msg->oloads[i] = float(myObjs[i].wallTime) * msg->speeds[0];
       else
         msg->oloads[i] = float(myObjs[i].wallTime);
-      msg->order[i] = i;
+      if (posDimension > 0)
+      {
+        for (int j = 0; j < posDimension; j++)
+          msg->positions[i * posDimension + j] = myObjs[i].position[j];
+      }
     }
 
     LBRealType t1, t2, t3, bg_walltime;

@@ -6,7 +6,7 @@ module TreeLevel {
     float speeds[];
     unsigned int obj_start[];
     float oloads[];
-    unsigned int order[];
+    float positions[];
   };
 
   message LLBMigrateMsg {
