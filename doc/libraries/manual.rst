@@ -974,7 +974,7 @@ The following functions comprise the interface to the library for parallel file 
   This method is invoked to read data asynchronously from the read session. This method returns immediately to the caller, but the 
   read is only guaranteed complete once the callback ``after_read`` is called. Internally, the read request is buffered
   until the Buffer Chares can respond with the requested data. After the read finishes, the 
-  after_read callback is invoked taking a ReadCompleteMsg* which points to a vector<char> buffer, the offset,
+  after_read callback is invoked taking a ReadCompleteMsg* which points to a char* buffer, the offset,
   and the number of bytes of the read.
 
 
@@ -989,10 +989,74 @@ The following functions comprise the interface to the library for parallel file 
   the ``FileReadyMsg`` sent to the ``opened`` callback after a file has been
   opened. This method should only be called from a single PE, once per file.
 
+FileReader API
+--------------
+
+The FileReader API is an additional abstraction layer built on top of Ck::IO to support 
+streaming reads from a file and implement the callback internally. This API is designed to 
+match that of the c++ std::ifstream. Under the hood, when an application reads a small
+number of bytes via a FileReader object,
+the Buffer Chare will send a large chunk of data to the FileReader which can be buffered there
+until the application requests more.
+
+- Creating a FileReader object:
+
+  .. code-block:: c++
+
+    FileReader::FileReader(Ck::IO::Session session)
+
+  Before creating a FileReader, the Ck::IO::Session must be created (see above). This session is 
+  passed in to the FileReader constructor.
+
+- Reading data:
+
+  .. code-block:: c++
+
+    FileReader& FileReader::read(char* buffer, size_t num_bytes_to_read)
+
+  Read the specified number of bytes from the file opened in the session. The data is read into the buffer.
+  This method is blocking and returns a pointer to the FileReader object.
+
+- Seeking:
+
+  There are two functions for seeking in the file, one for seeking from the current position, and one for seeking from a set position (like the end, or the beginning).
+  
+  .. code-block:: c++
+  
+    FileReader& FileReader::seekg(size_t pos)
+
+  .. code-block:: c++
+  
+    FileReader& FileReader::seekg(size_t pos, std::ios_base::seekdir dir)
+
+  The options for std::ios_base::seekdir are std::ios_base::beg, std::ios_base::cur, and std::ios_base::end.
+
+- Tell functionality:
+
+  .. code-block:: c++
+
+    size_t FileReader::tellg()
+
+  This function returns the current position in the file.
+
+- End of file and gcount:
+
+  .. code-block:: c++
+
+    bool FileReader::eof()
+
+  This function returns true if the end of the file has been reached and false otherwise.
+
+  .. code-block:: c++
+
+    size_t FileReader::gcount()
+
+  This function returns the number of bytes read by the last read operation.
+ 
 
 Examples
 --------
 
 For example code showing how to use CkIO for output, see ``tests/charm++/io/``.
 
-For example code showing how to use CkIO for input, see ``tests/charm++/io_read/``.
+For example code showing how to use CkIO for input (including FileReader), see ``tests/charm++/io_read/``.

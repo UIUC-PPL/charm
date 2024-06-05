@@ -79,6 +79,7 @@ entry void iterDone();
 array[1D] Test
 {
   entry Test(Ck::IO::Session token, size_t bytesToRead, std::string filename);
+  entry [threaded] void testMethod(Ck::IO::Session token, size_t bytesToRead);
   entry void readDone(Ck::IO::ReadCompleteMsg * m);
 }
 }

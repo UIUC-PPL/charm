@@ -128,7 +128,7 @@ entry void addSessionReadAssemblerFinished(CkReductionMsg* msg);
 }
 
 // class tht will be used to assemble a specific read call
-group ReadAssembler
+group[migratable] ReadAssembler
 {
   // stores the parameters of the read call it is tasked with building
   entry ReadAssembler(Session session);

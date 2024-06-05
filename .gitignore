@@ -50,3 +50,6 @@ charmrun
 ampirun
 pgm
 *.swp
+
+#Ignore the generated headers dir
+src/libs/ck-libs/io/headers#

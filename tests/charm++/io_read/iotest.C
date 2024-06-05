@@ -47,6 +47,7 @@ public:
 class Test : public CBase_Test
 {
   char* dataBuffer;
+  char* file_reader_buffer;
   int size;
   std::string _fname;
 
@@ -55,10 +56,16 @@ public:
   {
     CkPrintf("Inside the constructor of tester %d\n", thisIndex);
     _fname = filename;
+    thisProxy[thisIndex].testMethod(token, bytesToRead);
+  }
+
+  void testMethod(Ck::IO::Session token, size_t bytesToRead)
+  {
     CkCallback sessionEnd(CkIndex_Test::readDone(0), thisProxy[thisIndex]);
     try
     {
       dataBuffer = new char[bytesToRead];
+      file_reader_buffer = new char[bytesToRead];
     }
     catch (const std::bad_alloc& e)
     {
@@ -66,8 +73,42 @@ public:
                bytesToRead, thisIndex);
       CkExit();
     }
+
+    // setup and read using Ck::IO::FileReader
     size = bytesToRead;
+    Ck::IO::FileReader fr(token);
+    fr.seekg(bytesToRead * thisIndex);  // seek to the correct place in the file
+    fr.read(file_reader_buffer,
+            size);  // hopefully this will return the same data as Ck::IO::read
+    CkAssert(fr.gcount() == size);  // makes sure that the gcount is correct
+    CkAssert(fr.tellg() ==
+             (size + bytesToRead * thisIndex));  // make sure that the tellg points to the
+                                                 // correct place in the stream
+    CkPrintf(
+        "the FileReader::read function on tester[%d] is done with first character=%c\n",
+        thisIndex, file_reader_buffer[0]);
+
+    testFileReader(fr);
+
+    // read using plain Ck::IO::Read
     Ck::IO::read(token, bytesToRead, bytesToRead * thisIndex, dataBuffer, sessionEnd);
+  }
+
+  void testFileReader(Ck::IO::FileReader& fr)
+  {
+    size_t og_pos = fr.tellg();
+    fr.seekg(
+        100000000000000);  // way beyond the bounds of read session, should trigger eof
+    CkAssert(fr.eof());
+    fr.seekg(5);
+    CkAssert(fr.eof() == false);
+    fr.seekg(1, std::ios_base::cur);
+    CkAssert(fr.tellg() == 6);  // test that the seekg with different offset worked
+    fr.seekg(0, std::ios_base::end);
+    CkAssert(fr.eof());  // seeked to the end of file, make sure that the flag is on
+    fr.seekg(6, std::ios_base::beg);
+    CkAssert(fr.tellg() == 6);
+    fr.seekg(og_pos);
   }
 
   Test(CkMigrateMessage* m) {}
@@ -96,14 +137,16 @@ public:
       if (verify_buffer[i] != dataBuffer[i])
       {
         CkPrintf(
-            "From reader %d, offset=%d, bytes=%d, verify_buuffer[%d]=%c, "
+            "From reader %d, offset=%zu, bytes=%zu, verify_buuffer[%d]=%c, "
             "dataBuffer[%d]=%c\n",
             thisIndex, (m->offset), (m->bytes), i, verify_buffer[i], i, dataBuffer[i]);
       }
       assert(verify_buffer[i] == dataBuffer[i]);
+      assert(verify_buffer[i] == file_reader_buffer[i]);
     }
     delete[] verify_buffer;
     delete[] dataBuffer;
+    delete[] file_reader_buffer;
     CkPrintf("Index %d is now done with the reads...\n", thisIndex);
     contribute(done);
   }
