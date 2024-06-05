@@ -1,9 +1,9 @@
 
-PGCC=`CC -V 2>&1 | grep pgCC`
-ICPC=`CC -V 2>&1 | grep Intel`
-CLANG=`CC -V 2>&1 | grep 'clang'`
-GNU=`CC -V 2>&1 | grep 'g++'`
-CCE=`CC -V 2>&1 | grep 'Cray'`
+PGCC=`CC -v 2>&1 | grep pgCC`
+ICPC=`CC -v 2>&1 | grep Intel`
+CLANG=`CC -v 2>&1 | grep 'clang'`
+GNU=`CC -v 2>&1 | grep 'g++'`
+CCE=`CC -v 2>&1 | grep 'Cray'`
 
 CMK_CPP_CHARM="cpp -P"
 CMK_CPP_C="cc"
@@ -133,7 +133,7 @@ CMK_CF90="ftn "
 CMK_F90LIBS=""
 fi
 
-if test -n "$GNU"
+if test -z "$CCE"
 then
     CMK_CF77="$CMK_CF77 -ffree-line-length-none"
     CMK_CF90="$CMK_CF90 -ffree-line-length-none"
