@@ -128,12 +128,12 @@ Running
 -------
 
 To run the program in parallel, a ``charmrun`` executable was created by
-``charmc``. The flag ``+p`` is used to specify a number of processors to
+``charmc``. The flag ``++n`` is used to specify a number of processors to
 run the program on. For example:
 
 .. code-block:: bash
 
-   $ ./charmrun pgm +p4
+   $ ./charmrun pgm ++n 4
 
 This runs the executable ``pgm`` on 4 processors. For more information
 on how to use ``charmrun`` and set up your environment for parallel

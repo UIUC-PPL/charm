@@ -175,7 +175,7 @@ arguments. A typical invocation of an AMPI program ``pgm`` with
 
 .. code-block:: bash
 
-   $ ./charmrun +p16 ./pgm +vp64
+   $ ./charmrun ++n 16 ./pgm +vp64
 
 Here, the AMPI program ``pgm`` is run on 16 physical processors with 64
 total virtual ranks (which will be mapped 4 per processor initially).
@@ -189,7 +189,7 @@ example:
 
 .. code-block:: bash
 
-   $ ./charmrun +p16 ./pgm +vp128 +tcharm_stacksize 32K +balancer RefineLB
+   $ ./charmrun ++n 16 ./pgm +vp128 +tcharm_stacksize 32K +balancer RefineLB
 
 Running with ampirun
 ~~~~~~~~~~~~~~~~~~~~

@@ -36,7 +36,7 @@ client is a small Java program. A typical use of this is:
 
    	cd charm/examples/charm++/wave2d
    	make
-   	./charmrun ./wave2d +p2 ++server ++server-port 1234
+   	./charmrun ./wave2d ++n 2 ++server ++server-port 1234
    	~/ccs_tools/bin/liveViz localhost 1234
 
 Use git to obtain a copy of ccs_tools (prior to using liveViz) and build

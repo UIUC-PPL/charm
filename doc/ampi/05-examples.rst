@@ -31,7 +31,7 @@ MiniFE
    program.
 
 -  Refer to the ``README`` file on how to run the program. For example:
-   ``./charmrun +p4 ./miniFE.x nx=30 ny=30 nz=30 +vp32``
+   ``./charmrun ++n 4 ./miniFE.x nx=30 ny=30 nz=30 +vp32``
 
 MiniMD v2.0
 ~~~~~~~~~~~
@@ -44,7 +44,7 @@ MiniMD v2.0
    execute ``make ampi`` to build the program.
 
 -  Refer to the ``README`` file on how to run the program. For example:
-   ``./charmrun +p4 ./miniMD_ampi +vp32``
+   ``./charmrun ++n 4 ./miniMD_ampi +vp32``
 
 CoMD v1.1
 ~~~~~~~~~
@@ -72,7 +72,7 @@ MiniXYCE v1.0
    ``test/``.
 
 -  Example run command:
-   ``./charmrun +p3 ./miniXyce.x +vp3 -circuit ../tests/cir1.net -t_start 1e-6 -pf params.txt``
+   ``./charmrun ++n 3 ./miniXyce.x +vp3 -circuit ../tests/cir1.net -t_start 1e-6 -pf params.txt``
 
 HPCCG v1.0
 ~~~~~~~~~~
@@ -84,7 +84,7 @@ HPCCG v1.0
    AMPI compilers.
 
 -  Run with a command such as:
-   ``./charmrun +p2 ./test_HPCCG 20 30 10 +vp16``
+   ``./charmrun ++n 2 ./test_HPCCG 20 30 10 +vp16``
 
 MiniAMR v1.0
 ~~~~~~~~~~~~
@@ -140,7 +140,7 @@ Lassen v1.0
 
 -  No changes necessary to enable AMPI virtualization. Requires some
    C++11 support. Set ``AMPIDIR`` in Makefile and ``make``. Run with:
-   ``./charmrun +p4 ./lassen_mpi +vp8 default 2 2 2 50 50 50``
+   ``./charmrun ++n 4 ./lassen_mpi +vp8 default 2 2 2 50 50 50``
 
 Kripke v1.1
 ~~~~~~~~~~~
@@ -167,7 +167,7 @@ Kripke v1.1
 
    .. code-block:: bash
 
-      $ ./charmrun +p8 ./src/tools/kripke +vp8 --zones 64,64,64 --procs 2,2,2 --nest ZDG
+      $ ./charmrun ++n 8 ./src/tools/kripke +vp8 --zones 64,64,64 --procs 2,2,2 --nest ZDG
 
 MCB v1.0.3 (2013)
 ~~~~~~~~~~~~~~~~~
@@ -181,7 +181,7 @@ MCB v1.0.3 (2013)
 
    .. code-block:: bash
 
-      $ OMP_NUM_THREADS=1 ./charmrun +p4 ./../src/MCBenchmark.exe --weakScaling
+      $ OMP_NUM_THREADS=1 ./charmrun ++n 4 ./../src/MCBenchmark.exe --weakScaling
        --distributedSource --nCores=1 --numParticles=20000 --multiSigma --nThreadCore=1 +vp16
 
 .. _not-yet-ampi-zed-reason-1:
@@ -228,7 +228,7 @@ SNAP v1.01 (C version)
    while the C version works out of the box on all platforms.
 
 -  Edit the Makefile for AMPI compiler paths and run with:
-   ``./charmrun +p4 ./snap +vp4 --fi center_src/fin01 --fo center_src/fout01``
+   ``./charmrun ++n 4 ./snap +vp4 --fi center_src/fin01 --fo center_src/fout01``
 
 Sweep3D
 ~~~~~~~
@@ -248,7 +248,7 @@ Sweep3D
 
    -  Modify file ``input`` to set the different parameters. Refer to
       file ``README`` on how to change those parameters. Run with:
-      ``./charmrun ./sweep3d.mpi +p8 +vp16``
+      ``./charmrun ./sweep3d.mpi ++n 8 +vp16``
 
 PENNANT v0.8
 ~~~~~~~~~~~~
@@ -264,7 +264,7 @@ PENNANT v0.8
 
 -  For PENNANT-v0.8, point CC in Makefile to AMPICC and just ’make’. Run
    with the provided input files, such as:
-   ``./charmrun +p2 ./build/pennant +vp8 test/noh/noh.pnt``
+   ``./charmrun ++n 2 ./build/pennant +vp8 test/noh/noh.pnt``
 
 Benchmarks
 ----------
@@ -307,7 +307,7 @@ NAS Parallel Benchmarks (NPB 3.3)
       *cg.256.C* will appear in the *CG* and ``bin/`` directories. To
       run the particular benchmark, you must follow the standard
       procedure of running AMPI programs:
-      ``./charmrun ./cg.C.256 +p64 +vp256 ++nodelist nodelist``
+      ``./charmrun ./cg.C.256 ++n 64 +vp256 ++nodelist nodelist``
 
 NAS PB Multi-Zone Version (NPB-MZ 3.3)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -340,7 +340,7 @@ NAS PB Multi-Zone Version (NPB-MZ 3.3)
       directory. In the previous example, a file *bt-mz.256.C* will be
       created in the ``bin`` directory. To run the particular benchmark,
       you must follow the standard procedure of running AMPI programs:
-      ``./charmrun ./bt-mz.C.256 +p64 +vp256 ++nodelist nodelist``
+      ``./charmrun ./bt-mz.C.256 ++n 64 +vp256 ++nodelist nodelist``
 
 HPCG v3.0
 ~~~~~~~~~
@@ -352,7 +352,7 @@ HPCG v3.0
 -  No AMPI-ization needed. To build, modify ``setup/Make.AMPI`` for
    compiler paths, do
    ``mkdir build && cd build && configure ../setup/Make.AMPI && make``.
-   To run, do ``./charmrun +p16 ./bin/xhpcg +vp64``
+   To run, do ``./charmrun ++n 16 ./bin/xhpcg +vp64``
 
 Intel Parallel Research Kernels (PRK) v2.16
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -408,7 +408,7 @@ HYPRE-2.11.1
    ``LIBFLAGS``. Then run ``make``.
 
 -  To run the ``new_ij`` test, run:
-   ``./charmrun +p64 ./new_ij -n 128 128 128 -P 4 4 4 -intertype 6 -tol 1e-8 -CF 0 -solver 61 -agg_nl 1 27pt -Pmx 6 -ns 4 -mu 1 -hmis -rlx 13 +vp64``
+   ``./charmrun ++n 64 ./new_ij -n 128 128 128 -P 4 4 4 -intertype 6 -tol 1e-8 -CF 0 -solver 61 -agg_nl 1 27pt -Pmx 6 -ns 4 -mu 1 -hmis -rlx 13 +vp64``
 
 MFEM-3.2
 ~~~~~~~~
@@ -440,7 +440,7 @@ MFEM-3.2
    -  ``make parallel MFEM_USE_MPI=YES MPICXX=~/charm/bin/ampicxx HYPRE_DIR=~/hypre-2.11.1/src/hypre METIS_DIR=~/metis-4.0.3``
 
 -  To run an example, do
-   ``./charmrun +p4 ./ex15p -m ../data/amr-quad.mesh +vp16``. You may
+   ``./charmrun ++n 4 ./ex15p -m ../data/amr-quad.mesh +vp16``. You may
    want to add the runtime options ``-no-vis`` and ``-no-visit`` to
    speed things up.
 
@@ -464,10 +464,10 @@ XBraid-1.1
    HYPRE in their Makefiles and ``make``.
 
 -  To run an example, do
-   ``./charmrun +p2 ./ex-02 -pgrid 1 1 8 -ml 15 -nt 128 -nx 33 33 -mi 100 +vp8 ++local``.
+   ``./charmrun ++n 2 ./ex-02 -pgrid 1 1 8 -ml 15 -nt 128 -nx 33 33 -mi 100 +vp8 ++local``.
 
 -  To run a driver, do
-   ``./charmrun +p4 ./drive-03 -pgrid 2 2 2 2 -nl 32 32 32 -nt 16 -ml 15 +vp16 ++local``
+   ``./charmrun ++n 4 ./drive-03 -pgrid 2 2 2 2 -nl 32 32 32 -nt 16 -ml 15 +vp16 ++local``
 
 Other AMPI codes
 ----------------

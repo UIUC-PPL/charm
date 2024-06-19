@@ -566,7 +566,7 @@ of the AMPI program with some additional command line options.
 
 .. code-block:: bash
 
-   $ ./charmrun ./pgm +p4 +vp4 +msgLogWrite +msgLogRank 2 +msgLogFilename "msg2.log"
+   $ ./charmrun ./pgm ++n 4 +vp4 +msgLogWrite +msgLogRank 2 +msgLogFilename "msg2.log"
 
 In the above example, a parallel run with 4 worker threads and 4 AMPI
 ranks will be executed, and the changes in the MPI environment of worker
@@ -574,7 +574,7 @@ thread 2 (also rank 2, starting from 0) will get logged into diskfile
 "msg2.log".
 
 Unlike the first run, the re-run is a sequential program, so it is not
-invoked by charmrun (and omitting charmrun options like +p4 and +vp4),
+invoked by charmrun (and omitting charmrun options like ++n 4 and +vp4),
 and additional command line options are required as well.
 
 .. code-block:: bash

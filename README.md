@@ -272,7 +272,7 @@ executable named `nqueen`.
 
 Following the previous example, to run the program on two processors, type
 
-     $ ./charmrun +p2 ./nqueen 12 6
+     $ ./charmrun ++n 2 ./nqueen 12 6
 
 This should run for a few seconds, and print out:
 `There are 14200 Solutions to 12 queens. Time=0.109440 End time=0.112752`
@@ -307,7 +307,7 @@ want to run program on only one machine, for example, your laptop. This
 can save you all the hassle of setting up ssh daemons.
 To use this option, just type:
 
-     $ ./charmrun ++local ./nqueen 12 100 +p2
+     $ ./charmrun ++local ./nqueen 12 100 ++n 2
 
 However, for best performance, you should launch one node program per processor.
 

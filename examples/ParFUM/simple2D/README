@@ -34,7 +34,7 @@ OUTPUT
 This program exports its solution data via NetFEM.
 You can run the program so NetFEM will connect to it
 like:
-	./charmrun ./pgm ++server ++server-port 1234 +p4
+	./charmrun ./pgm ++server ++server-port 1234 ++n 4
 You'd then connect the NetFEM client to yourhostname:1234.
 
 
