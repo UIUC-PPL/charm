@@ -15,15 +15,22 @@ void LrtsInvokeRemoteDeregAckHandler(int pe, NcpyOperationInfo *ncpyOpInfo);
 
 void CmiInvokeNcpyAck(void *ack);
 
-#if CMK_CUDA && CMK_GPU_COMM
 // Function pointer to acknowledgement handler
 typedef void (*RdmaAckHandlerFn)(void *token);
 
+#if CMK_GPU_COMM
+#if CMK_CUDA
 void LrtsSendDevice(int dest_pe, const void*& ptr, size_t size, uint64_t& tag);
-void LrtsRecvDevice(DeviceRdmaOp* op, DeviceRecvType type);
+void LrtsRecvDevice(DeviceRdmaOp* op, CommType type);
 
-void CmiInvokeRecvHandler(void* data);
-#endif // CMK_CUDA && CMK_GPU_COMM
+void CmiDeviceRecvHandler(void* data);
+#endif // CMK_CUDA
+
+void LrtsChannelSend(int dest_pe, int id, const void*& ptr, size_t size, void* meta, uint64_t tag);
+void LrtsChannelRecv(int id, const void*& ptr, size_t size, void* meta, uint64_t tag);
+
+void CmiChannelHandler(void* data);
+#endif // CMK_GPU_COMM
 
 int CmiGetRdmaCommonInfoSize();
 #endif

@@ -1,0 +1,41 @@
+mainmodule pingpong {
+  readonly CProxy_Main main_proxy;
+  readonly CProxy_Pingpong pp_proxy;
+  readonly size_t size;
+  readonly int n_iters;
+  readonly int warmup_iters;
+
+  message CallbackMsg;
+
+  mainchare Main {
+    entry Main(CkArgMsg* m);
+    entry [reductiontarget] void initDone();
+    entry [reductiontarget] void warmupDone();
+    entry [reductiontarget] void allDone();
+  };
+
+  array [1D] Pingpong {
+    entry Pingpong(void);
+    entry void init();
+    entry void channelCallback(CallbackMsg* msg);
+
+    entry void run() {
+      // Pack and send ghost data to neighbors
+      serial { comm(true); }
+
+      when channelCallback[my_iter](CallbackMsg* msg) serial {
+        processCallback();
+      }
+
+      serial { comm(false); }
+
+      when channelCallback[my_iter](CallbackMsg* msg) serial {
+        processCallback();
+      }
+
+      serial {
+        end();
+      }
+    }
+  };
+};

@@ -21,11 +21,17 @@ mainmodule jacobi3d {
   readonly int n_chares_z;
   readonly int n_iters;
   readonly int warmup_iters;
-  readonly bool use_zerocopy;
-  readonly bool use_persistent;
+  readonly bool use_channel;
+  readonly bool host_staging;
+  readonly bool manual_overlap;
+  readonly bool fuse_pack;
+  readonly bool fuse_unpack;
+  readonly bool fuse_update_pack;
+  readonly bool fuse_update_all;
+  readonly bool use_cuda_graph;
   readonly bool print_elements;
 
-  message PersistentMsg;
+  message CallbackMsg;
 
   mainchare Main {
     entry Main(CkArgMsg* m);
@@ -38,22 +44,31 @@ mainmodule jacobi3d {
   array [3D] Block {
     entry Block(void);
     entry void init();
-    entry void initRecv(int dir, CkDevicePersistent p_buf);
+    entry void recvChannelID(int dir, int id);
     entry void packGhostsDone();
-    entry void recvGhostZC(int ref, int dir, int w, nocopydevice DataType gh[w]);
-    entry void recvGhostP(PersistentMsg* msg);
-    entry void recvGhostReg(int ref, int dir, int w, DataType gh[w]);
+    entry void recvGhostReg(int ref, int dir, int count, DataType gh[count]);
+    entry void channelCallback(CallbackMsg* msg);
     entry void updateDone();
     entry void print();
-    entry void printDone();
 
     entry void initDone() {
-      if (use_persistent) {
-        for (remote_count = 0; remote_count < neighbors; remote_count++) {
-          when initRecv(int dir, CkDevicePersistent p_buf) {
-            serial {
-              p_neighbor_bufs[dir] = p_buf;
-            }
+      if (use_channel) {
+        serial {
+          sendChannelIDs();
+        }
+
+        // Wait for channel IDs from "lower" neighbors
+        for (nbr_count = 0; nbr_count < n_low_nbr; nbr_count++) {
+          when recvChannelID(int dir, int id) serial {
+            channel_ids[dir] = id;
+          }
+        }
+
+        serial {
+          createChannels();
+
+          if (use_cuda_graph) {
+            createCudaGraphs();
           }
         }
       }
@@ -74,21 +89,37 @@ mainmodule jacobi3d {
       }
 
       // Receive ghost data from neighbors
-      for (remote_count = 0; remote_count < neighbors; remote_count++) {
-        if (use_zerocopy) {
-          when recvGhostZC[my_iter](int ref, int dir, int w, nocopydevice DataType buf[w]) {
-            serial {
-              processGhostZC(dir, w, buf);
+      if (use_channel) {
+        serial {
+          recvGhosts();
+        }
+
+        for (nbr_count = 0; nbr_count < 2 * n_nbr; nbr_count++) {
+          when channelCallback[my_iter](CallbackMsg* msg) serial {
+            processTimer();
+            if (msg->recv && !fuse_update_all && !fuse_unpack && !use_cuda_graph) {
+              processGhostChannel(msg->dir);
             }
+            delete msg;
           }
-        } else if (use_persistent) {
-          when recvGhostP[my_iter](PersistentMsg* msg) serial {
-            processGhostP(msg);
+        }
+
+        if (use_cuda_graph) {
+          serial {
+            launchCudaGraph();
           }
         } else {
-          when recvGhostReg[my_iter](int ref, int dir, int w, DataType buf[w]) {
+          if (fuse_unpack) {
             serial {
-              processGhostReg(dir, w, buf);
+              processGhostsFused();
+            }
+          }
+        }
+      } else {
+        for (nbr_count = 0; nbr_count < n_nbr; nbr_count++) {
+          when recvGhostReg[my_iter](int ref, int dir, int count, DataType buf[count]) {
+            serial {
+              processGhostReg(dir, count, buf);
             }
           }
         }
@@ -97,24 +128,6 @@ mainmodule jacobi3d {
       // Perform Jacobian update
       serial {
         update();
-      }
-
-      // Iteration complete
-      when updateDone() serial {
-        if (print_elements) {
-          if (x == 0 && y == 0 && z == 0) {
-            CkPrintf("Printing iteration %d\n", my_iter);
-            thisProxy[thisIndex].print();
-          }
-        } else {
-          prepNextIter();
-        }
-      }
-
-      if (print_elements) {
-        when printDone() serial {
-          prepNextIter();
-        }
       }
     }
   };

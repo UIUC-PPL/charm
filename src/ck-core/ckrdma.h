@@ -491,6 +491,49 @@ void CkRdmaZCPupCustomHandler(void *ack);
 
 void _ncpyAckHandler(ncpyHandlerMsg *msg);
 
+/****************************** Channel API ******************************/
+
+#if CMK_GPU_COMM
+// Channel object maintained per chare
+class CkChannel {
+private:
+  int id;
+  int peer_pe;
+  int send_counter;
+  int recv_counter;
+
+public:
+  CkChannel() : id(-1), peer_pe(-1), send_counter(0), recv_counter(0) {}
+  CkChannel(int id_) : CkChannel() { id = id_; }
+  CkChannel(int id_, const CProxyElement_ArrayBase &proxy);
+  CkChannel(int id_, const CProxyElement_Group &proxy);
+  CkChannel(int id_, const CProxyElement_NodeGroup &proxy);
+
+  int getID() { return id; }
+  int getPeerPe() { return peer_pe; }
+
+  // Limitation: you can only send callbacks to the source or destination PE
+  void send(const void* ptr, size_t size, CkFuture* fut);
+  void send(const void* ptr, size_t size, bool cb_self, const CkCallback& cb, void* msg = nullptr);
+  void recv(const void* ptr, size_t size, CkFuture* fut);
+  void recv(const void* ptr, size_t size, bool cb_self, const CkCallback& cb, void* msg = nullptr);
+};
+
+struct CkChannelMetadata {
+  bool use_cb;
+  CkCallback cb;
+  int cb_pe;
+  void* msg;
+  CkFuture* fut;
+
+  CkChannelMetadata() : use_cb(false), cb_pe(-1), msg(nullptr), fut(nullptr) {}
+};
+
+void CkChannelHandler(void* data);
+#endif // CMK_GPU_COMM
+
+/****************************** End of Channel API ******************************/
+
 void setNcpyEmInfo(NcpyEmInfo *ref, envelope *env, int &numops, void *forwardMsg, ncpyEmApiMode emMode);
 
 // Struct is used to store posted buffer information

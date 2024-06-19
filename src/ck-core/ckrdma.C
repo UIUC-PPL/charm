@@ -10,6 +10,7 @@
 #include <algorithm>
 #include "ckarray.h"
 #include "cklocation.h"
+#include "conv-rdma.h"
 
 void CmiFreeBroadcastAllExceptMeFn(int size, char *msg);
 
@@ -2028,6 +2029,84 @@ void zcPupIssueRgets(CmiUInt8 id, CkLocMgr *locMgr) {
 }
 /***************************** End of Zerocopy PUP Support ****************************/
 
+
+/****************************** Channel API ******************************/
+
+#if CMK_GPU_COMM
+CkChannel::CkChannel(int id_, const CProxyElement_ArrayBase &proxy) : CkChannel(id_) {
+  peer_pe = proxy.ckLocalBranch()->lastKnown(proxy.ckGetIndex());
+}
+
+CkChannel::CkChannel(int id_, const CProxyElement_Group &proxy) : CkChannel(id_) {
+  peer_pe = proxy.ckGetGroupPe();
+}
+
+CkChannel::CkChannel(int id_, const CProxyElement_NodeGroup &proxy) : CkChannel(id_) {
+  peer_pe = proxy.ckGetGroupPe();
+}
+
+void CkChannel::send(const void* ptr, size_t size, CkFuture* fut) {
+  CkChannelMetadata* metadata = new CkChannelMetadata();
+  metadata->fut = fut;
+  CmiChannelSend(peer_pe, id, ptr, size, metadata, send_counter++);
+}
+
+void CkChannel::send(const void* ptr, size_t size, bool cb_self, const CkCallback& cb, void* msg) {
+  CkChannelMetadata* metadata = new CkChannelMetadata();
+  metadata->use_cb = true;
+  metadata->cb = cb;
+  metadata->cb_pe = cb_self ? CkMyPe() : peer_pe;
+  metadata->msg = msg;
+  CmiChannelSend(peer_pe, id, ptr, size, metadata, send_counter++);
+}
+
+void CkChannel::recv(const void* ptr, size_t size, CkFuture* fut) {
+  CkChannelMetadata* metadata = new CkChannelMetadata();
+  metadata->fut = fut;
+  CmiChannelRecv(id, ptr, size, metadata, recv_counter++);
+}
+
+void CkChannel::recv(const void* ptr, size_t size, bool cb_self, const CkCallback& cb, void* msg) {
+  CkChannelMetadata* metadata = new CkChannelMetadata();
+  metadata->use_cb = true;
+  metadata->cb = cb;
+  metadata->cb_pe = cb_self ? CkMyPe() : peer_pe;
+  metadata->msg = msg;
+  CmiChannelRecv(id, ptr, size, metadata, recv_counter++);
+}
+
+void CkChannelHandler(void* data)
+{
+  CkChannelMetadata* metadata = static_cast<CkChannelMetadata*>(data);
+
+  // Invoke Charm++ callback
+  if (metadata->use_cb) {
+#if CMK_SMP
+    if (metadata->cb.type == CkCallback::resumeThread) {
+      metadata->cb.send(metadata->msg);
+    } else {
+      _ckcallbackgroup[metadata->cb_pe].call(metadata->cb, (CkMessage*)metadata->msg);
+    }
+#else
+    metadata->cb.send(metadata->msg);
+#endif
+  }
+
+  // Flag request as complete
+  if (metadata->fut) {
+    CkMarshallMsg* msg = CkAllocateMarshallMsg(sizeof(bool), NULL);
+    PUP::toMem p((void*)msg->msgBuf);
+    int value = true;
+    p | value;
+    CkSendToFuture(*metadata->fut, msg);
+  }
+
+  // Delete metadata object
+  delete metadata;
+}
+#endif // CMK_GPU_COMM
+
+/****************************** End of Channel API ******************************/
 
 /**************************** Zerocopy Post API Async Support **************************/
 

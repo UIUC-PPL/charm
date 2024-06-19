@@ -1,0 +1,23 @@
+mainmodule bandwidth {
+  readonly CProxy_Main main_proxy;
+  readonly CProxy_Block block_proxy;
+  readonly size_t min_size;
+  readonly size_t max_size;
+  readonly int n_iters_reg;
+  readonly int n_iters_large;
+  readonly int warmup_iters;
+  readonly int window_size;
+  readonly bool validate;
+
+  mainchare Main {
+    entry Main(CkArgMsg* m);
+    entry [reductiontarget] void initDone();
+    entry [reductiontarget] void terminate();
+  };
+
+  group Block {
+    entry Block();
+    entry void init();
+    entry void test();
+  };
+};

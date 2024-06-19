@@ -1,9 +1,20 @@
-#include "hapi.h"
 #include "jacobi3d.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <vector>
+#include <algorithm>
 
 #define TILE_SIZE_3D 8
 #define TILE_SIZE_2D 16
 #define DIVIDEBY7 0.142857
+
+void cudaErrorDie(cudaError_t ret, const char* code, const char* file, int line) {
+  if (ret != cudaSuccess) {
+    fprintf(stderr, "Fatal CUDA Error [%d] %s at %s:%d\n", ret,
+        cudaGetErrorString(ret), file, line);
+    exit(-1);
+  }
+}
 
 __global__ void initKernel(DataType* temperature, int block_width,
     int block_height, int block_depth) {
@@ -709,7 +720,7 @@ void invokeInitKernel(DataType* temperature, int block_width, int block_height,
 
   initKernel<<<grid_dim, block_dim, 0, stream>>>(temperature, block_width,
       block_height, block_depth);
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 void invokeGhostInitKernels(const std::vector<DataType*>& ghosts,
@@ -723,7 +734,7 @@ void invokeGhostInitKernels(const std::vector<DataType*>& ghosts,
 
     ghostInitKernel<<<grid_dim, block_dim, 0, stream>>>(ghost,
         ghost_count);
-    hapiCheck(cudaPeekAtLastError());
+    cudaCheck(cudaPeekAtLastError());
   }
 }
 
@@ -767,7 +778,7 @@ void invokeBoundaryKernels(DataType* temperature, int block_width,
     backBoundaryKernel<<<grid_dim, block_dim, 0, stream>>>(temperature,
         block_width, block_height, block_depth);
   }
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 void invokeJacobiKernel(DataType* temperature, DataType* new_temperature,
@@ -799,7 +810,7 @@ void invokeJacobiKernel(DataType* temperature, DataType* new_temperature,
     jacobiKernel<<<grid_dim, block_dim, 0, stream>>>(temperature, new_temperature,
         block_width, block_height, block_depth);
   }
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 void invokeJacobiInteriorKernel(DataType* temperature, DataType* new_temperature,
@@ -813,7 +824,7 @@ void invokeJacobiInteriorKernel(DataType* temperature, DataType* new_temperature
 
   jacobiInteriorKernel<<<grid_dim, block_dim, 0, stream>>>(temperature, new_temperature,
       block_width, block_height, block_depth);
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 void invokeJacobiBoundaryKernel(DataType* temperature, DataType* new_temperature,
@@ -826,7 +837,7 @@ void invokeJacobiBoundaryKernel(DataType* temperature, DataType* new_temperature
 
   jacobiBoundaryKernel<<<grid_dim, block_dim, 0, stream>>>(temperature, new_temperature,
       block_width, block_height, block_depth);
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 void packGhostsDevice(DataType* temperature,
@@ -834,14 +845,14 @@ void packGhostsDevice(DataType* temperature,
     int block_width, int block_height, int block_depth,
     size_t x_surf_size, size_t y_surf_size, size_t z_surf_size,
     cudaStream_t comm_stream, cudaStream_t d2h_stream, cudaEvent_t pack_events[],
-    bool use_channel, bool host_staging) {
+    bool cuda_aware) {
   dim3 block_dim(TILE_SIZE_2D, TILE_SIZE_2D);
   if (!bounds[LEFT]) {
     dim3 grid_dim((block_height+(block_dim.x-1))/block_dim.x,
         (block_depth+(block_dim.y-1))/block_dim.y);
     leftPackingKernel<<<grid_dim, block_dim, 0, comm_stream>>>(temperature,
         d_ghosts[LEFT], block_width, block_height, block_depth);
-    if (host_staging || !use_channel) {
+    if (!cuda_aware) {
       cudaEventRecord(pack_events[LEFT], comm_stream);
       cudaStreamWaitEvent(d2h_stream, pack_events[LEFT], 0);
       cudaMemcpyAsync(h_ghosts[LEFT], d_ghosts[LEFT], x_surf_size,
@@ -853,7 +864,7 @@ void packGhostsDevice(DataType* temperature,
         (block_depth+(block_dim.y-1))/block_dim.y);
     rightPackingKernel<<<grid_dim, block_dim, 0, comm_stream>>>(temperature,
         d_ghosts[RIGHT], block_width, block_height, block_depth);
-    if (host_staging || !use_channel) {
+    if (!cuda_aware) {
       cudaEventRecord(pack_events[RIGHT], comm_stream);
       cudaStreamWaitEvent(d2h_stream, pack_events[RIGHT], 0);
       cudaMemcpyAsync(h_ghosts[RIGHT], d_ghosts[RIGHT], x_surf_size,
@@ -865,7 +876,7 @@ void packGhostsDevice(DataType* temperature,
         (block_depth+(block_dim.y-1))/block_dim.y);
     topPackingKernel<<<grid_dim, block_dim, 0, comm_stream>>>(temperature,
         d_ghosts[TOP], block_width, block_height, block_depth);
-    if (host_staging || !use_channel) {
+    if (!cuda_aware) {
       cudaEventRecord(pack_events[TOP], comm_stream);
       cudaStreamWaitEvent(d2h_stream, pack_events[TOP], 0);
       cudaMemcpyAsync(h_ghosts[TOP], d_ghosts[TOP], y_surf_size,
@@ -877,7 +888,7 @@ void packGhostsDevice(DataType* temperature,
         (block_depth+(block_dim.y-1))/block_dim.y);
     bottomPackingKernel<<<grid_dim, block_dim, 0, comm_stream>>>(temperature,
         d_ghosts[BOTTOM], block_width, block_height, block_depth);
-    if (host_staging || !use_channel) {
+    if (!cuda_aware) {
       cudaEventRecord(pack_events[BOTTOM], comm_stream);
       cudaStreamWaitEvent(d2h_stream, pack_events[BOTTOM], 0);
       cudaMemcpyAsync(h_ghosts[BOTTOM], d_ghosts[BOTTOM], y_surf_size,
@@ -889,7 +900,7 @@ void packGhostsDevice(DataType* temperature,
         (block_height+(block_dim.y-1))/block_dim.y);
     frontPackingKernel<<<grid_dim, block_dim, 0, comm_stream>>>(temperature,
         d_ghosts[FRONT], block_width, block_height, block_depth);
-    if (host_staging || !use_channel) {
+    if (!cuda_aware) {
       cudaEventRecord(pack_events[FRONT], comm_stream);
       cudaStreamWaitEvent(d2h_stream, pack_events[FRONT], 0);
       cudaMemcpyAsync(h_ghosts[FRONT], d_ghosts[FRONT], z_surf_size,
@@ -901,14 +912,14 @@ void packGhostsDevice(DataType* temperature,
         (block_height+(block_dim.y-1))/block_dim.y);
     backPackingKernel<<<grid_dim, block_dim, 0, comm_stream>>>(temperature,
         d_ghosts[BACK], block_width, block_height, block_depth);
-    if (host_staging || !use_channel) {
+    if (!cuda_aware) {
       cudaEventRecord(pack_events[BACK], comm_stream);
       cudaStreamWaitEvent(d2h_stream, pack_events[BACK], 0);
       cudaMemcpyAsync(h_ghosts[BACK], d_ghosts[BACK], z_surf_size,
           cudaMemcpyDeviceToHost, d2h_stream);
     }
   }
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 #define PACK_FUSE_VER 2
@@ -933,14 +944,14 @@ void packGhostsFusedDevice(DataType* temperature, DataType* left_ghost,
       left_ghost, right_ghost, top_ghost, bottom_ghost, front_ghost, back_ghost,
       left_bound, right_bound, top_bound, bottom_bound, front_bound, back_bound,
       block_width, block_height, block_depth);
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 void unpackGhostDevice(DataType* temperature, DataType* d_ghost, DataType* h_ghost,
     int dir, int block_width, int block_height, int block_depth, size_t ghost_size,
     cudaStream_t comm_stream, cudaStream_t h2d_stream, cudaEvent_t unpack_events[],
-    bool use_channel, bool host_staging) {
-  if (host_staging || !use_channel) {
+    bool cuda_aware) {
+  if (!cuda_aware) {
     cudaMemcpyAsync(d_ghost, h_ghost, ghost_size, cudaMemcpyHostToDevice,
         h2d_stream);
     cudaEventRecord(unpack_events[dir], h2d_stream);
@@ -979,7 +990,7 @@ void unpackGhostDevice(DataType* temperature, DataType* d_ghost, DataType* h_gho
     backUnpackingKernel<<<grid_dim, block_dim, 0, comm_stream>>>(temperature,
         d_ghost, block_width, block_height, block_depth);
   }
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 #define UNPACK_FUSE_VER 2
@@ -1004,7 +1015,7 @@ void unpackGhostsFusedDevice(DataType* temperature, DataType* left_ghost,
       left_ghost, right_ghost, top_ghost, bottom_ghost, front_ghost, back_ghost,
       left_bound, right_bound, top_bound, bottom_bound, front_bound, back_bound,
       block_width, block_height, block_depth);
-  hapiCheck(cudaPeekAtLastError());
+  cudaCheck(cudaPeekAtLastError());
 }
 
 void setUnpackNode(cudaKernelNodeParams& params, DataType* temperature,

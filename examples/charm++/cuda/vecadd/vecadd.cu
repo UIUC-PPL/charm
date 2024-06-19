@@ -34,7 +34,7 @@ void cudaVecAdd(int vectorSize, float* h_A, float* h_B, float* h_C,
 void cudaVecAdd(int vectorSize, float* h_A, float* h_B, float* h_C, float* d_A,
                 float* d_B, float* d_C, cudaStream_t stream, void* cb) {
 #endif
-  int size = vectorSize * sizeof(float);
+  size_t size = vectorSize * sizeof(float);
   dim3 dimBlock(BLOCK_SIZE, 1);
   dim3 dimGrid((vectorSize - 1) / dimBlock.x + 1, 1);
 
@@ -55,14 +55,7 @@ void cudaVecAdd(int vectorSize, float* h_A, float* h_B, float* h_C, float* d_A,
 
   hapiEnqueue(wr);
 #else
-  hapiCheck(cudaMemcpyAsync(d_A, h_A, size, cudaMemcpyHostToDevice, stream));
-  hapiCheck(cudaMemcpyAsync(d_B, h_B, size, cudaMemcpyHostToDevice, stream));
-
   vecAdd<<<dimGrid, dimBlock, 0, stream>>>(d_C, d_A, d_B, vectorSize);
   hapiCheck(cudaPeekAtLastError());
-
-  hapiCheck(cudaMemcpyAsync(h_C, d_C, size, cudaMemcpyDeviceToHost, stream));
-
-  hapiAddCallback(stream, cb);
 #endif
 }

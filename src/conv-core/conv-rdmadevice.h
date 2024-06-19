@@ -94,9 +94,9 @@ CmiNcpyModeDevice findTransferModeDevice(int srcPe, int destPe);
 typedef void (*RdmaAckCallerFn)(void *token);
 
 void CmiSendDevice(int dest_pe, const void*& ptr, size_t size, uint64_t& tag);
-void CmiRecvDevice(DeviceRdmaOp* op, DeviceRecvType type);
-void CmiRdmaDeviceRecvInit(RdmaAckCallerFn fn);
-void CmiInvokeRecvHandler(void* data);
+void CmiRecvDevice(DeviceRdmaOp* op, CommType type);
+void CmiDeviceRecvHandlerInit(RdmaAckCallerFn fn);
+void CmiDeviceRecvHandler(void* data);
 #endif // CMK_GPU_COMM
 #endif // CMK_CUDA
 
