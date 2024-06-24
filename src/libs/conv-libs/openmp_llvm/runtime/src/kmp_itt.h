@@ -5,10 +5,9 @@
 
 //===----------------------------------------------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is dual licensed under the MIT and the University of Illinois Open
-// Source Licenses. See LICENSE.txt for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -42,6 +41,7 @@ extern void __kmp_itt_fini_ittlib(void);
 
 void __kmp_itt_initialize();
 void __kmp_itt_destroy();
+void __kmp_itt_reset();
 
 // -----------------------------------------------------------------------------
 // New stuff for reporting high-level constructs.
@@ -219,7 +219,7 @@ __kmp_inline void __kmp_itt_stack_callee_leave(__itt_caller);
    with a delay (and not called at all if waiting time is small). So, in spin
    loops, do not use KMP_FSYNC_PREPARE(), but use KMP_FSYNC_SPIN_INIT() (before
    spin loop), KMP_FSYNC_SPIN_PREPARE() (whithin the spin loop), and
-   KMP_FSYNC_SPIN_ACQUIRED(). See KMP_WAIT_YIELD() for example. */
+   KMP_FSYNC_SPIN_ACQUIRED(). See KMP_WAIT() for example. */
 
 #undef KMP_FSYNC_SPIN_INIT
 #define KMP_FSYNC_SPIN_INIT(obj, spin)                                         \

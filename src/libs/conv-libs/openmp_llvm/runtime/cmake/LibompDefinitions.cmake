@@ -1,10 +1,9 @@
 #
 #//===----------------------------------------------------------------------===//
 #//
-#//                     The LLVM Compiler Infrastructure
-#//
-#// This file is dual licensed under the MIT and the University of Illinois Open
-#// Source Licenses. See LICENSE.txt for details.
+#// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+#// See https://llvm.org/LICENSE.txt for license information.
+#// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 #//
 #//===----------------------------------------------------------------------===//
 #
@@ -21,12 +20,11 @@ function(libomp_get_definitions_flags cppflags)
     libomp_append(cppflags_local "-D _USRDLL")
     libomp_append(cppflags_local "-D _ITERATOR_DEBUG_LEVEL=0" IF_TRUE DEBUG_BUILD)
     libomp_append(cppflags_local "-D _DEBUG" IF_TRUE DEBUG_BUILD)
-    #else()
-    # libomp_append(cppflags_local "-D _GNU_SOURCE")
-    # libomp_append(cppflags_local "-D _REENTRANT")
+  else()
+    libomp_append(cppflags_local "-D _GNU_SOURCE")
+    libomp_append(cppflags_local "-D _REENTRANT")
   endif()
 
   # CMake doesn't include CPPFLAGS from environment, but we will.
   set(${cppflags} ${cppflags_local} ${LIBOMP_CPPFLAGS} $ENV{CPPFLAGS} PARENT_SCOPE)
 endfunction()
-

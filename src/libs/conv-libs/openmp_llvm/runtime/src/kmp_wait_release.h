@@ -4,10 +4,9 @@
 
 //===----------------------------------------------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is dual licensed under the MIT and the University of Illinois Open
-// Source Licenses. See LICENSE.txt for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -17,6 +16,9 @@
 #include "kmp.h"
 #include "kmp_itt.h"
 #include "kmp_stats.h"
+#if OMPT_SUPPORT
+#include "ompt-specific.h"
+#endif
 
 /*!
 @defgroup WAIT_RELEASE Wait/Release operations
@@ -40,29 +42,66 @@ enum flag_type {
   flag_oncore /**< special 64-bit flag for on-core barrier (hierarchical) */
 };
 
+struct flag_properties {
+  unsigned int type : 16;
+  unsigned int reserved : 16;
+};
+
 /*!
  * Base class for wait/release volatile flag
  */
-template <typename P> class kmp_flag {
-  volatile P
-      *loc; /**< Pointer to the flag storage that is modified by another thread
-             */
-  flag_type t; /**< "Type" of the flag in loc */
+template <typename P> class kmp_flag_native {
+  volatile P *loc;
+  flag_properties t;
+
 public:
   typedef P flag_t;
-  kmp_flag(volatile P *p, flag_type ft) : loc(p), t(ft) {}
+  kmp_flag_native(volatile P *p, flag_type ft)
+      : loc(p), t({(short unsigned int)ft, 0U}) {}
+  volatile P *get() { return loc; }
+  void *get_void_p() { return RCAST(void *, CCAST(P *, loc)); }
+  void set(volatile P *new_loc) { loc = new_loc; }
+  flag_type get_type() { return (flag_type)(t.type); }
+  P load() { return *loc; }
+  void store(P val) { *loc = val; }
+};
+
+/*!
+ * Base class for wait/release atomic flag
+ */
+template <typename P> class kmp_flag {
+  std::atomic<P>
+      *loc; /**< Pointer to the flag storage that is modified by another thread
+             */
+  flag_properties t; /**< "Type" of the flag in loc */
+public:
+  typedef P flag_t;
+  kmp_flag(std::atomic<P> *p, flag_type ft)
+      : loc(p), t({(short unsigned int)ft, 0U}) {}
   /*!
    * @result the pointer to the actual flag
    */
-  volatile P *get() { return loc; }
+  std::atomic<P> *get() { return loc; }
+  /*!
+   * @result void* pointer to the actual flag
+   */
+  void *get_void_p() { return RCAST(void *, loc); }
   /*!
    * @param new_loc in   set loc to point at new_loc
    */
-  void set(volatile P *new_loc) { loc = new_loc; }
+  void set(std::atomic<P> *new_loc) { loc = new_loc; }
   /*!
    * @result the flag_type
    */
-  flag_type get_type() { return t; }
+  flag_type get_type() { return (flag_type)(t.type); }
+  /*!
+   * @result flag value
+   */
+  P load() { return loc->load(std::memory_order_acquire); }
+  /*!
+   * @param val the new flag value to be stored
+   */
+  void store(P val) { loc->store(val, std::memory_order_release); }
   // Derived classes must provide the following:
   /*
   kmp_info_t * get_waiter(kmp_uint32 i);
@@ -72,6 +111,7 @@ public:
   bool notdone_check();
   P internal_release();
   void suspend(int th_gtid);
+  void mwait(int th_gtid);
   void resume(int th_gtid);
   P set_sleeping();
   P unset_sleeping();
@@ -85,32 +125,85 @@ public:
   */
 };
 
-/* Spin wait loop that first does pause, then yield, then sleep. A thread that
-   calls __kmp_wait_*  must make certain that another thread calls __kmp_release
-   to wake it back up to prevent deadlocks!  */
-template <class C>
-static inline void
-__kmp_wait_template(kmp_info_t *this_thr, C *flag,
-                    int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
-  // NOTE: We may not belong to a team at this point.
-  volatile typename C::flag_t *spin = flag->get();
+#if OMPT_SUPPORT
+OMPT_NOINLINE
+static void __ompt_implicit_task_end(kmp_info_t *this_thr,
+                                     ompt_state_t ompt_state,
+                                     ompt_data_t *tId) {
+  int ds_tid = this_thr->th.th_info.ds.ds_tid;
+  if (ompt_state == ompt_state_wait_barrier_implicit) {
+    this_thr->th.ompt_thread_info.state = ompt_state_overhead;
+#if OMPT_OPTIONAL
+    void *codeptr = NULL;
+    if (ompt_enabled.ompt_callback_sync_region_wait) {
+      ompt_callbacks.ompt_callback(ompt_callback_sync_region_wait)(
+          ompt_sync_region_barrier_implicit, ompt_scope_end, NULL, tId,
+          codeptr);
+    }
+    if (ompt_enabled.ompt_callback_sync_region) {
+      ompt_callbacks.ompt_callback(ompt_callback_sync_region)(
+          ompt_sync_region_barrier_implicit, ompt_scope_end, NULL, tId,
+          codeptr);
+    }
+#endif
+    if (!KMP_MASTER_TID(ds_tid)) {
+      if (ompt_enabled.ompt_callback_implicit_task) {
+        int flags = this_thr->th.ompt_thread_info.parallel_flags;
+        flags = (flags & ompt_parallel_league) ? ompt_task_initial
+                                               : ompt_task_implicit;
+        ompt_callbacks.ompt_callback(ompt_callback_implicit_task)(
+            ompt_scope_end, NULL, tId, 0, ds_tid, flags);
+      }
+      // return to idle state
+      this_thr->th.ompt_thread_info.state = ompt_state_idle;
+    } else {
+      this_thr->th.ompt_thread_info.state = ompt_state_overhead;
+    }
+  }
+}
+#endif
+
+/* Spin wait loop that first does pause/yield, then sleep. A thread that calls
+   __kmp_wait_*  must make certain that another thread calls __kmp_release
+   to wake it back up to prevent deadlocks!
+
+   NOTE: We may not belong to a team at this point.  */
+template <class C, bool final_spin, bool Cancellable = false,
+          bool Sleepable = true>
+static inline bool
+__kmp_wait_template(kmp_info_t *this_thr,
+                    C *flag USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
+#if USE_ITT_BUILD && USE_ITT_NOTIFY
+  volatile void *spin = flag->get();
+#endif
   kmp_uint32 spins;
-  kmp_uint32 hibernate;
   int th_gtid;
   int tasks_completed = FALSE;
   int oversubscribed;
 #if !KMP_USE_MONITOR
   kmp_uint64 poll_count;
   kmp_uint64 hibernate_goal;
+#else
+  kmp_uint32 hibernate;
 #endif
+
 #if !CHARM_OMP
   KMP_FSYNC_SPIN_INIT(spin, NULL);
   if (flag->done_check()) {
-    KMP_FSYNC_SPIN_ACQUIRED(CCAST(typename C::flag_t *, spin));
-    return;
+    KMP_FSYNC_SPIN_ACQUIRED(CCAST(void *, spin));
+    return false;
   }
 #endif
   th_gtid = this_thr->th.th_info.ds.ds_gtid;
+  if (Cancellable) {
+    kmp_team_t *team = this_thr->th.th_team;
+    if (team && team->t.t_cancel_request == cancel_parallel)
+      return true;
+  }
+#if KMP_OS_UNIX
+  if (final_spin)
+    KMP_ATOMIC_ST_REL(&this_thr->th.th_blocking, true);
+#endif
   KA_TRACE(20,
            ("__kmp_wait_sleep: T#%d waiting for flag(%p)\n", th_gtid, flag));
 #if !CHARM_OMP
@@ -118,43 +211,91 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
   stats_state_e thread_state = KMP_GET_THREAD_STATE();
 #endif
 
-#if OMPT_SUPPORT && OMPT_BLAME
-  ompt_state_t ompt_state = this_thr->th.ompt_thread_info.state;
-  if (ompt_enabled && ompt_state != ompt_state_undefined) {
-    if (ompt_state == ompt_state_idle) {
-      if (ompt_callbacks.ompt_callback(ompt_event_idle_begin)) {
-        ompt_callbacks.ompt_callback(ompt_event_idle_begin)(th_gtid + 1);
-      }
-    } else if (ompt_callbacks.ompt_callback(ompt_event_wait_barrier_begin)) {
-      KMP_DEBUG_ASSERT(ompt_state == ompt_state_wait_barrier ||
-                       ompt_state == ompt_state_wait_barrier_implicit ||
-                       ompt_state == ompt_state_wait_barrier_explicit);
+/* OMPT Behavior:
+THIS function is called from
+  __kmp_barrier (2 times)  (implicit or explicit barrier in parallel regions)
+            these have join / fork behavior
 
+       In these cases, we don't change the state or trigger events in THIS
+function.
+       Events are triggered in the calling code (__kmp_barrier):
+
+                state := ompt_state_overhead
+            barrier-begin
+            barrier-wait-begin
+                state := ompt_state_wait_barrier
+          call join-barrier-implementation (finally arrive here)
+          {}
+          call fork-barrier-implementation (finally arrive here)
+          {}
+                state := ompt_state_overhead
+            barrier-wait-end
+            barrier-end
+                state := ompt_state_work_parallel
+
+
+  __kmp_fork_barrier  (after thread creation, before executing implicit task)
+          call fork-barrier-implementation (finally arrive here)
+          {} // worker arrive here with state = ompt_state_idle
+
+
+  __kmp_join_barrier  (implicit barrier at end of parallel region)
+                state := ompt_state_barrier_implicit
+            barrier-begin
+            barrier-wait-begin
+          call join-barrier-implementation (finally arrive here
+final_spin=FALSE)
+          {
+          }
+  __kmp_fork_barrier  (implicit barrier at end of parallel region)
+          call fork-barrier-implementation (finally arrive here final_spin=TRUE)
+
+       Worker after task-team is finished:
+            barrier-wait-end
+            barrier-end
+            implicit-task-end
+            idle-begin
+                state := ompt_state_idle
+
+       Before leaving, if state = ompt_state_idle
+            idle-end
+                state := ompt_state_overhead
+*/
+#if OMPT_SUPPORT
+  ompt_state_t ompt_entry_state;
+  ompt_data_t *tId;
+  if (ompt_enabled.enabled) {
+    ompt_entry_state = this_thr->th.ompt_thread_info.state;
+    if (!final_spin || ompt_entry_state != ompt_state_wait_barrier_implicit ||
+        KMP_MASTER_TID(this_thr->th.th_info.ds.ds_tid)) {
       ompt_lw_taskteam_t *team =
           this_thr->th.th_team->t.ompt_serialized_team_info;
-      ompt_parallel_id_t pId;
-      ompt_task_id_t tId;
       if (team) {
-        pId = team->ompt_team_info.parallel_id;
-        tId = team->ompt_task_info.task_id;
+        tId = &(team->ompt_task_info.task_data);
       } else {
-        pId = this_thr->th.th_team->t.ompt_team_info.parallel_id;
-        tId = this_thr->th.th_current_task->ompt_task_info.task_id;
+        tId = OMPT_CUR_TASK_DATA(this_thr);
       }
-      ompt_callbacks.ompt_callback(ompt_event_wait_barrier_begin)(pId, tId);
+    } else {
+      tId = &(this_thr->th.ompt_thread_info.task_data);
+    }
+    if (final_spin && (__kmp_tasking_mode == tskm_immediate_exec ||
+                       this_thr->th.th_task_team == NULL)) {
+      // implicit task is done. Either no taskqueue, or task-team finished
+      __ompt_implicit_task_end(this_thr, ompt_entry_state, tId);
     }
   }
 #endif
 
-  // Setup for waiting
-  KMP_INIT_YIELD(spins);
+  KMP_INIT_YIELD(spins); // Setup for waiting
 
-  if (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME) {
+  if (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME ||
+      __kmp_pause_status == kmp_soft_paused) {
 #if KMP_USE_MONITOR
 // The worker threads cannot rely on the team struct existing at this point.
 // Use the bt values cached in the thread struct instead.
 #ifdef KMP_ADJUST_BLOCKTIME
-    if (__kmp_zero_bt && !this_thr->th.th_team_bt_set)
+    if (__kmp_pause_status == kmp_soft_paused ||
+        (__kmp_zero_bt && !this_thr->th.th_team_bt_set))
       // Force immediate suspend if not set by user and more threads than
       // available procs
       hibernate = 0;
@@ -177,7 +318,11 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
                   th_gtid, __kmp_global.g.g_time.dt.t_value, hibernate,
                   hibernate - __kmp_global.g.g_time.dt.t_value));
 #else
-    hibernate_goal = KMP_NOW() + this_thr->th.th_team_bt_intervals;
+    if (__kmp_pause_status == kmp_soft_paused) {
+      // Force immediate suspend
+      hibernate_goal = KMP_NOW();
+    } else
+      hibernate_goal = KMP_NOW() + this_thr->th.th_team_bt_intervals;
     poll_count = 0;
 #endif // KMP_USE_MONITOR
   }
@@ -187,7 +332,6 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
 
   // Main wait spin loop
   while (flag->notdone_check()) {
-    int in_pool;
     kmp_task_team_t *task_team = NULL;
     if (__kmp_tasking_mode != tskm_immediate_exec) {
       task_team = this_thr->th.th_task_team;
@@ -208,6 +352,11 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
             this_thr->th.th_reap_state = KMP_SAFE_TO_REAP;
         } else {
           KMP_DEBUG_ASSERT(!KMP_MASTER_TID(this_thr->th.th_info.ds.ds_tid));
+#if OMPT_SUPPORT
+          // task-team is done now, other cases should be catched above
+          if (final_spin && ompt_enabled.enabled)
+            __ompt_implicit_task_end(this_thr, ompt_entry_state, tId);
+#endif
           this_thr->th.th_task_team = NULL;
           this_thr->th.th_reap_state = KMP_SAFE_TO_REAP;
         }
@@ -216,7 +365,7 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
       } // if
     } // if
 
-    KMP_FSYNC_SPIN_PREPARE(CCAST(typename C::flag_t *, spin));
+    KMP_FSYNC_SPIN_PREPARE(CCAST(void *, spin));
     if (TCR_4(__kmp_global.g.g_done)) {
       if (__kmp_global.g.g_abort)
         __kmp_abort_thread();
@@ -225,34 +374,7 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
 
     // If we are oversubscribed, or have waited a bit (and
     // KMP_LIBRARY=throughput), then yield
-    // TODO: Should it be number of cores instead of thread contexts? Like:
-    // KMP_YIELD(TCR_4(__kmp_nth) > __kmp_ncores);
-    // Need performance improvement data to make the change...
-    if (oversubscribed) {
-      KMP_YIELD(1);
-    } else {
-      KMP_YIELD_SPIN(spins);
-    }
-    // Check if this thread was transferred from a team
-    // to the thread pool (or vice-versa) while spinning.
-    in_pool = !!TCR_4(this_thr->th.th_in_pool);
-    if (in_pool != !!this_thr->th.th_active_in_pool) {
-      if (in_pool) { // Recently transferred from team to pool
-        KMP_TEST_THEN_INC32(&__kmp_thread_pool_active_nth);
-        this_thr->th.th_active_in_pool = TRUE;
-        /* Here, we cannot assert that:
-           KMP_DEBUG_ASSERT(TCR_4(__kmp_thread_pool_active_nth) <=
-           __kmp_thread_pool_nth);
-           __kmp_thread_pool_nth is inc/dec'd by the master thread while the
-           fork/join lock is held, whereas __kmp_thread_pool_active_nth is
-           inc/dec'd asynchronously by the workers. The two can get out of sync
-           for brief periods of time.  */
-      } else { // Recently transferred from pool to team
-        KMP_TEST_THEN_DEC32(&__kmp_thread_pool_active_nth);
-        KMP_DEBUG_ASSERT(TCR_4(__kmp_thread_pool_active_nth) >= 0);
-        this_thr->th.th_active_in_pool = FALSE;
-      }
-    }
+    KMP_YIELD_OVERSUB_ELSE_SPIN(spins);
 
 #if KMP_STATS_ENABLED
     // Check if thread has been signalled to idle state
@@ -263,9 +385,36 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
       KMP_PUSH_PARTITIONED_TIMER(OMP_idle);
     }
 #endif
+    // Check if the barrier surrounding this wait loop has been cancelled
+    if (Cancellable) {
+      kmp_team_t *team = this_thr->th.th_team;
+      if (team && team->t.t_cancel_request == cancel_parallel)
+        break;
+    }
+
+    // For hidden helper thread, if task_team is nullptr, it means the main
+    // thread has not released the barrier. We cannot wait here because once the
+    // main thread releases all children barriers, all hidden helper threads are
+    // still sleeping. This leads to a problem that following configuration,
+    // such as task team sync, will not be performed such that this thread does
+    // not have task team. Usually it is not bad. However, a corner case is,
+    // when the first task encountered is an untied task, the check in
+    // __kmp_task_alloc will crash because it uses the task team pointer without
+    // checking whether it is nullptr. It is probably under some kind of
+    // assumption.
+    if (task_team && KMP_HIDDEN_HELPER_WORKER_THREAD(th_gtid) &&
+        !TCR_4(__kmp_hidden_helper_team_done)) {
+      // If there is still hidden helper tasks to be executed, the hidden helper
+      // thread will not enter a waiting status.
+      if (KMP_ATOMIC_LD_ACQ(&__kmp_unexecuted_hidden_helper_tasks) == 0) {
+        __kmp_hidden_helper_worker_thread_wait();
+      }
+      continue;
+    }
 
     // Don't suspend if KMP_BLOCKTIME is set to "infinite"
-    if (__kmp_dflt_blocktime == KMP_MAX_BLOCKTIME)
+    if (__kmp_dflt_blocktime == KMP_MAX_BLOCKTIME &&
+        __kmp_pause_status != kmp_soft_paused)
       continue;
 
     // Don't suspend if there is a likelihood of new tasks being spawned.
@@ -280,9 +429,36 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
     if (KMP_BLOCKING(hibernate_goal, poll_count++))
       continue;
 #endif
-#endif // CHARM_OMP
-    KF_TRACE(50, ("__kmp_wait_sleep: T#%d suspend time reached\n", th_gtid));
-    flag->suspend(th_gtid);
+    // Don't suspend if wait loop designated non-sleepable
+    // in template parameters
+    if (!Sleepable)
+      continue;
+
+    if (__kmp_dflt_blocktime == KMP_MAX_BLOCKTIME &&
+        __kmp_pause_status != kmp_soft_paused)
+      continue;
+
+#if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
+    if (__kmp_mwait_enabled || __kmp_umwait_enabled) {
+      KF_TRACE(50, ("__kmp_wait_sleep: T#%d using monitor/mwait\n", th_gtid));
+      flag->mwait(th_gtid);
+    } else {
+#endif
+      KF_TRACE(50, ("__kmp_wait_sleep: T#%d suspend time reached\n", th_gtid));
+#if KMP_OS_UNIX
+      if (final_spin)
+        KMP_ATOMIC_ST_REL(&this_thr->th.th_blocking, false);
+#endif
+#endif /* CHARM_OMP */
+      flag->suspend(th_gtid);
+#if KMP_OS_UNIX
+      if (final_spin)
+        KMP_ATOMIC_ST_REL(&this_thr->th.th_blocking, true);
+#endif
+#if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
+    }
+#endif
+
     if (TCR_4(__kmp_global.g.g_done)) {
 #if !CHARM_OMP
       if (__kmp_global.g.g_abort)
@@ -297,29 +473,18 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
 #if !CHARM_OMP
   }
 #endif
-#if OMPT_SUPPORT && OMPT_BLAME
-  if (ompt_enabled && ompt_state != ompt_state_undefined) {
-    if (ompt_state == ompt_state_idle) {
-      if (ompt_callbacks.ompt_callback(ompt_event_idle_end)) {
-        ompt_callbacks.ompt_callback(ompt_event_idle_end)(th_gtid + 1);
-      }
-    } else if (ompt_callbacks.ompt_callback(ompt_event_wait_barrier_end)) {
-      KMP_DEBUG_ASSERT(ompt_state == ompt_state_wait_barrier ||
-                       ompt_state == ompt_state_wait_barrier_implicit ||
-                       ompt_state == ompt_state_wait_barrier_explicit);
 
-      ompt_lw_taskteam_t *team =
-          this_thr->th.th_team->t.ompt_serialized_team_info;
-      ompt_parallel_id_t pId;
-      ompt_task_id_t tId;
-      if (team) {
-        pId = team->ompt_team_info.parallel_id;
-        tId = team->ompt_task_info.task_id;
-      } else {
-        pId = this_thr->th.th_team->t.ompt_team_info.parallel_id;
-        tId = this_thr->th.th_current_task->ompt_task_info.task_id;
-      }
-      ompt_callbacks.ompt_callback(ompt_event_wait_barrier_end)(pId, tId);
+#if OMPT_SUPPORT
+  ompt_state_t ompt_exit_state = this_thr->th.ompt_thread_info.state;
+  if (ompt_enabled.enabled && ompt_exit_state != ompt_state_undefined) {
+#if OMPT_OPTIONAL
+    if (final_spin) {
+      __ompt_implicit_task_end(this_thr, ompt_exit_state, tId);
+      ompt_exit_state = this_thr->th.ompt_thread_info.state;
+    }
+#endif
+    if (ompt_exit_state == ompt_state_idle) {
+      this_thr->th.ompt_thread_info.state = ompt_state_overhead;
     }
   }
 #endif
@@ -331,10 +496,107 @@ __kmp_wait_template(kmp_info_t *this_thr, C *flag,
     this_thr->th.th_stats->resetIdleFlag();
   }
 #endif
-#if !CHARM_OMP
-  KMP_FSYNC_SPIN_ACQUIRED(CCAST(typename C::flag_t *, spin));
+
+#if KMP_OS_UNIX
+  if (final_spin)
+    KMP_ATOMIC_ST_REL(&this_thr->th.th_blocking, false);
 #endif
+#if !CHARM_OMP
+  KMP_FSYNC_SPIN_ACQUIRED(CCAST(void *, spin));
+#endif
+  if (Cancellable) {
+    kmp_team_t *team = this_thr->th.th_team;
+    if (team && team->t.t_cancel_request == cancel_parallel) {
+      if (tasks_completed) {
+        // undo the previous decrement of unfinished_threads so that the
+        // thread can decrement at the join barrier with no problem
+        kmp_task_team_t *task_team = this_thr->th.th_task_team;
+        std::atomic<kmp_int32> *unfinished_threads =
+            &(task_team->tt.tt_unfinished_threads);
+        KMP_ATOMIC_INC(unfinished_threads);
+      }
+      return true;
+    }
+  }
+  return false;
 }
+
+#if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
+// Set up a monitor on the flag variable causing the calling thread to wait in
+// a less active state until the flag variable is modified.
+template <class C>
+static inline void __kmp_mwait_template(int th_gtid, C *flag) {
+  KMP_TIME_DEVELOPER_PARTITIONED_BLOCK(USER_mwait);
+  kmp_info_t *th = __kmp_threads[th_gtid];
+
+  KF_TRACE(30, ("__kmp_mwait_template: T#%d enter for flag = %p\n", th_gtid,
+                flag->get()));
+
+  // User-level mwait is available
+  KMP_DEBUG_ASSERT(__kmp_mwait_enabled || __kmp_umwait_enabled);
+
+  __kmp_suspend_initialize_thread(th);
+  __kmp_lock_suspend_mx(th);
+
+  volatile void *spin = flag->get();
+  void *cacheline = (void *)(kmp_uintptr_t(spin) & ~(CACHE_LINE - 1));
+
+  if (!flag->done_check()) {
+    // Mark thread as no longer active
+    th->th.th_active = FALSE;
+    if (th->th.th_active_in_pool) {
+      th->th.th_active_in_pool = FALSE;
+      KMP_ATOMIC_DEC(&__kmp_thread_pool_active_nth);
+      KMP_DEBUG_ASSERT(TCR_4(__kmp_thread_pool_active_nth) >= 0);
+    }
+    flag->set_sleeping();
+    KF_TRACE(50, ("__kmp_mwait_template: T#%d calling monitor\n", th_gtid));
+#if KMP_HAVE_UMWAIT
+    if (__kmp_umwait_enabled) {
+      __kmp_umonitor(cacheline);
+    }
+#elif KMP_HAVE_MWAIT
+    if (__kmp_mwait_enabled) {
+      __kmp_mm_monitor(cacheline, 0, 0);
+    }
+#endif
+    // To avoid a race, check flag between 'monitor' and 'mwait'. A write to
+    // the address could happen after the last time we checked and before
+    // monitoring started, in which case monitor can't detect the change.
+    if (flag->done_check())
+      flag->unset_sleeping();
+    else {
+      // if flag changes here, wake-up happens immediately
+      TCW_PTR(th->th.th_sleep_loc, (void *)flag);
+      __kmp_unlock_suspend_mx(th);
+      KF_TRACE(50, ("__kmp_mwait_template: T#%d calling mwait\n", th_gtid));
+#if KMP_HAVE_UMWAIT
+      if (__kmp_umwait_enabled) {
+        __kmp_umwait(1, 100); // to do: enable ctrl via hints, backoff counter
+      }
+#elif KMP_HAVE_MWAIT
+      if (__kmp_mwait_enabled) {
+        __kmp_mm_mwait(0, __kmp_mwait_hints);
+      }
+#endif
+      KF_TRACE(50, ("__kmp_mwait_template: T#%d mwait done\n", th_gtid));
+      __kmp_lock_suspend_mx(th);
+      // Clean up sleep info; doesn't matter how/why this thread stopped waiting
+      if (flag->is_sleeping())
+        flag->unset_sleeping();
+      TCW_PTR(th->th.th_sleep_loc, NULL);
+    }
+    // Mark thread as active again
+    th->th.th_active = TRUE;
+    if (TCR_4(th->th.th_in_pool)) {
+      KMP_ATOMIC_INC(&__kmp_thread_pool_active_nth);
+      th->th.th_active_in_pool = TRUE;
+    }
+  } // Drop out to main wait loop to check flag, handle tasks, etc.
+  __kmp_unlock_suspend_mx(th);
+  KF_TRACE(30, ("__kmp_mwait_template: T#%d exit\n", th_gtid));
+}
+#endif // KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
 
 /* Release any threads specified as waiting on the flag by releasing the flag
    and resume the waiting thread if indicated by the sleep bit(s). A thread that
@@ -346,12 +608,12 @@ template <class C> static inline void __kmp_release_template(C *flag) {
 #endif
   KF_TRACE(20, ("__kmp_release: T#%d releasing flag(%x)\n", gtid, flag->get()));
   KMP_DEBUG_ASSERT(flag->get());
-  KMP_FSYNC_RELEASING(CCAST(typename C::flag_t *, flag->get()));
+  KMP_FSYNC_RELEASING(flag->get_void_p());
 
   flag->internal_release();
 
   KF_TRACE(100, ("__kmp_release: T#%d set new spin=%d\n", gtid, flag->get(),
-                 *(flag->get())));
+                 flag->load()));
 
   if (__kmp_dflt_blocktime != KMP_MAX_BLOCKTIME) {
     // Only need to check sleep stuff if infinite block time not set.
@@ -415,7 +677,9 @@ template <> struct flag_traits<kmp_uint64> {
   }
 };
 
-template <typename FlagType> class kmp_basic_flag : public kmp_flag<FlagType> {
+// Basic flag that does not use C11 Atomics
+template <typename FlagType, bool Sleepable>
+class kmp_basic_flag_native : public kmp_flag_native<FlagType> {
   typedef flag_traits<FlagType> traits_type;
   FlagType checker; /**< Value to compare flag to to check if flag has been
                        released. */
@@ -424,14 +688,14 @@ template <typename FlagType> class kmp_basic_flag : public kmp_flag<FlagType> {
   kmp_uint32
       num_waiting_threads; /**< Number of threads sleeping on this thread. */
 public:
-  kmp_basic_flag(volatile FlagType *p)
-      : kmp_flag<FlagType>(p, traits_type::t), num_waiting_threads(0) {}
-  kmp_basic_flag(volatile FlagType *p, kmp_info_t *thr)
-      : kmp_flag<FlagType>(p, traits_type::t), num_waiting_threads(1) {
+  kmp_basic_flag_native(volatile FlagType *p)
+      : kmp_flag_native<FlagType>(p, traits_type::t), num_waiting_threads(0) {}
+  kmp_basic_flag_native(volatile FlagType *p, kmp_info_t *thr)
+      : kmp_flag_native<FlagType>(p, traits_type::t), num_waiting_threads(1) {
     waiting_threads[0] = thr;
   }
-  kmp_basic_flag(volatile FlagType *p, FlagType c)
-      : kmp_flag<FlagType>(p, traits_type::t), checker(c),
+  kmp_basic_flag_native(volatile FlagType *p, FlagType c)
+      : kmp_flag_native<FlagType>(p, traits_type::t), checker(c),
         num_waiting_threads(0) {}
   /*!
    * param i in   index into waiting_threads
@@ -457,7 +721,13 @@ public:
   /*!
    * @result true if the flag object has been released.
    */
-  bool done_check() { return traits_type::tcr(*(this->get())) == checker; }
+  bool done_check() {
+    if (Sleepable)
+      return (traits_type::tcr(*(this->get())) & ~KMP_BARRIER_SLEEP_STATE) ==
+             checker;
+    else
+      return traits_type::tcr(*(this->get())) == checker;
+  }
   /*!
    * @param old_loc in   old value of flag
    * @result true if the flag's old value indicates it was released.
@@ -512,14 +782,118 @@ public:
   enum barrier_type get_bt() { return bs_last_barrier; }
 };
 
-class kmp_flag_32 : public kmp_basic_flag<kmp_uint32> {
+template <typename FlagType, bool Sleepable>
+class kmp_basic_flag : public kmp_flag<FlagType> {
+  typedef flag_traits<FlagType> traits_type;
+  FlagType checker; /**< Value to compare flag to to check if flag has been
+                       released. */
+  kmp_info_t
+      *waiting_threads[1]; /**< Array of threads sleeping on this thread. */
+  kmp_uint32
+      num_waiting_threads; /**< Number of threads sleeping on this thread. */
 public:
-  kmp_flag_32(volatile kmp_uint32 *p) : kmp_basic_flag<kmp_uint32>(p) {}
-  kmp_flag_32(volatile kmp_uint32 *p, kmp_info_t *thr)
-      : kmp_basic_flag<kmp_uint32>(p, thr) {}
-  kmp_flag_32(volatile kmp_uint32 *p, kmp_uint32 c)
-      : kmp_basic_flag<kmp_uint32>(p, c) {}
+  kmp_basic_flag(std::atomic<FlagType> *p)
+      : kmp_flag<FlagType>(p, traits_type::t), num_waiting_threads(0) {}
+  kmp_basic_flag(std::atomic<FlagType> *p, kmp_info_t *thr)
+      : kmp_flag<FlagType>(p, traits_type::t), num_waiting_threads(1) {
+    waiting_threads[0] = thr;
+  }
+  kmp_basic_flag(std::atomic<FlagType> *p, FlagType c)
+      : kmp_flag<FlagType>(p, traits_type::t), checker(c),
+        num_waiting_threads(0) {}
+  /*!
+   * param i in   index into waiting_threads
+   * @result the thread that is waiting at index i
+   */
+  kmp_info_t *get_waiter(kmp_uint32 i) {
+    KMP_DEBUG_ASSERT(i < num_waiting_threads);
+    return waiting_threads[i];
+  }
+  /*!
+   * @result num_waiting_threads
+   */
+  kmp_uint32 get_num_waiters() { return num_waiting_threads; }
+  /*!
+   * @param thr in   the thread which is now waiting
+   *
+   * Insert a waiting thread at index 0.
+   */
+  void set_waiter(kmp_info_t *thr) {
+    waiting_threads[0] = thr;
+    num_waiting_threads = 1;
+  }
+  /*!
+   * @result true if the flag object has been released.
+   */
+  bool done_check() {
+    if (Sleepable)
+      return (this->load() & ~KMP_BARRIER_SLEEP_STATE) == checker;
+    else
+      return this->load() == checker;
+  }
+  /*!
+   * @param old_loc in   old value of flag
+   * @result true if the flag's old value indicates it was released.
+   */
+  bool done_check_val(FlagType old_loc) { return old_loc == checker; }
+  /*!
+   * @result true if the flag object is not yet released.
+   * Used in __kmp_wait_template like:
+   * @code
+   * while (flag.notdone_check()) { pause(); }
+   * @endcode
+   */
+  bool notdone_check() { return this->load() != checker; }
+  /*!
+   * @result Actual flag value before release was applied.
+   * Trigger all waiting threads to run by modifying flag to release state.
+   */
+  void internal_release() { KMP_ATOMIC_ADD(this->get(), 4); }
+  /*!
+   * @result Actual flag value before sleep bit(s) set.
+   * Notes that there is at least one thread sleeping on the flag by setting
+   * sleep bit(s).
+   */
+  FlagType set_sleeping() {
+    return KMP_ATOMIC_OR(this->get(), KMP_BARRIER_SLEEP_STATE);
+  }
+  /*!
+   * @result Actual flag value before sleep bit(s) cleared.
+   * Notes that there are no longer threads sleeping on the flag by clearing
+   * sleep bit(s).
+   */
+  FlagType unset_sleeping() {
+    return KMP_ATOMIC_AND(this->get(), ~KMP_BARRIER_SLEEP_STATE);
+  }
+  /*!
+   * @param old_loc in   old value of flag
+   * Test whether there are threads sleeping on the flag's old value in old_loc.
+   */
+  bool is_sleeping_val(FlagType old_loc) {
+    return old_loc & KMP_BARRIER_SLEEP_STATE;
+  }
+  /*!
+   * Test whether there are threads sleeping on the flag.
+   */
+  bool is_sleeping() { return is_sleeping_val(this->load()); }
+  bool is_any_sleeping() { return is_sleeping_val(this->load()); }
+  kmp_uint8 *get_stolen() { return NULL; }
+  enum barrier_type get_bt() { return bs_last_barrier; }
+};
+
+template <bool Cancellable, bool Sleepable>
+class kmp_flag_32 : public kmp_basic_flag<kmp_uint32, Sleepable> {
+public:
+  kmp_flag_32(std::atomic<kmp_uint32> *p)
+      : kmp_basic_flag<kmp_uint32, Sleepable>(p) {}
+  kmp_flag_32(std::atomic<kmp_uint32> *p, kmp_info_t *thr)
+      : kmp_basic_flag<kmp_uint32, Sleepable>(p, thr) {}
+  kmp_flag_32(std::atomic<kmp_uint32> *p, kmp_uint32 c)
+      : kmp_basic_flag<kmp_uint32, Sleepable>(p, c) {}
   void suspend(int th_gtid) { __kmp_suspend_32(th_gtid, this); }
+#if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
+  void mwait(int th_gtid) { __kmp_mwait_32(th_gtid, this); }
+#endif
   void resume(int th_gtid) { __kmp_resume_32(th_gtid, this); }
   int execute_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
                     int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
@@ -528,23 +902,32 @@ public:
         this_thr, gtid, this, final_spin,
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
   }
-  void wait(kmp_info_t *this_thr,
+  bool wait(kmp_info_t *this_thr,
             int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
-    __kmp_wait_template(this_thr, this,
-                        final_spin USE_ITT_BUILD_ARG(itt_sync_obj));
+    if (final_spin)
+      return __kmp_wait_template<kmp_flag_32, TRUE, Cancellable, Sleepable>(
+          this_thr, this USE_ITT_BUILD_ARG(itt_sync_obj));
+    else
+      return __kmp_wait_template<kmp_flag_32, FALSE, Cancellable, Sleepable>(
+          this_thr, this USE_ITT_BUILD_ARG(itt_sync_obj));
   }
   void release() { __kmp_release_template(this); }
   flag_type get_ptr_type() { return flag32; }
 };
 
-class kmp_flag_64 : public kmp_basic_flag<kmp_uint64> {
+template <bool Cancellable, bool Sleepable>
+class kmp_flag_64 : public kmp_basic_flag_native<kmp_uint64, Sleepable> {
 public:
-  kmp_flag_64(volatile kmp_uint64 *p) : kmp_basic_flag<kmp_uint64>(p) {}
+  kmp_flag_64(volatile kmp_uint64 *p)
+      : kmp_basic_flag_native<kmp_uint64, Sleepable>(p) {}
   kmp_flag_64(volatile kmp_uint64 *p, kmp_info_t *thr)
-      : kmp_basic_flag<kmp_uint64>(p, thr) {}
+      : kmp_basic_flag_native<kmp_uint64, Sleepable>(p, thr) {}
   kmp_flag_64(volatile kmp_uint64 *p, kmp_uint64 c)
-      : kmp_basic_flag<kmp_uint64>(p, c) {}
+      : kmp_basic_flag_native<kmp_uint64, Sleepable>(p, c) {}
   void suspend(int th_gtid) { __kmp_suspend_64(th_gtid, this); }
+#if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
+  void mwait(int th_gtid) { __kmp_mwait_64(th_gtid, this); }
+#endif
   void resume(int th_gtid) { __kmp_resume_64(th_gtid, this); }
   int execute_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
                     int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
@@ -553,17 +936,21 @@ public:
         this_thr, gtid, this, final_spin,
         thread_finished USE_ITT_BUILD_ARG(itt_sync_obj), is_constrained);
   }
-  void wait(kmp_info_t *this_thr,
+  bool wait(kmp_info_t *this_thr,
             int final_spin USE_ITT_BUILD_ARG(void *itt_sync_obj)) {
-    __kmp_wait_template(this_thr, this,
-                        final_spin USE_ITT_BUILD_ARG(itt_sync_obj));
+    if (final_spin)
+      return __kmp_wait_template<kmp_flag_64, TRUE, Cancellable, Sleepable>(
+          this_thr, this USE_ITT_BUILD_ARG(itt_sync_obj));
+    else
+      return __kmp_wait_template<kmp_flag_64, FALSE, Cancellable, Sleepable>(
+          this_thr, this USE_ITT_BUILD_ARG(itt_sync_obj));
   }
   void release() { __kmp_release_template(this); }
   flag_type get_ptr_type() { return flag64; }
 };
 
 // Hierarchical 64-bit on-core barrier instantiation
-class kmp_flag_oncore : public kmp_flag<kmp_uint64> {
+class kmp_flag_oncore : public kmp_flag_native<kmp_uint64> {
   kmp_uint64 checker;
   kmp_info_t *waiting_threads[1];
   kmp_uint32 num_waiting_threads;
@@ -583,27 +970,17 @@ class kmp_flag_oncore : public kmp_flag<kmp_uint64> {
 
 public:
   kmp_flag_oncore(volatile kmp_uint64 *p)
-      : kmp_flag<kmp_uint64>(p, flag_oncore), num_waiting_threads(0),
+      : kmp_flag_native<kmp_uint64>(p, flag_oncore), num_waiting_threads(0),
         flag_switch(false) {}
   kmp_flag_oncore(volatile kmp_uint64 *p, kmp_uint32 idx)
-      : kmp_flag<kmp_uint64>(p, flag_oncore), num_waiting_threads(0),
+      : kmp_flag_native<kmp_uint64>(p, flag_oncore), num_waiting_threads(0),
         offset(idx), flag_switch(false) {}
   kmp_flag_oncore(volatile kmp_uint64 *p, kmp_uint64 c, kmp_uint32 idx,
-                  enum barrier_type bar_t, kmp_info_t *thr
-#if USE_ITT_BUILD
-                  ,
-                  void *itt
-#endif
-                  )
-      : kmp_flag<kmp_uint64>(p, flag_oncore), checker(c),
+                  enum barrier_type bar_t,
+                  kmp_info_t *thr USE_ITT_BUILD_ARG(void *itt))
+      : kmp_flag_native<kmp_uint64>(p, flag_oncore), checker(c),
         num_waiting_threads(0), offset(idx), flag_switch(false), bt(bar_t),
-        this_thr(thr)
-#if USE_ITT_BUILD
-        ,
-        itt_sync_obj(itt)
-#endif
-  {
-  }
+        this_thr(thr) USE_ITT_BUILD_ARG(itt_sync_obj(itt)) {}
   kmp_info_t *get_waiter(kmp_uint32 i) {
     KMP_DEBUG_ASSERT(i < num_waiting_threads);
     return waiting_threads[i];
@@ -625,18 +1002,14 @@ public:
       return true;
     else if (flag_switch) {
       this_thr->th.th_bar[bt].bb.wait_flag = KMP_BARRIER_SWITCHING;
-      kmp_flag_64 flag(&this_thr->th.th_bar[bt].bb.b_go,
+      kmp_flag_64<> flag(&this_thr->th.th_bar[bt].bb.b_go,
                        (kmp_uint64)KMP_BARRIER_STATE_BUMP);
-      __kmp_wait_64(this_thr, &flag, TRUE
-#if USE_ITT_BUILD
-                    ,
-                    itt_sync_obj
-#endif
-                    );
+      __kmp_wait_64(this_thr, &flag, TRUE USE_ITT_BUILD_ARG(itt_sync_obj));
     }
     return false;
   }
   void internal_release() {
+    // Other threads can write their own bytes simultaneously.
     if (__kmp_dflt_blocktime == KMP_MAX_BLOCKTIME) {
       byteref(get(), offset) = 1;
     } else {
@@ -657,11 +1030,18 @@ public:
   bool is_sleeping() { return is_sleeping_val(*get()); }
   bool is_any_sleeping() { return is_sleeping_val(*get()); }
   void wait(kmp_info_t *this_thr, int final_spin) {
-    __kmp_wait_template<kmp_flag_oncore>(
-        this_thr, this, final_spin USE_ITT_BUILD_ARG(itt_sync_obj));
+    if (final_spin)
+      __kmp_wait_template<kmp_flag_oncore, TRUE>(
+          this_thr, this USE_ITT_BUILD_ARG(itt_sync_obj));
+    else
+      __kmp_wait_template<kmp_flag_oncore, FALSE>(
+          this_thr, this USE_ITT_BUILD_ARG(itt_sync_obj));
   }
   void release() { __kmp_release_template(this); }
   void suspend(int th_gtid) { __kmp_suspend_oncore(th_gtid, this); }
+#if KMP_HAVE_MWAIT || KMP_HAVE_UMWAIT
+  void mwait(int th_gtid) { __kmp_mwait_oncore(th_gtid, this); }
+#endif
   void resume(int th_gtid) { __kmp_resume_oncore(th_gtid, this); }
   int execute_tasks(kmp_info_t *this_thr, kmp_int32 gtid, int final_spin,
                     int *thread_finished USE_ITT_BUILD_ARG(void *itt_sync_obj),
@@ -681,15 +1061,15 @@ static inline void __kmp_null_resume_wrapper(int gtid, volatile void *flag) {
   if (!flag)
     return;
 
-  switch (RCAST(kmp_flag_64 *, CCAST(void *, flag))->get_type()) {
+  switch (RCAST(kmp_flag_64<> *, CCAST(void *, flag))->get_type()) {
   case flag32:
-    __kmp_resume_32(gtid, NULL);
+    __kmp_resume_32(gtid, (kmp_flag_32<> *)NULL);
     break;
   case flag64:
-    __kmp_resume_64(gtid, NULL);
+    __kmp_resume_64(gtid, (kmp_flag_64<> *)NULL);
     break;
   case flag_oncore:
-    __kmp_resume_oncore(gtid, NULL);
+    __kmp_resume_oncore(gtid, (kmp_flag_oncore *)NULL);
     break;
   }
 }

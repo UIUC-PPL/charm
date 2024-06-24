@@ -4,10 +4,9 @@
 
 //===----------------------------------------------------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is dual licensed under the MIT and the University of Illinois Open
-// Source Licenses. See LICENSE.txt for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -25,33 +24,35 @@
 // Detect compiler.
 #if KMP_COMPILER_ICC
 #if __INTEL_COMPILER == 1010
-#define KMP_COMPILER "Intel C++ Compiler 10.1"
+#define KMP_COMPILER "Intel(R) C++ Compiler 10.1"
 #elif __INTEL_COMPILER == 1100
-#define KMP_COMPILER "Intel C++ Compiler 11.0"
+#define KMP_COMPILER "Intel(R) C++ Compiler 11.0"
 #elif __INTEL_COMPILER == 1110
-#define KMP_COMPILER "Intel C++ Compiler 11.1"
+#define KMP_COMPILER "Intel(R) C++ Compiler 11.1"
 #elif __INTEL_COMPILER == 1200
-#define KMP_COMPILER "Intel C++ Compiler 12.0"
+#define KMP_COMPILER "Intel(R) C++ Compiler 12.0"
 #elif __INTEL_COMPILER == 1210
-#define KMP_COMPILER "Intel C++ Compiler 12.1"
+#define KMP_COMPILER "Intel(R) C++ Compiler 12.1"
 #elif __INTEL_COMPILER == 1300
-#define KMP_COMPILER "Intel C++ Compiler 13.0"
+#define KMP_COMPILER "Intel(R) C++ Compiler 13.0"
 #elif __INTEL_COMPILER == 1310
-#define KMP_COMPILER "Intel C++ Compiler 13.1"
+#define KMP_COMPILER "Intel(R) C++ Compiler 13.1"
 #elif __INTEL_COMPILER == 1400
-#define KMP_COMPILER "Intel C++ Compiler 14.0"
+#define KMP_COMPILER "Intel(R) C++ Compiler 14.0"
 #elif __INTEL_COMPILER == 1410
-#define KMP_COMPILER "Intel C++ Compiler 14.1"
+#define KMP_COMPILER "Intel(R) C++ Compiler 14.1"
 #elif __INTEL_COMPILER == 1500
-#define KMP_COMPILER "Intel C++ Compiler 15.0"
+#define KMP_COMPILER "Intel(R) C++ Compiler 15.0"
 #elif __INTEL_COMPILER == 1600
-#define KMP_COMPILER "Intel C++ Compiler 16.0"
+#define KMP_COMPILER "Intel(R) C++ Compiler 16.0"
 #elif __INTEL_COMPILER == 1700
-#define KMP_COMPILER "Intel C++ Compiler 17.0"
-#elif __INTEL_COMPILER == 9998
-#define KMP_COMPILER "Intel C++ Compiler mainline"
-#elif __INTEL_COMPILER == 9999
-#define KMP_COMPILER "Intel C++ Compiler mainline"
+#define KMP_COMPILER "Intel(R) C++ Compiler 17.0"
+#elif __INTEL_COMPILER == 1800
+#define KMP_COMPILER "Intel(R) C++ Compiler 18.0"
+#elif __INTEL_COMPILER == 1900
+#define KMP_COMPILER "Intel(R) C++ Compiler 19.0"
+#elif __INTEL_COMPILER >= 9900
+#define KMP_COMPILER "Intel(R) C++ Compiler mainline"
 #endif
 #elif KMP_COMPILER_CLANG
 #define KMP_COMPILER                                                           \
@@ -74,7 +75,7 @@
 #endif // KMP_LIB_TYPE
 
 // Detect link type (static, dynamic).
-#ifdef KMP_DYNAMIC_LIB
+#if KMP_DYNAMIC_LIB
 #define KMP_LINK_TYPE "dynamic"
 #else
 #define KMP_LINK_TYPE "static"
@@ -87,16 +88,7 @@
 int const __kmp_version_major = KMP_VERSION_MAJOR;
 int const __kmp_version_minor = KMP_VERSION_MINOR;
 int const __kmp_version_build = KMP_VERSION_BUILD;
-int const __kmp_openmp_version =
-#if OMP_50_ENABLED
-    201611;
-#elif OMP_45_ENABLED
-    201511;
-#elif OMP_40_ENABLED
-    201307;
-#else
-    201107;
-#endif
+int const __kmp_openmp_version = 201611;
 
 /* Do NOT change the format of this string!  Intel(R) Thread Profiler checks for
    a specific format some changes in the recognition routine there need to be
