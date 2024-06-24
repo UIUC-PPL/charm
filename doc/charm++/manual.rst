@@ -12367,8 +12367,8 @@ are available:
    *stride*), that range will be stepped through in increments of the
    additional number. Within each stride, a dot followed by a *run* will
    indicate how many cores to use from that starting point. A plus
-   represents the offset to the previous core number. Multiple
-   ``+offset`` flags are supported, e.g., 0-7+8+16 equals 0,8,16,1,9,17.
+   is followed by an *offset* to the previous core number. Multiple
+   offsets are supported, e.g., 0-7+8+16 equals 0,8,16,1,9,17,...
 
    For example, the sequence ``0-8:2,16,20-24`` includes cores 0, 2, 4,
    6, 8, 16, 20, 21, 22, 23, 24. On a 4-way quad-core system, if one
