@@ -1657,6 +1657,8 @@ void CsdSchedulerState_new(CsdSchedulerState_t *s)
 #if CMK_NODE_QUEUE_AVAILABLE
 	s->nodeQ=CsvAccess(CsdNodeQueue);
 	s->nodeLock=CsvAccess(CsdNodeQueueLock);
+	s->nodeGrpFreq=4;
+	s->iter = 0;
 #endif
 #if CMK_GRID_QUEUE_AVAILABLE
 	s->gridQ=CpvAccess(CsdGridQueue);
@@ -1720,29 +1722,39 @@ void CsdSchedulerState_new(CsdSchedulerState_t *s)
  */
 void *CsdNextMessage(CsdSchedulerState_t *s) {
 	void *msg;
-	if((*(s->localCounter))-- >0)
-	  {
-              /* This avoids a race condition with migration detected by megatest*/
-              msg=CdsFifo_Dequeue(s->localQ);
-              if (msg!=NULL)
-		{
+
+  if ((*(s->localCounter))-- > 0) {
+    /* This avoids a race condition with migration detected by megatest*/
+    msg = CdsFifo_Dequeue(s->localQ);
+    if (msg != NULL) {
 #if CMI_QD
-		  CpvAccess(cQdState)->mProcessed++;
+        CpvAccess(cQdState)->mProcessed++;
 #endif
-		  return msg;	    
-		}
-              CqsDequeue(s->schedQ,(void **)&msg);
-              if (msg!=NULL) return msg;
-	  }
-	
+        return msg;
+    }
+    CqsDequeue(s->schedQ, (void**)&msg);
+    if (msg != NULL)
+      return msg;
+  }
+
+#if CMK_NODE_QUEUE_AVAILABLE
+  s->iter++;
+  // we use nodeGrpFreq == 0 to mean
+  // don't check NodeQ with high priority
+  if (s->nodeGrpFreq && (0 == (s->iter % s->nodeGrpFreq))) {
+	  msg = CmiGetNonLocalNodeQ();
+	  if (NULL != msg) return msg;
+	}
+#endif
+
 	*(s->localCounter)=CsdLocalMax;
-	if ( NULL!=(msg=CmiGetNonLocal()) || 
+	if ( NULL!=(msg=CmiGetNonLocal()) ||
 	     NULL!=(msg=CdsFifo_Dequeue(s->localQ)) ) {
 #if CMI_QD
-            CpvAccess(cQdState)->mProcessed++;
+		CpvAccess(cQdState)->mProcessed++;
 #endif
-            return msg;
-        }
+		return msg;
+  }
 #if CMK_GRID_QUEUE_AVAILABLE
 	/*#warning "CsdNextMessage: CMK_GRID_QUEUE_AVAILABLE" */
 	CqsDequeue (s->gridQ, (void **) &msg);
