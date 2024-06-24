@@ -43,8 +43,8 @@ priolongtest_chare::recv(priolongtest_msg *m)
     megatest_finish();
 }
 
-#if ! CMK_RANDOMIZED_MSGQ
-MEGATEST_REGISTER_TEST(priolongtest,"ebohm",1)
+#if !defined(CMK_RANDOMIZED_MSGQ) && !defined(CK_ENABLE_MSG_PRIORITIES)
+MEGATEST_REGISTER_TEST(priolongtest,"ebohm",1) 
 #endif
 
 #include "priolongtest.def.h"

@@ -187,6 +187,7 @@ option(ZLIB                "Enable zlib support" ON)
 option(AMPI_MPICH_TESTS    "Enable mpich tests for AMPI" OFF)
 option(DRONE_MODE          "Enable drone mode" OFF)
 option(TASK_QUEUE          "Enable task queue" OFF)
+option(PRIORITIES_ENABLED  "Enable entry method priorities" OFF)
 
 
 if(TRACING STREQUAL "")
@@ -270,6 +271,13 @@ if(${TASK_QUEUE} OR ${OMP})
 else()
   set(CMK_TASKQUEUE 0)
 endif()
+
+if(${PRIORITIES_ENABLED})
+  set(CK_ENABLE_MSG_PRIORITIES 1)
+else()
+  set(CK_ENABLE_MSG_PRIORITIES 0)
+endif()
+
 
 
 if(${AMPI_MPICH_TESTS})
