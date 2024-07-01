@@ -167,22 +167,22 @@ void PUP::fromMem::bytes(void *p,size_t n,size_t itemSize,dataType t)
 	buf+=n;
 }
 
-void PUP::sizer::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t) {
+void PUP::sizer::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t) {
 #ifdef CK_CHECK_PUP
 	nBytes+=sizeof(pupCheckRec);
 #endif
 	nBytes+=sizeof(CmiNcpyBuffer);
 }
 
-void PUP::sizer::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
-	pup_buffer(p, n, itemSize, t);
+void PUP::sizer::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+	pup_buffer_async(p, n, itemSize, t);
 }
 
-void PUP::toMem::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
-	pup_buffer(p, n, itemSize, t, malloc, free);
+void PUP::toMem::pup_buffer_async(void *&p,size_t n,size_t itemSize,dataType t) {
+	pup_buffer_async(p, n, itemSize, t, malloc, free);
 }
 
-void PUP::fromMem::pup_buffer_generic(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, bool isMalloc) {
+void PUP::fromMem::pup_buffer_async_generic(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, bool isMalloc) {
 #ifdef CK_CHECK_PUP
 	((pupCheckRec *)buf)->check(t,n);
 	buf+=sizeof(pupCheckRec);
@@ -213,11 +213,11 @@ void PUP::fromMem::pup_buffer_generic(void *&p,size_t n, size_t itemSize, dataTy
 	buf+=sizeof(src);
 }
 
-void PUP::fromMem::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
-	pup_buffer_generic(p, n, itemSize, t, malloc, true);
+void PUP::fromMem::pup_buffer_async(void *&p,size_t n,size_t itemSize,dataType t) {
+	pup_buffer_async_generic(p, n, itemSize, t, malloc, true);
 }
 
-void PUP::toMem::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+void PUP::toMem::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
 #ifdef CK_CHECK_PUP
 	((pupCheckRec *)buf)->write(t,n);
 	buf+=sizeof(pupCheckRec);
@@ -232,8 +232,8 @@ void PUP::toMem::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std:
 	buf+=sizeof(src);
 }
 
-void PUP::fromMem::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
-	pup_buffer_generic(p, n, itemSize, t, allocate, false);
+void PUP::fromMem::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+	pup_buffer_async_generic(p, n, itemSize, t, allocate, false);
 }
 
 extern "C" {
@@ -375,12 +375,12 @@ void PUP::toDisk::bytes(void *p,size_t n,size_t itemSize,dataType /*t*/)
   }
 }
 
-void PUP::toDisk::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
+void PUP::toDisk::pup_buffer_async(void *&p,size_t n,size_t itemSize,dataType t) {
   bytes(p, n, itemSize, t);
   if(isDeleting()) free(p);
 }
 
-void PUP::toDisk::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+void PUP::toDisk::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
   bytes(p, n, itemSize, t);
   if(isDeleting()) deallocate(p);
 }
@@ -388,12 +388,12 @@ void PUP::toDisk::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std
 void PUP::fromDisk::bytes(void *p,size_t n,size_t itemSize,dataType /*t*/)
 {/* CkPrintf("reading %d bytes\n",itemSize*n); */ CmiFread(p,itemSize,n,F);}
 
-void PUP::fromDisk::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
+void PUP::fromDisk::pup_buffer_async(void *&p,size_t n,size_t itemSize,dataType t) {
   if(isUnpacking()) p = malloc(n * itemSize);
   bytes(p, n, itemSize, t);
 }
 
-void PUP::fromDisk::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+void PUP::fromDisk::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
   if(isUnpacking()) p = allocate(n * itemSize);
   bytes(p, n, itemSize, t);
 }
@@ -693,11 +693,11 @@ void PUP::toTextUtil::synchronize(unsigned int m)
 #endif
 }
 
-void PUP::toTextUtil::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
+void PUP::toTextUtil::pup_buffer_async(void *&p,size_t n,size_t itemSize,dataType t) {
   bytes(p, n, itemSize, t);
 }
 
-void PUP::toTextUtil::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+void PUP::toTextUtil::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
   bytes(p, n, itemSize, t);
 }
 
@@ -797,11 +797,11 @@ PUP::toText::toText(char *outBuf, size_t len)
   :toTextUtil(IS_PACKING+IS_COMMENTS,outBuf,len),buf(outBuf),charCount(0) { }
 
 /************** To/from text FILE ****************/
-void PUP::toTextFile::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
+void PUP::toTextFile::pup_buffer_async(void *&p,size_t n,size_t itemSize,dataType t) {
   bytes(p, n, itemSize, t);
 }
 
-void PUP::toTextFile::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+void PUP::toTextFile::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
   bytes(p, n, itemSize, t);
 }
 
@@ -887,11 +887,11 @@ double PUP::fromTextFile::readDouble(void) {
   return ret;
 }
 
-void PUP::fromTextFile::pup_buffer(void *&p,size_t n,size_t itemSize,dataType t) {
+void PUP::fromTextFile::pup_buffer_async(void *&p,size_t n,size_t itemSize,dataType t) {
   bytes(p, n, itemSize, t);
 }
 
-void PUP::fromTextFile::pup_buffer(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+void PUP::fromTextFile::pup_buffer_async(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
   bytes(p, n, itemSize, t);
 }
 

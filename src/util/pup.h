@@ -266,16 +266,16 @@ class er {
 
   // Standard pup_buffer API that calls malloc for allocation on isUnpacking and free for deallocation on isPacking
   template<class T>
-  void pup_buffer(T *&a, size_t nItems) {
-    pup_buffer((void *&)a, nItems, sizeof(T), getXlateDataType(a));
+  void pup_buffer_async(T *&a, size_t nItems) {
+    pup_buffer_async((void *&)a, nItems, sizeof(T), getXlateDataType(a));
   }
 
   // Custom pup_buffer API that calls user provided 'allocate' function for allocation on isUnpacking and
   // user provided 'deallocate' function for deallocation on isPacking
   // Custom pup_buffer behaves same as the standard pup_buffer except for calling custom allocator and deallocator methods
   template<class T>
-  void pup_buffer(T *&a, size_t nItems, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
-    pup_buffer((void *&)a, nItems, sizeof(T), getXlateDataType(a), allocate, deallocate);
+  void pup_buffer_async(T *&a, size_t nItems, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) {
+    pup_buffer_async((void *&)a, nItems, sizeof(T), getXlateDataType(a), allocate, deallocate);
   }
 
   //For pointers: the last parameter is to make it more difficult to call
@@ -323,8 +323,8 @@ class er {
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t) =0;
   virtual void object(able** a);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t) = 0;
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) = 0;
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t) = 0;
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate) = 0;
 
   virtual size_t size(void) const { return 0; }
   
@@ -391,8 +391,8 @@ class sizer : public er {
   //Generic bottleneck: n items of size itemSize
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
  public:
   //Write data to the given buffer
@@ -454,8 +454,8 @@ class toMem : public mem {
   //Generic bottleneck: pack n items of size itemSize from p.
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
  public:
   //Write data to the given buffer
@@ -478,10 +478,10 @@ class fromMem : public mem {
   //Generic bottleneck: unpack n items of size itemSize from p.
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
-  void pup_buffer_generic(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, bool isMalloc);
+  void pup_buffer_async_generic(void *&p,size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, bool isMalloc);
 
  public:
   //Read data from the given buffer
@@ -523,8 +523,8 @@ class toDisk : public disk {
   //Generic bottleneck: pack n items of size itemSize from p.
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
   bool error;
  public:
@@ -544,8 +544,8 @@ class fromDisk : public disk {
   //Generic bottleneck: unpack n items of size itemSize from p.
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
  public:
   // Read data from the given file pointer 
@@ -575,8 +575,8 @@ class toTextUtil : public er {
  protected:
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
   virtual void object(able** a);
 };
@@ -614,8 +614,8 @@ class toTextFile : public er {
   FILE *f;
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
  public:
   //Begin writing to this file, which should be opened for ascii write.
@@ -635,8 +635,8 @@ class fromTextFile : public er {
   
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
   virtual void parseError(const char *what);
  public:
@@ -723,8 +723,8 @@ class xlater : public wrap_er {
   //Generic bottleneck: unpack n items of size itemSize from p.
   virtual void bytes(void *p,size_t n,size_t itemSize,dataType t);
 
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t);
-  virtual void pup_buffer(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t);
+  virtual void pup_buffer_async(void *&p, size_t n, size_t itemSize, dataType t, std::function<void *(size_t)> allocate, std::function<void (void *)> deallocate);
 
  public:
   xlater(const machineInfo &fromMachine, er &fromData);
