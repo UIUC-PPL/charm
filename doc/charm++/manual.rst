@@ -4655,11 +4655,9 @@ avoid copies and behaves like a regular Charm++ entry method invocation.
 
 There are three APIs that provide zero copy semantics in Charm++:
 
--  Zero Copy Direct API
-
--  Zero Copy Entry Method Send API
-
--  Zero Copy Entry Method Post API
+- `Zero Copy Direct API <#zero-copy-direct-api>`__
+- `Zero Copy Entry Method Send API <#zero-copy-entry-method-send-api>`__
+- `Zero Copy Entry Method Post API <#zero-copy-entry-method-post-api>`__
 
 Zero Copy Direct API
 ^^^^^^^^^^^^^^^^^^^^
