@@ -75,7 +75,7 @@ regtest: $(TARGET)
 # Rule to generate dependency information for C++ source files
 %.d: %.C
 	$(info Generating dependencies for $<)
-	@g++ -MM -MG $(CPPFLAGS) $(INCDIRS:%=-I%) -I$(CHARMINC) $< | perl $(CHARMBIN)/dep.pl $(CHARMINC) > $@
+	@g++ -MM -MG $(CPPFLAGS) $(INCDIRS:%=-I%) -I$(CHARMINC) $< | perl $(CHARMHOME)/src/scripts/dep.pl $(CHARMINC) > $@
 #	@$(SHELL) -ec 'g++ -MM -MG $(CPPFLAGS) $(INCDIRS:%=-I%) $< \
 #	| sed '\''s/\($*\)\.o[ :]*/\1.o $@ : /g'\'' > $@; \
 #	[ -s $@ ] || rm -f $@'
@@ -84,6 +84,21 @@ regtest: $(TARGET)
 %.di: %.ci
 	$(info Generating dependencies for $<)
 	@$(CHARMC) -M $< > $@
+
+luUtils.ci.%.stamp: luUtils.ci
+	@echo "Building $@ from $<"
+	$(info-ci)
+	$q$(CHARMC) $(CPPFLAGS) -E $< && touch $@
+
+lu.ci.%.stamp: lu.ci
+	@echo "Building $@ from $<"
+	$(info-ci)
+	$q$(CHARMC) $(CPPFLAGS) -E $< && touch $@
+
+driver.ci.%.stamp: driver.ci
+	@echo "Building $@ from $<"
+	$(info-ci)
+	$q$(CHARMC) $(CPPFLAGS) -E $< && touch $@
 
 # Compilation rule for ci files
 %.ci.stamp: %.ci
