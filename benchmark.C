@@ -415,7 +415,7 @@ struct BenchmarkLUBlk : public CBase_BenchmarkLUBlk {
   /// Random data generation
   int seed_A;
   int seed_b;
-  CrnStream blockStream, vecStream;
+  //CrnStream blockStream, vecStream;
   void initVec();
   void genBlock();
   void genVec(double *buf);
@@ -434,7 +434,7 @@ void BenchmarkLUBlk::initVec() {
 
   // Save seed value to use for validation
   seed_A = 2998389;
-  CrnInitStream(&blockStream, seed_A + thisIndex.x*numBlks + thisIndex.y, 0);
+  //CrnInitStream(&blockStream, seed_A + thisIndex.x*numBlks + thisIndex.y, 0);
   genBlock();
 
   bvec = new double[blkSize];
@@ -444,11 +444,11 @@ void BenchmarkLUBlk::initVec() {
 }
 
 void BenchmarkLUBlk::genBlock() {
-  CrnStream stream;
-  memcpy(&stream, &blockStream, sizeof(CrnStream));
+  //CrnStream stream;
+  //memcpy(&stream, &blockStream, sizeof(CrnStream));
 
   for (double *d = LU; d < LU + blkSize * blkSize; ++d)
-    *d = CrnDouble(&stream);
+    *d = CrnDrand();
 }
 
 void BenchmarkLUBlk::genVec(double *buf) {
