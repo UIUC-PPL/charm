@@ -78,7 +78,7 @@ void BlockScheduler::scheduleSend(CkIndex2D index, bool onActive) {
 
 // If the processor is idle, have Converse call this function to pump message
 // out to ensure progress is made
-void pumpOnIdle(void *s, double) {
+void pumpOnIdle(void *s) {
   BlockScheduler *scheduler = (BlockScheduler *)s;
   scheduler->pumpMessages();
 }
