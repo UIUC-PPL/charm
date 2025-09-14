@@ -31,7 +31,7 @@ module lu {
     entry void factor() {
       // Keep executing trailing updates on this block until it is on
       // the active block row or column
-      serial { thisProxy[thisIndex].updateUntilActive(); }
+      serial { thisProxy(thisIndex).updateUntilActive(); }
       // Once the current step of the computation reaches the diagonal
       // chare on this blocks row / column
       when amActive() {
@@ -44,7 +44,7 @@ module lu {
     // Describes the control flow of alternating pivoting and trailing
     // updates for all LUBlk chares before they become part of the
     // active panel.
-    entry [local] void updateUntilActive() {
+    entry void updateUntilActive() {
       //-----------------------------------------------------------------------
       // Each chare in the array has to process these many trailing
       // updates before the diagonal chare on its row / column becomes
