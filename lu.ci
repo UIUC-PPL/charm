@@ -31,13 +31,13 @@ module lu {
     entry void factor() {
       // Keep executing trailing updates on this block until it is on
       // the active block row or column
-      atomic { thisProxy[thisIndex].updateUntilActive(); }
+      serial { thisProxy[thisIndex].updateUntilActive(); }
       // Once the current step of the computation reaches the diagonal
-      // chare on this block's row / column
+      // chare on this blocks row / column
       when amActive() {
-        if      (isAboveDiagonal()) atomic { thisProxy[thisIndex].factorAboveDiagBlock(); }
-        else if (isBelowDiagonal()) atomic { thisProxy[thisIndex].factorBelowDiagBlock(); }
-        else     /* on diagonal */  atomic { thisProxy[thisIndex].factorDiagBlock(); }
+        if      (isAboveDiagonal()) serial { thisProxy[thisIndex].factorAboveDiagBlock(); }
+        else if (isBelowDiagonal()) serial { thisProxy[thisIndex].factorBelowDiagBlock(); }
+        else     /* on diagonal */  serial { thisProxy[thisIndex].factorDiagBlock(); }
       }
     };
 
@@ -50,23 +50,23 @@ module lu {
       // updates before the diagonal chare on its row / column becomes
       // active in the factorization process.
       // -----------------------------------------------------------------------
-      atomic {
+      serial {
         startTime = CmiWallTimer();
         pivotBatchTag = 0;
       }
       for (internalStep = 0; internalStep < min(thisIndex.x, thisIndex.y); internalStep++) {
-        atomic { thisProxy[thisIndex].pivotBatch(0); }
+        serial { thisProxy[thisIndex].pivotBatch(0); }
 
-        // After a panel's worth of pivots have arrived, this block is
+        // After a panels worth of pivots have arrived, this block is
         // ready to execute a trailing update. We let the local
         // scheduler dictate when that should happen, to let it
         // control memory consumption and avoid interfering with
         // another local block working in the latency-sensitive active
         // panel.
-        when pivotBatchDone[0](int tag) atomic { updateExecuted = false; }
+        when pivotBatchDone[0](int tag) serial { updateExecuted = false; }
         while (!updateExecuted) {
           when processTrailingUpdate[internalStep](int step, intptr_t update_ptr)
-          atomic "trailing_update" {
+          serial "trailing_update" {
             Update &update = *(Update *)update_ptr;
             if (localScheduler->shouldExecute()) {
               updateMatrix(update.L, update.U);
@@ -80,7 +80,7 @@ module lu {
           }
         }
       }
-      atomic { thisProxy[thisIndex].amActive(); }
+      serial { thisProxy[thisIndex].amActive(); }
     };
     entry void amActive();
 
@@ -94,14 +94,14 @@ module lu {
         // Wait for msg carrying the next batch of pivot ops
         when applyTrailingPivots[pivotBatchTag](pivotSequencesMsg *msg) {
           // Send out any pivot data owned by this chare
-          atomic "sendOutgoingPivots" {
+          serial "sendOutgoingPivots" {
             sendPendingPivots(msg);
             CmiReference(UsrToEnv(msg));
           }
           // Wait for all incoming pivot data from this batch
           while (pendingIncomingPivots > 0) {
             when trailingPivotRowsSwap[pivotBatchTag](pivotRowsMsg *aMsg)
-              atomic "acceptIncomingPivots" {
+              serial "acceptIncomingPivots" {
               for (int i = 0; i < aMsg->nRows; i++) {
                 CkAssert(thisIndex.x == aMsg->rowNum[i]/blkSize);
                 applySwap(aMsg->rowNum[i] % blkSize, 0,
@@ -112,14 +112,14 @@ module lu {
             }
           }
           // Increment the batch tag to the next expected
-          atomic {
+          serial {
             pivotBatchTag += msg->numRowsProcessed;
             CmiFree(UsrToEnv(msg));
           }
         }
       }
 
-      atomic { thisProxy[thisIndex].pivotBatchDone(tag); }
+      serial { thisProxy[thisIndex].pivotBatchDone(tag); }
     };
     // Indicate a set of rows which need to be swapped
     entry [nokeep] void applyTrailingPivots(pivotSequencesMsg *msg);
@@ -128,18 +128,18 @@ module lu {
     entry void pivotBatchDone(int tag);
 
     // Describes the control flow of above-diagonal blocks after
-    // they've completed their prescribed trailing updates.
+    // theyve completed their prescribed trailing updates.
     entry [local] void factorAboveDiagBlock() {
       // Do one last batch of pivots, from the diagonal on this row
-      atomic { thisProxy[thisIndex].pivotBatch(1); }
+      serial { thisProxy[thisIndex].pivotBatch(1); }
 
-      // After the associated panel's pivots have all arrived, this
+      // After the associated panels pivots have all arrived, this
       // block can perform its triangular solve.
       //
       // If the next active panel depends on these results, execute
       // eagerly to avoid delaying the work-exposing critical path.
       when pivotBatchDone[1](int tag) if (thisIndex.y == thisIndex.x + 1) {
-        when triangularSolve(blkMsg* m) atomic "triangular_solve" {
+        when triangularSolve(blkMsg* m) serial "triangular_solve" {
           computeU(m->data);
           delete m;
         }
@@ -147,9 +147,9 @@ module lu {
         // Otherwise, let the local scheduler direct execution, to
         // let it limit memory consumption and avoid inconveniencing
         // an active panel factorization.
-        atomic { updateExecuted = false; }
+        serial { updateExecuted = false; }
         while (!updateExecuted) {
-          when processComputeU(intptr_t update_ptr) atomic "process_compute_U" {
+          when processComputeU(intptr_t update_ptr) serial "process_compute_U" {
             Update &update = *(Update *)update_ptr;
             if (localScheduler->shouldExecute()) {
               computeU(update.L);
@@ -162,13 +162,13 @@ module lu {
           }
         }
       }
-      atomic "finish_U" {
+      serial "finish_U" {
         scheduler.releaseActiveColumn(thisIndex.y, thisIndex.x);
         scheduleDownwardU();
         factored = true;
         localScheduler->factorizationDone(thisIndex);
       }
-      atomic "abovediag_iteration_completed" { contribute(factorizationDone); }
+      serial "abovediag_iteration_completed" { contribute(factorizationDone); }
       // Swallow excess pivots message broadcast to the entire array
       while (true) { when applyTrailingPivots(pivotSequencesMsg *msg) { } }
     };
@@ -184,7 +184,7 @@ module lu {
 
     // Below diagonal
     entry [local] void factorBelowDiagBlock() {
-      atomic {
+      serial {
         // Find the pivot candidate for just the first column in the block
         pivotCandidate = findMaxElm(0, 0);
         pendingUmsg = NULL;
@@ -192,12 +192,12 @@ module lu {
       // Work in the active column of the chare array proceeds
       // column-by-column through the matrix
       for (activeCol = 0; activeCol < blkSize; activeCol++) {
-        atomic "below_find_pivot" {
+        serial "below_find_pivot" {
           // Contribute to a reduction along the active panel to identify the pivot row
           mcastMgr->contribute(sizeof(MaxElm), &pivotCandidate, MaxElmReducer, pivotCookie);
           thisProxy[thisIndex].updateSubBlock();
         }
-        when updateSubBlock() atomic "useg_delayed_update" {
+        when updateSubBlock() serial "useg_delayed_update" {
           // Delayed update using the U segment from the prev activeCol iteration
           if (pendingUmsg) {
             updateLsubBlock(activeCol-1, pendingUmsg->data, 2);
@@ -208,7 +208,7 @@ module lu {
         }
         case {
           when pivotRowSwap[internalStep*blkSize + activeCol](int rowIndex, int pivotRow, int len, double data[len],
-                                                              double b) atomic "below_send_remote_pivot" {
+                                                              double b) serial "below_send_remote_pivot" {
             ownedPivotThisStep = true;
             CkAssert(pivotRow / blkSize == thisIndex.x);
             CkEntryOptions opts;
@@ -218,18 +218,18 @@ module lu {
                             &(mgr->setPrio(SEND_PIVOT_DATA, opts)));
             applySwap(pivotRow % blkSize, 0, data, b);
           }
-          when USegCompute(UMsg* anUmsg) atomic { pendingUmsg = anUmsg; takeRef(pendingUmsg); }
+          when USegCompute(UMsg* anUmsg) serial { pendingUmsg = anUmsg; takeRef(pendingUmsg); }
         }
         if (ownedPivotThisStep)
-          when USegCompute(UMsg* anUmsg) atomic { pendingUmsg = anUmsg; takeRef(pendingUmsg); }
+          when USegCompute(UMsg* anUmsg) serial { pendingUmsg = anUmsg; takeRef(pendingUmsg); }
         // Wait for the post-diagonal U segment from the original owner of the pivot row
-        atomic "below_recv_useg" {
+        serial "below_recv_useg" {
           if (activeCol == 0) localScheduler->startedActivePanel();
           // Compute multipliers and update just one column to find the next candidate pivot
           pivotCandidate = computeMultipliersAndFindColMax(activeCol, pendingUmsg->data);
         }
       }
-      atomic "below_send_L" {
+      serial "below_send_L" {
         if (pendingUmsg) dropRef(pendingUmsg);
         scheduleRightwardL();
         factored = true;
@@ -238,14 +238,14 @@ module lu {
       }
 
       while (blockPulled < numBlks-thisIndex.y-1) {
-        when blockUsed(int count) atomic { blockPulled += count; }
+        when blockUsed(int count) serial { blockPulled += count; }
       }
 
       for (internalStep++; internalStep <= thisIndex.x; internalStep++) {
-        atomic { thisProxy[thisIndex].pivotBatch(2); }
+        serial { thisProxy[thisIndex].pivotBatch(2); }
         when pivotBatchDone[2](int tag) { }
       }
-      atomic "belowdiag_iteration_completed" { contribute(factorizationDone); }
+      serial "belowdiag_iteration_completed" { contribute(factorizationDone); }
       // Swallow excess pivots message broadcast to the entire array
       while (true) { when applyTrailingPivots(pivotSequencesMsg *msg) { } }
     };
@@ -254,7 +254,7 @@ module lu {
     entry void blockUsed(int count);
 
     entry void factorDiagBlock() {
-      atomic {
+      serial {
 #if defined(TRACE_TOGGLER_H)
         if (internalStep == 0 || internalStep == 10) {
           traceToggler::stop();
@@ -270,14 +270,14 @@ module lu {
       }
       // Process matrix column-by-column
       for (activeCol = 0; activeCol < blkSize; ++activeCol) {
-        atomic "diag_find_colmax" {
+        serial "diag_find_colmax" {
           // Contribute to a redn along the pivot section to identify the pivot row
           mcastMgr->contribute(sizeof(MaxElm), &pivotCandidate, MaxElmReducer, pivotCookie);
         }
 
         // Share the pivot info with the appropriate array section
         when colMax(MaxElm pivotFound) {
-	  atomic "diag_found_colmax" {
+	  serial "diag_found_colmax" {
             if (activeCol == 0) {
               ckout << "--------------------------------------------------------------------"<<endl
                     << "Block " << thisIndex.x << " queueing local LU at internalStep "
@@ -291,7 +291,7 @@ module lu {
 	    // Now, send the post-diagonal portion of the pivot row (a
 	    // segment of U) to all active panel brethren so that they
 	    // can start updating their sub-blocks right away
-	    atomic "diag_send_useg" {
+	    serial "diag_send_useg" {
 	      UMsg *anUmsg = new (blkSize - activeCol, sizeof(int)*8)
                 UMsg(blkSize - activeCol,
                      &LU[getIndex(pivot.loc % blkSize, activeCol)]);
@@ -299,10 +299,10 @@ module lu {
 	      activePanel.USegCompute(anUmsg);
 	    }
 	    // Perform the local pivoting
-	    atomic "diag_local_pivot" { swapLocal(activeCol, pivot.loc % blkSize); }
+	    serial "diag_local_pivot" { swapLocal(activeCol, pivot.loc % blkSize); }
 	  } else {
 	    // Send pivot data to remote chare in active panel
-	    atomic "diag_send_remote_pivot" {
+	    serial "diag_send_remote_pivot" {
 	      // Trigger swap of data
 	      CkEntryOptions opts;
 	      thisProxy(pivot.loc / blkSize, thisIndex.y)
@@ -313,7 +313,7 @@ module lu {
 	    }
 	    when pivotRowSwap[internalStep*blkSize + activeCol](int rowIndex, int pivotRow, int len,
                                                                 const double data[len], double b)
-            atomic "diag_receive_remote_pivot" {
+            serial "diag_receive_remote_pivot" {
 #if !defined(CHARMLU_USEG_FROM_BELOW)
 	      UMsg *anUmsg = new(blkSize - activeCol, sizeof(int)*8) UMsg(blkSize - activeCol, data + activeCol);
               mgr->setPrio(anUmsg, DIAG_SEND_USEG);
@@ -324,7 +324,7 @@ module lu {
 	  }
         }
 
-        atomic "diag_agglomerate_pivots" {
+        serial "diag_agglomerate_pivots" {
           // Store the pivot information
           recordPivot(thisIndex.y*blkSize + activeCol, pivot.loc);
           // at opportune steps, send out the agglomerated pivot ops
@@ -333,7 +333,7 @@ module lu {
         }
 
         /// Compute the multipliers and update the trailing sub-block
-        atomic "diag_update" {
+        serial "diag_update" {
           // Pivoting is done, so the diagonal entry better not be
           // (near-)zero; else the matrix is singular
           if (fabs(LU[getIndex(activeCol,activeCol)])
@@ -348,7 +348,7 @@ module lu {
         }
       }
 
-      atomic "diag_multicast_L" {
+      serial "diag_multicast_L" {
         ckout << "Block " << thisIndex.x << " finished local LU at internalStep "
               << internalStep << ", time = " << CmiWallTimer() - startTime << endl;
 	fflush(stdout);
@@ -387,12 +387,12 @@ module lu {
     entry void forwardSolve() {
       if (thisIndex.x > 0) {
         // All except the first diag chare have to wait for their row reductions
-        when recvSolveData(int count, double preVec[count]) atomic {
+        when recvSolveData(int count, double preVec[count]) serial {
           for (int i = 0; i < blkSize; i++)
             bvec[i] -= preVec[i];
         }
       }
-      atomic {
+      serial {
         for (int i = 0; i < blkSize; i++)
           for (int j = 0; j < i; j++)
             bvec[i] -= LU[getIndex(i,j)] * bvec[j];
@@ -408,13 +408,13 @@ module lu {
     entry void backwardSolve() {
       if (thisIndex.x < numBlks-1) {
         // All except the last diag chare have to wait for their row reductions
-        when recvSolveData(int count, double preVec[count]) atomic {
+        when recvSolveData(int count, double preVec[count]) serial {
           for (int i = 0; i < blkSize; i++)
             bvec[i] -= preVec[i];
         }
       }
 
-      atomic {
+      serial {
         for (int i = blkSize-1; i >= 0; i--) {
           for (int j = i+1; j < blkSize; j++)
             bvec[i] -= LU[getIndex(i,j)] * bvec[j];
@@ -466,28 +466,28 @@ module lu {
      */
     entry void startup(const LUConfig luCfg, CProxy_LUMgr _mgr, CProxy_BlockScheduler bs,
                        CkCallback initialized, CkCallback factored, CkCallback solved) {
-      when schedulerReady(CkReductionMsg *m) atomic {
+      when schedulerReady(CkReductionMsg *m) serial {
 	init(luCfg, _mgr, bs, initialized, factored, solved);
       }
       when multicastRedns() {
         if (isOnDiagonal() || isBelowDiagonal()) {
-          when prepareForPivotRedn(rednSetupMsg *msg) atomic {
+          when prepareForPivotRedn(rednSetupMsg *msg) serial {
             mcastMgr = CProxy_CkMulticastMgr(msg->rednMgrGID).ckLocalBranch();
             CkGetSectionInfo(pivotCookie, msg);
           }
         }
         if (isBelowDiagonal()) {
-          when prepareForRowBeforeDiag(rednSetupMsg *msg) atomic {
+          when prepareForRowBeforeDiag(rednSetupMsg *msg) serial {
             mcastMgr = CProxy_CkMulticastMgr(msg->rednMgrGID).ckLocalBranch();
             CkGetSectionInfo(rowBeforeCookie, msg);
           }
         } else if (isAboveDiagonal()) {
-          when prepareForRowAfterDiag(rednSetupMsg *msg) atomic {
+          when prepareForRowAfterDiag(rednSetupMsg *msg) serial {
             mcastMgr = CProxy_CkMulticastMgr(msg->rednMgrGID).ckLocalBranch();
             CkGetSectionInfo(rowAfterCookie, msg);
           }
         }
-	when dataReady() atomic {
+	when dataReady() serial {
 	  contribute(initDone);
 	}
       }
