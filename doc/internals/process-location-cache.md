@@ -237,6 +237,13 @@ element is on its way in. The source process's forwarding entry (W2) is written
 at the same time, so a message that still reaches the source is forwarded once,
 to the destination, and parked there.
 
+Order across a move is not preserved, today or in PR 3: a message the sender
+issues after it learns the new PE can reach the element before an older message
+still queued on the source PE and forwarded from there. Charm++ does not promise
+order here. PR 3 makes the sender switch sooner (its process's table is written
+by the first repair, or by the source PE itself when both are in one process),
+so this window is exercised more often; the test in section 7 covers it.
+
 ### 3.5 Death
 
 The owning PE writes a tombstone {pe -1, death epoch} instead of erasing, so a
@@ -276,6 +283,45 @@ asks for the bytes again (the existing restage path). This is the protocol
 Aditya's branch implements and has run on Frontier (commits d1b83b4ec,
 c0741cb49 and f941fd851 on rate-aware-gpu-lb); PR 3 takes the contract and the
 abort text, not the device code, which lands with his branch.
+
+### 3.7 Moves within a process (a later step, after the first version)
+
+Proposed by Kale 2026-10-31. Once the table is per process, a move from PE b to
+PE c of the same process need not be reported to the home: the home's entry
+still names a PE of the right process, and that PE's table forwards to c with
+one queue push. The home's invariant weakens from "knows the element's PE" to
+"knows the element's process", which is all a remote sender needs to reach the
+table that knows the PE. This removes one home update per intra-process move;
+under node-level balancing most moves are of this kind, so it is the bulk of the
+balancing-step location traffic. The repair rule of section 3.2 is unchanged:
+the first message from a remote process that is forwarded inside the
+destination process still teaches that process the PE, so later sends from it
+go to c directly. A sender in the same process needs no repair at all, since
+the write at emigration (W2) is in the table it reads.
+
+Two conditions make this sound. First, a forward inside a process must not
+count as a hop. Today's rule in `CkArray::recvMsg` sends a message to the home
+after its second hop rather than follow a chain of stale entries; with the home
+no longer told about intra-process moves, a message bounced to the home could
+be sent back to the same process and forwarded inside it again, and the
+hop-count rule would alternate between the home and that process. If only
+cross-process forwards count, the rule keeps its meaning: after two
+cross-process misses the message goes to the home, and the home's entry always
+names the right process because cross-process moves are still reported.
+Second, the epoch argument holds without the home's knowledge of the local
+move: the local table holds {c, e+1} while the home holds {b, e}; a later
+cross-process move writes {d, e+2} both locally and at the home, which the
+home accepts by epoch compare, and a remote process holding a repaired
+{c, e+1} rejects a stale {b, e} answer from the home as older. Deaths
+(section 3.5) are still reported to the home, since the home answers requests
+for the index.
+
+Deferred from the first version so that PR 3 can be measured against today's
+traffic with the home's knowledge unchanged; the restart-traffic measurement
+planned after PR 3 gives the before and after. The device contract (section
+3.6) needs one check with Aditya for this step: a device send addressed to b
+and forwarded to c stays in the same process, so the transfer mode chosen for
+b (same-process IPC or direct pointer) is the one c needs as well.
 
 ## 4. Objects and messages
 
@@ -328,7 +374,11 @@ migrates): a custom 6-component index with `-DCK_ARRAYINDEX_MAXLEN=6`, dynamic
 insertion, `migrateMe` rounds and a balancer run, checked on 1, 2 and 4
 processes. A concurrency test for the table itself: all PEs of a process send
 to the same 1,000 elements while they migrate within and out of the process,
-with the counters above asserting one request per process per element.
+with the counters above asserting one request per process per element. The
+intra-process case of section 3.4: `migrateMe` between two PEs of one process
+while a sender in the same process streams messages to the element, checking
+that every message is delivered once (counts, not order) and that no request or
+repair message leaves the process.
 
 ## 8. Where in the source (planned)
 
