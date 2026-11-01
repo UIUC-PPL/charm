@@ -42,6 +42,7 @@ import sys
 import tempfile
 import time
 
+sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from combine import Names, load  # noqa: E402
 
