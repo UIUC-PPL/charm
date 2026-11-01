@@ -1,7 +1,9 @@
 name: coverage-tests
 
 # Weekly: writes tests for the top of the coverage backlog and opens one draft
-# pull request with them. coverage/backlog.py ranks the uncovered blocks of
+# pull request with them. It runs only on its schedule and when started by hand
+# (workflow_dispatch), never on pushes or pull requests, so it adds nothing to
+# the checks a pull request waits for; its timeout bounds this job alone. coverage/backlog.py ranks the uncovered blocks of
 # src/ck-core and contrib/reconverse/src from the newest published coverage
 # run (https://charmplusplus.org/charm-coverage/), this job takes the first K
 # open rows, and Claude writes a test that reaches each one or marks it
