@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
-"""Checks whether one test directory's run reaches given lines of the runtime.
+"""Checks how much of given line ranges of the runtime one test directory reaches.
 
 usage: coverage/check_lines.py <build-dir> <test-dir> <file>:<first>-<last> [...]
-                               [--procs "1 2"] [--keep <dir>]
+                               [--procs "1 2"] [--timeout 300] [--keep <dir>]
 
 <build-dir> is an instrumented build (./build ... clang --coverage, see
-coverage/README.md). The test directory is built against it and its `test`
-target run once per process count in --procs, with LLVM_PROFILE_FILE pointing
-at a fresh directory. The profiles are merged and measured with llvm-cov over
-the programs the run built plus libreconverse, as report.sh measures them.
+coverage/README.md). The test directory is cleaned (make clean), built against
+it and its `test` target run once per process count in --procs, with
+LLVM_PROFILE_FILE pointing at a fresh directory outside the tree. The profiles
+are merged and measured with llvm-cov over the programs the build produced plus
+libreconverse, as report.sh measures them.
 
-For each <file>:<first>-<last> (a repository-relative path), prints every
-instrumented line in the range with its hit count, then a summary line:
+For each <file>:<first>-<last> (repository-relative, line numbers of this
+checkout) it prints every instrumented line in the range with its hit count,
+marking error-path lines (backlog.error_path_lines: calls that abort, assert or
+print, and lines of only braces, else, break or a bare return), the branch
+outcomes in the range that never ran, and a verdict:
 
-    <file>:<first>-<last>: <hit> of <instrumented> instrumented lines reached
+    tested       every instrumented line that is not an error path was reached
+    partial      some were
+    not reached  none were
 
-Exits 0 if every range has at least one reached line, 1 if some range has
-none, 2 on a build, run or tool failure. The test's own exit status is
-reported; a failing test is a failure (2).
+Exits 0 if every range is tested, 1 if some range is partial or not reached,
+and 2 if something could not be built, run or measured, including a range with
+no instrumented lines in the measured programs.
 
-LLVM_PROFDATA and LLVM_COV override the tools, as in report.sh.
+LLVM_PROFDATA and LLVM_COV override the tools and may hold a command with
+arguments (e.g. "xcrun llvm-cov"), as in report.sh. On macOS the tools are
+found with xcrun; elsewhere on PATH, then in /usr/lib/llvm-<N>/bin, newest N
+first.
 """
 
 import argparse
 import glob
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -34,23 +44,34 @@ import time
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from backlog import error_path_lines  # noqa: E402
 from combine import Names, load  # noqa: E402
 
 SRC = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 
-def die(msg, code=2):
+def die(msg):
     print(f'check_lines.py: {msg}', file=sys.stderr)
-    sys.exit(code)
+    sys.exit(2)
 
 
 def tool(name, env):
-    t = os.environ.get(env) or shutil.which(name)
-    if not t:
-        for cand in sorted(glob.glob(f'/usr/lib/llvm-*/bin/{name}'), reverse=True):
-            return cand
-        die(f'{name} not found (set {env})')
-    return t
+    if os.environ.get(env):
+        return shlex.split(os.environ[env])
+    if sys.platform == 'darwin' and shutil.which('xcrun'):
+        r = subprocess.run(['xcrun', '--find', name], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return [r.stdout.strip()]
+    if shutil.which(name):
+        return [shutil.which(name)]
+
+    def version(p):
+        m = re.search(r'/llvm-(\d+)/', p)
+        return int(m.group(1)) if m else -1
+    cands = sorted(glob.glob(f'/usr/lib/llvm-*/bin/{name}'), key=version, reverse=True)
+    if cands:
+        return [cands[0]]
+    die(f'{name} not found (set {env})')
 
 
 def parse_range(s):
@@ -63,11 +84,19 @@ def parse_range(s):
     return m.group(1), a, b
 
 
-def run(cmd, log, env=None, cwd=None):
+def run(cmd, log, env=None, timeout=None):
     with open(log, 'a') as fh:
         fh.write(f'$ {" ".join(cmd)}\n')
         fh.flush()
-        return subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env, cwd=cwd).returncode
+        try:
+            return subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env,
+                                  timeout=timeout).returncode
+        except subprocess.TimeoutExpired:
+            fh.write(f'(killed after {timeout} s)\n')
+            return 'timeout'
+        except OSError as e:
+            fh.write(f'({e})\n')
+            return 'cannot run'
 
 
 def main():
@@ -76,6 +105,7 @@ def main():
     ap.add_argument('testdir')
     ap.add_argument('ranges', nargs='+')
     ap.add_argument('--procs', default='1 2')
+    ap.add_argument('--timeout', type=int, default=300, help='seconds per test run')
     ap.add_argument('--keep', help='keep profiles, lcov and logs in this directory')
     a = ap.parse_args()
 
@@ -90,13 +120,15 @@ def main():
     ranges = [parse_range(r) for r in a.ranges]
     profdata, llvmcov = tool('llvm-profdata', 'LLVM_PROFDATA'), tool('llvm-cov', 'LLVM_COV')
 
-    work = a.keep or tempfile.mkdtemp(prefix='check_lines.')
+    work = os.path.realpath(a.keep or tempfile.mkdtemp(prefix='check_lines.'))
     os.makedirs(work, exist_ok=True)
     log = os.path.join(work, 'log.txt')
     prof = os.path.join(work, 'profraw')
     shutil.rmtree(prof, ignore_errors=True)
     os.makedirs(prof)
 
+    # Clean first, so every program is rebuilt and therefore measured below.
+    run(['make', '-C', testdir, 'clean', f'CHARMC={charmc}'], log)
     marker = time.time()
     time.sleep(1)  # programs built from here on are newer than the marker
     if run(['make', '-C', testdir, f'CHARMC={charmc}'], log) != 0:
@@ -107,9 +139,9 @@ def main():
             shutil.rmtree(f, ignore_errors=True)
         env = dict(os.environ, LLVM_PROFILE_FILE=os.path.join(prof, '%p-%m.profraw'),
                    TESTRUN_PROCS=p)
-        rc = run(['timeout', '300', 'make', '-C', testdir, 'test'], log, env=env)
+        rc = run(['make', '-C', testdir, 'test'], log, env=env, timeout=a.timeout)
         print(f'check_lines.py: test with {p} process(es): '
-              f'{"passed" if rc == 0 else f"FAILED (exit {rc})"}', file=sys.stderr)
+              f'{"passed" if rc == 0 else f"FAILED ({rc})"}', file=sys.stderr)
         if rc != 0:
             die(f'the test failed with {p} process(es); see {log}')
 
@@ -117,7 +149,7 @@ def main():
     if not raws:
         die(f'the test wrote no profiles (did it run a program?); see {log}')
     merged = os.path.join(work, 'merged.profdata')
-    if run([profdata, 'merge', '-sparse', '-o', merged, *raws], log) != 0:
+    if run([*profdata, 'merge', '-sparse', '-o', merged, *raws], log) != 0:
         die(f'llvm-profdata merge failed; see {log}')
 
     progs = []
@@ -128,16 +160,16 @@ def main():
                 with open(p, 'rb') as fh:
                     if fh.read(4) in (b'\x7fELF', b'\xcf\xfa\xed\xfe'):  # ELF, Mach-O 64
                         progs.append(p)
+    progs = [p for p in progs if os.path.basename(p) != 'charmrun']
+    if not progs:
+        die(f'make built no programs in {testdir}; see {log}')
     for lib in ('libreconverse.so', 'libreconverse.dylib'):
         p = os.path.join(build, 'lib', lib)
         if os.path.exists(p):
             progs.append(p)
-    progs = [p for p in progs if os.path.basename(p) != 'charmrun']
-    if not progs:
-        die('no programs were built by the test directory')
 
     lcov = os.path.join(work, 'run.lcov')
-    cmd = [llvmcov, 'export', '-format=lcov', f'-instr-profile={merged}', progs[0]]
+    cmd = [*llvmcov, 'export', '-format=lcov', f'-instr-profile={merged}', progs[0]]
     for p in progs[1:]:
         cmd += ['-object', p]
     with open(lcov, 'w') as out, open(log, 'a') as err:
@@ -145,19 +177,46 @@ def main():
             die(f'llvm-cov export failed; see {log}')
 
     files = load(lcov, Names(SRC))
-    bad = 0
-    for name, a_, b_ in ranges:
+    worst = 0
+    for name, first, last in ranges:
+        try:
+            with open(os.path.join(SRC, name), errors='replace') as fh:
+                errors = error_path_lines(fh.read())
+        except OSError:
+            die(f'{name}: not found in {SRC}')
         cov = files.get(name)
-        lines = sorted(l for l in (cov.da if cov else {}) if a_ <= l <= b_)
-        hit = [l for l in lines if cov.da[l] > 0]
+        lines = sorted(l for l in (cov.da if cov else {}) if first <= l <= last)
+        if not lines:
+            print(f'{name}:{first}-{last}: no instrumented lines in the measured programs '
+                  '(wrong file or lines, or no measured program contains this code)')
+            worst = 2
+            continue
+        want = [l for l in lines if l not in errors]
+        hit = [l for l in want if cov.da[l] > 0]
         for l in lines:
-            print(f'  {name}:{l}\t{cov.da[l]}')
-        print(f'{name}:{a_}-{b_}: {len(hit)} of {len(lines)} instrumented lines reached')
-        if not hit:
-            bad += 1
+            note = '' if l in want else '\t(error path)'
+            print(f'  {name}:{l}\t{cov.da[l]}{note}')
+        # A count of None is lcov's '-': the branch's block never ran.
+        missed = sorted((l, b, br) for (l, b, br), n in cov.br.items()
+                        if first <= l <= last and not n)
+        nbr = sum(1 for (l, _, _) in cov.br if first <= l <= last)
+        if nbr:
+            print(f'  branch outcomes in the range: {nbr - len(missed)} of {nbr} taken'
+                  + ('; never taken: ' + ', '.join(f'line {l} (block {b}, branch {br})'
+                                                   for l, b, br in missed) if missed else ''))
+        if want and len(hit) == len(want):
+            verdict = 'tested'
+        elif hit:
+            verdict, worst = 'partial', max(worst, 1)
+        elif want:
+            verdict, worst = 'not reached', max(worst, 1)
+        else:
+            verdict = 'tested'  # only error-path lines: nothing else to reach
+        print(f'{name}:{first}-{last}: {verdict}: {len(hit)} of {len(want)} lines reached '
+              f'({len(lines) - len(want)} error-path lines not counted)')
     if not a.keep:
         shutil.rmtree(work, ignore_errors=True)
-    sys.exit(1 if bad else 0)
+    sys.exit(worst)
 
 
 if __name__ == '__main__':

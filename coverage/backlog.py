@@ -2,28 +2,37 @@
 """Ranks the uncovered code of the runtime core into a backlog of test targets.
 
 usage: coverage/backlog.py [--src <repo>] [--out coverage/backlog.tsv] [--top N] <tier>.lcov[.gz]
+       coverage/backlog.py --check coverage/backlog.tsv
 
 Reads an lcov export from coverage/report.sh (or the .lcov.gz published with
 each run at https://charmplusplus.org/charm-coverage/) and writes one row per
 block of uncovered code in src/ck-core and contrib/reconverse/src. A block is
 a maximal run of instrumented lines with a hit count of 0 inside one function.
+A line's function is the innermost function whose extent (from its first line
+in the lcov to its matching closing brace in the source) contains the line.
 
 Each block gets a tier from its file (TIERS below) and a priority:
 
     tier weight * min(uncovered lines, CAP) * (1 + log2(1 + commits touching the file
                                                         in the last 90 days))
 
-Commits are counted with git in --src; a shallow clone counts none and a
-warning says so.
+Commits are counted with git in --src and in its contrib/reconverse checkout;
+a shallow clone with less than 90 days of history counts none and a warning
+says so.
 
-Blocks of at most SMALL lines whose source only aborts, asserts or prints are
-left out and counted in the summary: they are error paths, not test targets.
+A block whose every line is an error path (error_path_lines below: a call that
+aborts, asserts or prints, possibly over several lines, or only braces, else,
+break and a bare return) is left out and counted in the summary.
 
-Rows are keyed by file, function and a hash of the block's source text, so a
-row keeps its key when lines above it move. When --out already exists, the
-status of every row whose key is still present is kept; the status is one of
-open, tested, unreachable, hpc-only or skip:<reason>, and new rows are open.
-A row whose block is no longer uncovered disappears.
+Rows are keyed by file, the text of the function's first line, the block's
+text, and the block's position among blocks with the same text in that
+function, so a row keeps its key when lines above it move. When --out already
+exists, the status of every row whose key is still present is kept; the status
+is one of STATUSES, and new rows are open. A row whose block is no longer
+uncovered disappears; the code a partial test left uncovered appears as a new
+row. Reading the old file skips blank or short rows and treats an unknown
+status as open, with a warning; --check validates a file strictly instead
+(exit 1 on any problem).
 
 Writes the TSV sorted by priority, highest first, and a summary to stderr;
 --top N also prints the first N open rows.
@@ -76,11 +85,15 @@ DEMOTE = re.compile(r'(Hilbert|ReadFile|Simple1DFile|ConfigurableRR|Block|Cld|Pr
 # outrank every protocol path.
 CAP = 30
 
-SMALL = 6
-TRIVIAL = re.compile(r'Abort|CkError|CmiError|Assert|fprintf\s*\(\s*stderr|'
-                     r'\bDEB\w*\s*\(|CkPrintf|CmiPrintf|^\s*[{}]?\s*$|^\s*(break|return)\b')
+# Calls that make a statement an error path. DEB* and DEBUG* are the debug
+# print macros of ck-core.
+ERROR_CALL = re.compile(r'\b(CkAbort|CmiAbort|CkError|CmiError|CkPrintf|CmiPrintf|fprintf|printf|'
+                        r'CkAssert|CkAssertMsg|CmiAssert|CmiAssertMsg|CkEnforce|CmiEnforce|'
+                        r'DEB\w*|DEBUG\w*)\s*\(')
+ERROR_TOKENS = {'{', '}', ';', 'else', 'break', 'return'}
 
-STATUS = re.compile(r'^(open|tested|unreachable|hpc-only|skip:.+)$')
+STATUSES = ('open', 'tested', 'partial', 'unreachable', 'hpc-only', 'skip:<reason>')
+STATUS = re.compile(r'^(open|tested|partial|unreachable|hpc-only|skip:\S.*)$')
 COLUMNS = ['priority', 'tier', 'status', 'file', 'lines', 'uncovered', 'churn90',
            'function', 'key']
 
@@ -90,12 +103,150 @@ def die(msg):
     sys.exit(2)
 
 
+def warn(msg):
+    print(f'backlog.py: warning: {msg}', file=sys.stderr)
+
+
 def tier_of(name):
     for t, rx in TIERS:
         if rx.search(name):
             return t
     return 'C'
 
+
+# ---------------------------------------------------------------- source text
+
+def blank_comments_and_strings(src):
+    """The source with comments and the contents of string and character
+    literals replaced by spaces; newlines and every offset are kept."""
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == '/' and i + 1 < n and src[i + 1] == '/':
+            while i < n and src[i] != '\n':
+                out[i] = ' '
+                i += 1
+        elif c == '/' and i + 1 < n and src[i + 1] == '*':
+            j = src.find('*/', i + 2)
+            j = n if j < 0 else j + 2
+            for k in range(i, j):
+                if src[k] != '\n':
+                    out[k] = ' '
+            i = j
+        elif c in '"\'':
+            j = i + 1
+            while j < n and src[j] != c and src[j] != '\n':
+                if src[j] == '\\':
+                    out[j] = ' '
+                    j += 1
+                if j < n and src[j] != '\n':
+                    out[j] = ' '
+                j += 1
+            i = j + 1
+        else:
+            i += 1
+    return ''.join(out)
+
+
+def line_starts(src):
+    starts = [0]
+    for m in re.finditer('\n', src):
+        starts.append(m.end())
+    return starts
+
+
+def line_of(starts, off):
+    lo, hi = 0, len(starts) - 1
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if starts[mid] <= off:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo + 1
+
+
+def match_close(code, i, open_='(', close=')'):
+    """Offset just past the bracket that closes the one at i, or -1."""
+    depth = 0
+    for j in range(i, len(code)):
+        if code[j] == open_:
+            depth += 1
+        elif code[j] == close:
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    return -1
+
+
+def error_path_lines(src):
+    """The 1-based numbers of the lines that are only error path: every
+    character is inside an aborting, asserting or printing call statement, or
+    is a brace, semicolon, else, break or bare return."""
+    code = blank_comments_and_strings(src)
+    starts = line_starts(src)
+    inside = bytearray(len(code))
+    for m in ERROR_CALL.finditer(code):
+        end = match_close(code, m.end() - 1)
+        if end < 0:
+            continue
+        semi = re.match(r'\s*;', code[end:])
+        if semi:
+            end += semi.end()
+        for k in range(m.start(), end):
+            inside[k] = 1
+    lines = set()
+    for no, s in enumerate(starts, 1):
+        e = starts[no] - 1 if no < len(starts) else len(code)
+        rest = ''.join(' ' if inside[k] else code[k] for k in range(s, e))
+        toks = re.findall(r'\w+|[^\s\w]', rest)
+        # Either some tokens, all of them braces, else, break or return (the
+        # rest of the line being inside error calls), or no tokens at all on a
+        # line that is inside an error call spanning several lines.
+        if all(t in ERROR_TOKENS for t in toks) and (toks or any(inside[s:e])):
+            lines.add(no)
+    return lines
+
+
+def function_extents(src, fn):
+    """{name: (first, last)} for each function in fn ({name: first line}),
+    the last line being that of the brace matching the first '{' at or after
+    the function's first line (the first line alone if none is found within
+    40 lines)."""
+    code = blank_comments_and_strings(src)
+    starts = line_starts(src)
+    out = {}
+    for name, first in fn.items():
+        if first <= 0 or first > len(starts):
+            continue
+        b = code.find('{', starts[first - 1])
+        if b < 0 or line_of(starts, b) > first + 40:
+            out[name] = (first, first)
+            continue
+        e = match_close(code, b, '{', '}')
+        out[name] = (first, line_of(starts, e - 1) if e > 0 else first)
+    return out
+
+
+def innermost(extents, pretty):
+    """A function line -> (first line, name) of the innermost enclosing function;
+    ties between functions with the same extent go to the smallest name."""
+    spans = sorted(((b - a, a, pretty.get(n, n), n) for n, (a, b) in extents.items()))
+    cache = {}
+
+    def at(line):
+        if line not in cache:
+            cache[line] = None
+            for _, a, _, n in spans:
+                if a <= line <= extents[n][1]:
+                    cache[line] = (a, n)
+                    break
+        return cache[line]
+    return at
+
+
+# ---------------------------------------------------------------- coverage
 
 def read_lcov(path, names):
     if path.endswith('.gz'):
@@ -128,16 +279,14 @@ def churn_in(repo, prefix, files, paths):
             oldest = subprocess.run(['git', '-C', repo, 'log', '--reverse', '--format=%ct'],
                                     capture_output=True, text=True, check=True).stdout.split()
             if not oldest or time.time() - int(oldest[0]) < 90 * 86400:
-                print(f'backlog.py: warning: {repo} is a shallow clone with less than 90 days '
-                      'of history, so its files get no commit counts; fetch more history to '
-                      'include them', file=sys.stderr)
+                warn(f'{repo} is a shallow clone with less than 90 days of history, so its '
+                     'files get no commit counts; fetch more history to include them')
                 return out
         log = subprocess.run(['git', '-C', repo, 'log', '--since=90.days', '--format=',
                               '--name-only', '--', *paths],
                              capture_output=True, text=True, check=True).stdout
     except (OSError, subprocess.CalledProcessError):
-        print(f'backlog.py: warning: git log failed in {repo}, so its files get no commit '
-              'counts', file=sys.stderr)
+        warn(f'git log failed in {repo}, so its files get no commit counts')
         return out
     for ln in log.splitlines():
         if prefix + ln in files:
@@ -157,18 +306,8 @@ def demangle(names):
     return dict(zip(names, out))
 
 
-def blocks(cov):
+def blocks(cov, func_at):
     """Yields each block as the list of its uncovered line numbers."""
-    starts = sorted((line, f) for f, line in cov.fn.items() if line > 0)
-
-    def func_at(line):
-        best = ''
-        for s, f in starts:
-            if s > line:
-                break
-            best = f
-        return best
-
     run = []
     for line in sorted(cov.da):
         if cov.da[line] == 0 and (not run or func_at(line) == func_at(run[0])):
@@ -181,42 +320,73 @@ def blocks(cov):
         yield run
 
 
-def trivial(run, text):
-    if len(run) > SMALL:
-        return False
-    return all(TRIVIAL.search(text[l - 1]) for l in run if 0 < l <= len(text))
+# ---------------------------------------------------------------- the TSV
 
-
-def key_of(name, func, run, text):
-    body = '\n'.join(text[l - 1].strip() for l in run if 0 < l <= len(text))
-    h = hashlib.sha1(f'{name}\0{func}\0{body}'.encode()).hexdigest()[:12]
-    return h
-
-
-def read_status(path):
-    status = {}
-    if not os.path.exists(path):
-        return status
+def parse_tsv(path, strict):
+    """(rows as dicts, problems). strict: every problem is reported; otherwise
+    blank and short rows are skipped and unknown statuses read as open."""
+    rows, problems = [], []
     with open(path) as fh:
         header = fh.readline().rstrip('\n').split('\t')
         if header != COLUMNS:
-            die(f'{path}: unexpected header; expected {" ".join(COLUMNS)}')
+            return [], [f'{path}:1: header is not {" ".join(COLUMNS)}']
+        seen = {}
         for no, ln in enumerate(fh, 2):
-            row = dict(zip(COLUMNS, ln.rstrip('\n').split('\t')))
-            if not STATUS.match(row.get('status', '')):
-                die(f'{path}:{no}: status "{row.get("status")}" is not open, tested, '
-                    'unreachable, hpc-only or skip:<reason>')
-            status[row['key']] = row['status']
-    return status
+            ln = ln.rstrip('\n')
+            if not ln.strip():
+                if strict:
+                    problems.append(f'{path}:{no}: blank line')
+                continue
+            f = ln.split('\t')
+            if len(f) != len(COLUMNS):
+                problems.append(f'{path}:{no}: {len(f)} columns, not {len(COLUMNS)}')
+                continue
+            row = dict(zip(COLUMNS, f))
+            if not STATUS.match(row['status']):
+                problems.append(f'{path}:{no}: status "{row["status"]}" is not one of '
+                                f'{", ".join(STATUSES)}')
+                if not strict:
+                    row['status'] = 'open'
+            if row['key'] in seen:
+                problems.append(f'{path}:{no}: key {row["key"]} repeats line {seen[row["key"]]}')
+            seen[row['key']] = no
+            rows.append(row)
+    return rows, problems
+
+
+def read_status(path):
+    if not os.path.exists(path):
+        return {}
+    rows, problems = parse_tsv(path, strict=False)
+    for p in problems:
+        warn(p)
+    if not rows and problems:
+        warn(f'{path}: no usable rows; every status starts over as open')
+    return {r['key']: r['status'] for r in rows}
+
+
+def check(path):
+    rows, problems = parse_tsv(path, strict=True)
+    for p in problems:
+        print(f'backlog.py: {p}', file=sys.stderr)
+    if problems:
+        sys.exit(1)
+    print(f'backlog.py: {path}: {len(rows)} rows, all valid', file=sys.stderr)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('lcov')
+    ap.add_argument('lcov', nargs='?')
     ap.add_argument('--src', default=os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
     ap.add_argument('--out', default=None, help='default: <src>/coverage/backlog.tsv')
     ap.add_argument('--top', type=int, default=0)
+    ap.add_argument('--check', metavar='TSV', help='validate a backlog file and exit')
     a = ap.parse_args()
+    if a.check:
+        check(a.check)
+        return
+    if not a.lcov:
+        ap.error('give an lcov file, or --check <tsv>')
     src = os.path.realpath(a.src)
     out = a.out or os.path.join(src, 'coverage', 'backlog.tsv')
 
@@ -234,24 +404,29 @@ def main():
         path = os.path.join(src, name)
         try:
             with open(path, errors='replace') as fh:
-                text = fh.read().split('\n')
+                source = fh.read()
         except OSError:
             missing.append(name)
             continue
-        t = tier_of(name)
+        text = source.split('\n')
         cov = core[name]
-        for run in blocks(cov):
-            func = ''
-            for f, line in sorted(cov.fn.items(), key=lambda x: x[1]):
-                if 0 < line <= run[0]:
-                    func = f
-            if trivial(run, text):
-                skipped['C' if t == 'A' and DEMOTE.search(pretty.get(func, func)) else t] += 1
+        func_at = innermost(function_extents(source, cov.fn), pretty)
+        errors = error_path_lines(source)
+        t = tier_of(name)
+        occurrences = collections.Counter()
+        for run in blocks(cov, func_at):
+            f = func_at(run[0])
+            first, func = f if f else (0, '')
+            label = re.sub(r'\s+', ' ', pretty.get(func, func))
+            bt = 'C' if t == 'A' and DEMOTE.search(label) else t
+            if all(l in errors for l in run):
+                skipped[bt] += 1
                 continue
-            k = key_of(name, func, run, text)
-            bt = t
-            if t == 'A' and DEMOTE.search(pretty.get(func, func)):
-                bt = 'C'
+            sig = text[first - 1].strip() if 0 < first <= len(text) else ''
+            body = '\n'.join(text[l - 1].strip() for l in run if 0 < l <= len(text))
+            occurrences[(sig, body)] += 1
+            k = hashlib.sha1(f'{name}\0{sig}\0{body}\0{occurrences[(sig, body)]}'
+                             .encode()).hexdigest()[:12]
             rows.append({
                 'priority': round(WEIGHT[bt] * min(len(run), CAP)
                                   * (1 + math.log2(1 + commits[name]))),
@@ -261,12 +436,13 @@ def main():
                 'lines': f'{run[0]}-{run[-1]}',
                 'uncovered': len(run),
                 'churn90': commits[name],
-                'function': func,
+                'function': label[:120],
                 'key': k,
             })
 
-    for r in rows:
-        r['function'] = re.sub(r'\s+', ' ', pretty.get(r['function'], r['function']))[:120]
+    dup = [k for k, n in collections.Counter(r['key'] for r in rows).items() if n > 1]
+    if dup:
+        die(f'{len(dup)} keys repeat (first: {dup[0]}); this is a bug in backlog.py')
     rows.sort(key=lambda r: (-r['priority'], r['file'], int(r['lines'].split('-')[0])))
 
     with open(out, 'w') as fh:
@@ -283,11 +459,12 @@ def main():
         c = by[t]
         print(f'  tier {t}: {sum(v for k, v in c.items() if k != "lines")} blocks, '
               f'{c["lines"]} uncovered lines; open {c["open"]}, tested {c["tested"]}, '
-              f'unreachable {c["unreachable"]}, hpc-only {c["hpc-only"]}, skip {c["skip"]}; '
+              f'partial {c["partial"]}, unreachable {c["unreachable"]}, '
+              f'hpc-only {c["hpc-only"]}, skip {c["skip"]}; '
               f'{skipped[t]} error-path blocks left out', file=sys.stderr)
     if missing:
-        print(f'backlog.py: warning: {len(missing)} files in the lcov are not in --src '
-              f'(different commit?): {", ".join(missing[:5])}', file=sys.stderr)
+        warn(f'{len(missing)} files in the lcov are not in --src (different commit?): '
+             f'{", ".join(missing[:5])}')
     if a.top:
         print('\t'.join(COLUMNS[:-1]))
         for r in [r for r in rows if r['status'] == 'open'][:a.top]:

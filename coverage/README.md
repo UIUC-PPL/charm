@@ -188,6 +188,34 @@ line when it is fixed.
   to its `src/` or `contrib/reconverse/` original and each generated
   `.decl.h`/`.def.h` to the directory of its `.ci` file (marked `[gen]`).
 
+## The backlog and the weekly tests
+
+`coverage/backlog.py` turns a published run's lcov into `coverage/backlog.tsv`:
+one row per block of uncovered code in `src/ck-core` and
+`contrib/reconverse/src`, with a tier (A: the protocols and the scheduler
+under them; B: probably dead or not reachable on a CI runner; C: the rest), a
+priority, and a status (`open`, `tested`, `partial`, `unreachable`,
+`hpc-only`, `skip:<reason>`). Blocks that only abort, assert or print are left
+out. Rows are keyed by the text of the code, so statuses survive line moves;
+the code a `partial` test left uncovered comes back as a new, smaller row.
+`backlog.py --check <tsv>` validates the file.
+
+`coverage/check_lines.py <build> <test-dir> <file>:<first>-<last>` cleans,
+builds and runs one test directory against an instrumented build and says
+whether the range is tested (every line that is not an error path reached),
+partial or not reached, with the branch outcomes in the range that never ran.
+
+`.github/workflows/coverage-tests.yaml` runs on Mondays and by hand, never on
+pull requests. It ranks the backlog from the newest run measured on `recharm`
+(`coverage/backlog_job.py rank`), builds an instrumented Charm++, and has
+Claude write tests for the first K open rows (default 3) or give them a
+status; `coverage/backlog_job.py finish` then keeps only changes under
+`tests/` and the targets' statuses, and the job opens one draft pull request
+labeled `coverage-backlog`. It does nothing while such a pull request is open.
+It uses the `ANTHROPIC_API_KEY` secret of the `claude-ci` environment, which
+only `recharm` may use. GitHub starts no CI for a pull request a workflow
+opens: close and reopen it to run CI.
+
 ## Last verification run
 
 2026-10-25, macOS (Apple Silicon, Apple clang 16), charm `8d7638f51`,
