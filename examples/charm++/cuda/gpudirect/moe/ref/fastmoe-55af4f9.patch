@@ -1,0 +1,63 @@
+FastMoE master 55af4f9 (2025-02-10), the changes the FasterMoE arms of the
+MoE example's tables ran with (ref/README.md, "FastMoE and FasterMoE"):
+
+  - cuda/fastermoe/smart_schedule.cpp: the smart-schedule backward's dtype
+    dispatch covers bf16 (the forward's already did);
+  - fmoe/fastermoe/shadow_policy.py: the shadow policy sums the gathered
+    token counts over the source ranks for each expert (shipped: over the
+    experts for each source rank, so nothing was ever shadowed with one
+    expert per rank);
+  - setup.py: NCCL_LIBDIR names the directory of the NCCL library to link,
+    for an environment that ships libnccl.so.2 without a libnccl.so link.
+
+Apply in the clone with `git apply fastmoe-55af4f9.patch`; build_fastmoe.sh
+does the clone, the patch and the build.
+
+diff --git a/cuda/fastermoe/smart_schedule.cpp b/cuda/fastermoe/smart_schedule.cpp
+index de4d231..e4dfbfd 100644
+--- a/cuda/fastermoe/smart_schedule.cpp
++++ b/cuda/fastermoe/smart_schedule.cpp
+@@ -154,7 +154,7 @@ torch::Tensor _smart_sch_backward(
+     auto global_grad_in = grad_out.new_zeros({global_batch_size, d_model});
+     auto grad_in = grad_out.new_zeros({buf_batch_size, d_model});
+ 
+-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(grad_out.scalar_type(),
++    AT_DISPATCH_FLOATING_TYPES_AND2(at::ScalarType::Half, at::ScalarType::BFloat16, grad_out.scalar_type(),
+             "fmoe_cuda_smartsch_backward", ([&] {
+         fmoe_cuda_fused_backward_impl(
+             backward_fn,
+diff --git a/fmoe/fastermoe/shadow_policy.py b/fmoe/fastermoe/shadow_policy.py
+index 9188be9..de7b747 100644
+--- a/fmoe/fastermoe/shadow_policy.py
++++ b/fmoe/fastermoe/shadow_policy.py
+@@ -30,7 +30,7 @@ def global_policy(local_expert_count, _gec, num_expert, world_size, device):
+     # TODO: data type other than float
+     data_size = 4 
+ 
+-    fwd_expert_counts = all_global_expert_count.sum(1).cpu()
++    fwd_expert_counts = all_global_expert_count.sum(0).cpu()   # per expert over the source ranks (shipped: sum(1), per source rank)
+     B_ws, indices = fwd_expert_counts.flatten().sort(0, descending=True)
+ 
+     alphaH2 = alpha * (d_model ** 2)
+diff --git a/setup.py b/setup.py
+index f912d5c..6e1fc00 100644
+--- a/setup.py
++++ b/setup.py
+@@ -28,6 +28,7 @@ if os.environ.get('USE_NCCL', '1') == '1':
+         ext_libs.append('rccl')
+     else:
+         ext_libs.append('nccl')
++ext_libdirs = [d for d in os.environ.get('NCCL_LIBDIR', '').split(':') if d]
+ 
+ if os.environ.get('MOE_DEBUG', '0') == '1':
+     cxx_flags.append('-DMOE_DEBUG')
+@@ -65,7 +66,8 @@ if __name__ == '__main__':
+                     'cxx': cxx_flags,
+                     'nvcc': cxx_flags
+                     },
+-                libraries=ext_libs
++                libraries=ext_libs,
++                library_dirs=ext_libdirs
+                 )
+             ],
+         cmdclass={

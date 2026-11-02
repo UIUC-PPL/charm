@@ -198,8 +198,8 @@ and replaces its router's top-k with this reference's `Router`, so every
 is the same. Placement is static, as Megatron trains; the loss is 1/2 |y|^2
 and the update SGD. Weights are Megatron's own, so only throughput compares.
 `run_mg.sh <jobid> <tag> [args]` launches it (logs in `../ranklogs/mg_<tag>/`);
-`megatron-core` and `grouped_gemm` are installed in the user site of the
-`pytorch-2.12.1-cu130` environment, and the environment's `libstdc++` and NCCL
+`megatron-core` 0.20.0 and `grouped_gemm` 0.3.0 are pip-installed, unpatched,
+in the user site of the `pytorch-2.12.1-cu130` environment, and the environment's `libstdc++` and NCCL
 must lead `LD_LIBRARY_PATH` (the launcher does this) for Transformer Engine,
 which `megatron.core` imports, to load.
 
@@ -285,9 +285,10 @@ GEMM rate at the expert shape in fp32 and bf16) and the launcher exports them
 as `FMOE_FASTER_GLBPLC_NETBW` / `FMOE_FASTER_GLBPLC_GPUTP`; `ALPHA` is set
 from `-H/-m`. FastMoE master (55af4f9, 2025-02-10) is installed in the user
 site of the same `pytorch-2.12.1-cu130` environment, built with plain gcc
-against the environment's NCCL headers and `libnccl.so.2`, with one patch: the
-smart-schedule backward's dtype dispatch covers bf16 (the forward already did).
-The group size of the group-wise exchange is FastMoE's default (4).
+against the environment's NCCL headers and `libnccl.so.2` (`build_fastmoe.sh
+<work dir>`: clone, `fastmoe-55af4f9.patch`, the NCCL stub, user-site install;
+FastMoE reports itself as 1.1.0). The group size of the group-wise exchange is
+FastMoE's default (4).
 
 Three patches were needed to run it at all, in the clone that was built
 (`git diff` against 55af4f9): the smart-schedule backward's dtype dispatch
