@@ -1304,6 +1304,27 @@ class AmpiRequest {
   ///  returning a valid MPI error code.
   virtual CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept =0;
 
+  /// Before the rank suspends on this request: mark it blocked and count what
+  /// its completion must count down. Returns the number of requests counted in
+  /// parent->numBlockedReqs (0 for a request that completes by polling, which
+  /// the caller must then poll again), and sets viaColl when the completion
+  /// resumes the rank through blockOnColl rather than blockOnRecv.
+  /// Used by blockUntilComplete (thread AMPI) and by campi's request_awaiter.
+  virtual int beginBlocking(ampiParent* parent, bool& viaColl) noexcept {
+    setBlocked(true);
+    viaColl = false;
+    return 1;
+  }
+
+  /// After the rank resumes: undo beginBlocking's marks.
+  virtual void endBlocking(ampiParent* parent) noexcept { setBlocked(false); }
+
+  /// Suspend the calling thread until this request completes, as the
+  /// single-request wait() implementations do: beginBlocking, block through
+  /// blockOnRecv or blockOnColl, endBlocking. Returns the (possibly migrated)
+  /// parent.
+  CMI_WARN_UNUSED_RESULT ampiParent* blockUntilComplete(ampiParent* parent) noexcept;
+
   /// Mark this request for cancellation.
   /// Supported only for IReq requests
   virtual void cancel() noexcept {}
@@ -1473,6 +1494,11 @@ class RednReq final : public AmpiRequest {
   ~RednReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    int n = AmpiRequest::beginBlocking(parent, viaColl);
+    viaColl = true; // completed by a collective result, which resumes via blockOnColl
+    return n;
+  }
   void cancel() noexcept override {}
   AmpiReqType getType() const noexcept override { return AMPI_REDN_REQ; }
   bool isUnmatched() const noexcept override { return !complete; }
@@ -1502,6 +1528,11 @@ class GatherReq final : public AmpiRequest {
   ~GatherReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    int n = AmpiRequest::beginBlocking(parent, viaColl);
+    viaColl = true; // completed by a collective result, which resumes via blockOnColl
+    return n;
+  }
   void cancel() noexcept override {}
   AmpiReqType getType() const noexcept override { return AMPI_GATHER_REQ; }
   bool isUnmatched() const noexcept override { return !complete; }
@@ -1535,6 +1566,11 @@ class GathervReq final : public AmpiRequest {
   ~GathervReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent*  wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    int n = AmpiRequest::beginBlocking(parent, viaColl);
+    viaColl = true; // completed by a collective result, which resumes via blockOnColl
+    return n;
+  }
   AmpiReqType getType() const noexcept override { return AMPI_GATHERV_REQ; }
   bool isUnmatched() const noexcept override { return !complete; }
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override { return true; }
@@ -1665,6 +1701,14 @@ class GPUReq : public AmpiRequest {
   ~GPUReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  // As wait(): not marked blocked and not counted down; AMPI_GPU_complete
+  // resumes the rank directly (ampi::unblock). Counted as one so that the
+  // caller suspends instead of polling.
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    viaColl = false;
+    return 1;
+  }
+  void endBlocking(ampiParent* parent) noexcept override {}
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override;
   void receive(ampi *ptr, CkReductionMsg *msg) noexcept override;
   AmpiReqType getType() const noexcept override { return AMPI_GPU_REQ; }
@@ -1683,6 +1727,8 @@ class ATAReq final : public AmpiRequest {
   ~ATAReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override;
+  void endBlocking(ampiParent* parent) noexcept override;
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override { return true; }
   void receive(ampi *ptr, CkReductionMsg *msg) noexcept override {}
   int getCount() const noexcept { return reqs.size(); }
@@ -1715,6 +1761,12 @@ class GReq final : public AmpiRequest {
   ~GReq() noexcept { (*freeFn)(extraState); }
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  // Completes by polling (MPIX poll/wait functions): nothing counts it down.
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    viaColl = false;
+    return 0;
+  }
+  void endBlocking(ampiParent* parent) noexcept override {}
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override { return true; }
   void receive(ampi *ptr, CkReductionMsg *msg) noexcept override {}
   void cancel() noexcept override { (*cancelFn)(extraState, complete); }
@@ -2811,6 +2863,7 @@ class ampi final : public CBase_ampi {
   CProxy_ampi remoteProxy; // valid only for intercommunicator
   CkPupPtrVec<win_obj> winObjects;
   int numCommCreationsInProgress{};
+  int numUnblocks{}; // count of unblock() calls (comm creation done), for campi
   void setNumCommCreationsInProgress(int x)
   {
     CkAssert(numCommCreationsInProgress == 0);
@@ -2857,8 +2910,10 @@ class ampi final : public CBase_ampi {
   void setInitDoneFlag() noexcept;
 
   inline void unblock() noexcept {
+    ++numUnblocks; // lets campi tell this wake-up from others (not pupped)
     thread->resume();
   }
+  int getNumUnblocks() const noexcept { return numUnblocks; }
 
   void injectMsg(int size, char* buf) noexcept;
   void genericSync(AmpiMsg *) noexcept;
@@ -3048,6 +3103,8 @@ class ampi final : public CBase_ampi {
   int intercomm_ibcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm intercomm, MPI_Request *request) noexcept;
   static void bcastraw(void* buf, int len, CkArrayID aid) noexcept;
   void split(int color,int key,MPI_Comm *dest, AmpiCommType type) noexcept;
+  void splitPost(int color,int key, AmpiCommType type) noexcept;
+  void splitFinish(MPI_Comm *dest) noexcept;
   MPI_Comm commCreate(const std::vector<int>& vec, AmpiCommType type) noexcept;
   MPI_Comm cartCreate0D() noexcept;
   MPI_Comm cartCreate(std::vector<int>& vec, int ndims, const int* dims) noexcept;
@@ -3080,6 +3137,7 @@ class ampi final : public CBase_ampi {
   inline bool opIsCommutative(MPI_Op op) const noexcept { return parent->opIsCommutative(op); }
   inline MPI_User_function* op2User_function(MPI_Op op) const noexcept { return parent->op2User_function(op); }
   void topoDup(int topoType, int rank, MPI_Comm comm, MPI_Comm *newcomm) noexcept;
+  void topoDupFinish(int topoType, MPI_Comm comm, MPI_Comm *newcomm) noexcept;
 
   inline AmpiRequestList& getReqs() noexcept { return parent->ampiReqs; }
   CkDDT *getDDT() noexcept {return &parent->myDDT;}
@@ -3151,6 +3209,21 @@ class ampi final : public CBase_ampi {
 
 CMI_WARN_UNUSED_RESULT ampiParent *getAmpiParent() noexcept;
 bool isAmpiThread() noexcept;
+
+/* TCharm Semaphore ID's for AMPI startup */
+#define AMPI_TCHARM_SEMAID 0x00A34100 /* __AMPI__ */
+#define AMPI_BARRIER_SEMAID 0x00A34200 /* __AMPI__ */
+
+// Pieces of ampiInit/MPI_Finalize shared with campi (coroutine AMPI, campi.C)
+CkArrayOptions ampiInitRootArrayOptions(CkArrayID *threads, int *nchunks) noexcept;
+ampiParent *ampiInitWorldLocal(ampi *ptr, int nchunks) noexcept;
+void removeUnimportantArrayObjsfromPeCache() noexcept;
+int ampiFinalizeBody() noexcept;
+// Defined in campi.C: ampiParent::prepareCtv reports its parent in campi mode
+void campi_parent_attached(TCharm *tc, ampiParent *parent) noexcept;
+// Defined in campi.C: per-PE campi setup, called from ampiProcInit on every
+// PE before any rank starts (registers campi's Converse handlers)
+void campi_proc_init() noexcept;
 CMI_WARN_UNUSED_RESULT ampi *getAmpiInstance(MPI_Comm comm) noexcept;
 void checkComm(MPI_Comm comm) noexcept;
 void checkRequest(MPI_Request req) noexcept;

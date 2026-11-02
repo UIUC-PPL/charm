@@ -140,6 +140,7 @@ of the `<options>` below.
 | `verbs-linux-x86_64`      | Linux   | IB Verbs      | GNU compiler                          |
 | `ofi-linux-x86_64`        | Linux   | OFI           | GNU compiler                          |
 | `ucx-linux-x86_64`        | Linux   | UCX           | GNU compiler                          |
+| `reconverse-win-x86_64`   | Windows | none (one process) | MS Visual C++; see [README.windows.md](README.windows.md) |
 
 
 To choose `<version>`, your choice is determined by two options:

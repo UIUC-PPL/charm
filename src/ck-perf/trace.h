@@ -444,6 +444,31 @@ inline void _TRACE_BEGIN_EXECUTE_DETAILED(int event, int msgType, int ep, int sr
 #define _TRACE_BEGIN_EXECUTE_DETAILED(event, msgType, ep, srcPe, mLen, idx, obj) ((void)0)
 #endif
 inline void _TRACE_END_EXECUTE() { _TRACE_ONLY(CkpvAccess(_traces)->endExecute()); }
+// The array element whose execution the next beginExecute belongs to: the
+// group index of its location manager (the load database's object manager
+// id) and its 64-bit id within it (CkLocRec::getID, the database's object
+// id); collection -1 when no element is running. Set around the element's
+// entry by CkLocRec::invokeEntry, around a threaded entry's resumed
+// segments by the trace thread listener, and around a TCharm thread's
+// segments by TCharm itself. Trace modules that attribute time to objects
+// read the pair in beginExecute.
+CkpvExtern(int, _traceObjColl);
+CkpvExtern(CmiUInt8, _traceObjId);
+#if CMK_TRACE_ENABLED
+inline void _TRACE_SET_OBJECT(int coll, CmiUInt8 id) {
+  CkpvAccess(_traceObjColl) = coll;
+  CkpvAccess(_traceObjId) = id;
+}
+inline void _TRACE_CLEAR_OBJECT() { CkpvAccess(_traceObjColl) = -1; }
+inline int _TRACE_OBJECT_COLL() { return CkpvAccess(_traceObjColl); }
+inline CmiUInt8 _TRACE_OBJECT_ID() { return CkpvAccess(_traceObjId); }
+#else
+#define _TRACE_SET_OBJECT(coll, id) ((void)0)
+#define _TRACE_CLEAR_OBJECT() ((void)0)
+#define _TRACE_OBJECT_COLL() (-1)
+#define _TRACE_OBJECT_ID() ((CmiUInt8)0)
+#endif
+extern int _threadEP;  // the entry index trace events use for thread execution
 inline void _TRACE_MESSAGE_RECV(void* env, int size)
 {
   _TRACE_ONLY(CkpvAccess(_traces)->messageRecv(env, size));

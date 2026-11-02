@@ -1,0 +1,92 @@
+#!/bin/bash
+##############################################################################
+# unix2nt_ar: Maps UNIX ar command options to 
+# Microsoft Visual C++ 6.0 LIB command line options.
+#
+# Known bugs: pathnames with spaces may cause quoting problems.
+#
+# Orion Sky Lawlor, olawlor@acm.org, 1/24/2001
+##############################################################################
+
+# Configurable option: Location of MSDEV
+if [[ -z "$VCINSTALLDIR" ]]
+then
+  VCC_DIR='C:/Program Files (x86)/Microsoft Visual Studio 14.0/VC'
+else
+  VCC_DIR="$VCINSTALLDIR"
+fi
+
+#only valid for the platform that has exported corresponding variables
+#LIB_CMD="$VCC_DIR/BIN/LIB.EXE"
+LIB_CMD='lib.exe'
+LIB_OPTS=(-nologo)
+
+if [[ -z "$LIB" ]]
+then
+	echo "Variables already set!"
+#	export INCLUDE="$VCC_DIR/include"
+#	export LIB="$VCC_DIR/lib"
+fi
+
+###################################################################
+#
+#  Utility routines used below
+#
+###################################################################
+
+# PrintUsage: prints a helpful command-line usage message and quits
+# Args: any additional messages
+printUsage() {
+    echo "Usage: unix2nt_ar <output file> <input files>"
+    echo
+	echo "Version 1.0, Parallel Programming Lab, UIUC, 2001"
+    echo $*
+    exit 1
+}
+
+# End blows away the temporary files (unless SAVE is true) and exits
+# Args: <exit code>
+End() {
+    exit $1
+}
+
+# This procedure prints an error message and exits.
+# ("1>&2" redirects the echo output to stderr).
+# Args: written to stderr
+Abort() {
+	echo "unix2nt_ar Fatal Error in directory $(pwd)" 1>&2
+	echo "   $*" 1>&2
+	echo "unix2nt_ar exiting..." 1>&2
+	End 1
+}
+
+##############################################################################
+#
+# Parse & convert the arguments
+#
+##############################################################################
+
+[[ $# -eq 1 ]] && exit 0
+[[ $# -lt 2 ]] && printUsage "Error: Not enough arguments given."
+
+out="$(cygpath -w "$1")"
+shift
+args=("-out:$out")
+# Inputs may be Cygwin paths (CMake passes absolute ones for objects that
+# belong to another target); LIB.EXE needs Windows ones.
+for in in "$@"
+do
+	case "$in" in
+	-*) args+=("$in") ;;
+	*) args+=("$(cygpath -w "$in")") ;;
+	esac
+done
+
+"$LIB_CMD" "${LIB_OPTS[@]}" "${args[@]}"
+
+if [[ $? -ne 0 ]]
+then
+	Abort "Error executing" "$LIB_CMD" "${LIB_OPTS[@]}" "${args[@]}"
+fi
+
+exit 0

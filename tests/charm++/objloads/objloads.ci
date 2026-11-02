@@ -1,0 +1,27 @@
+// Server for the CkPerfObjLoads test: see objloads.C.
+mainmodule objloads {
+  readonly CProxy_Main mainProxy;
+  readonly double deadline;
+
+  // Its constructor switches the load instrumentation on, on every PE.
+  group Switch {
+    entry Switch();
+  };
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void done();
+  };
+
+  array [1D] Worker {
+    entry Worker();
+    entry void step();
+    entry [threaded] void run();
+  };
+
+  // Inherits step() and run(): their entries are registered with the Worker class
+  // chare index, so a Derived element must still be one object in the reply.
+  array [1D] Derived : Worker {
+    entry Derived();
+  };
+}

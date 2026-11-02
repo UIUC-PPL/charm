@@ -17,6 +17,11 @@ configure~
 # Ignore crash backtrace dumps written beside a crashing binary
 *.btr
 
+# Ignore Windows (MSVC) executables and the debug symbol files linked beside
+# them (unix2nt_cc links with -DEBUG)
+*.exe
+*.pdb
+
 # Ignore build artifacts
 config_opts.sh
 smart-build.log
@@ -54,3 +59,6 @@ tests/charm++/anytime_migration/migrate
 tests/charm++/megatest/megatest
 tests/charm++/migratable_threads/migthread
 tests/charm++/simplearrayhello/hello
+
+# Output of coverage/run.sh and coverage/report.sh
+coverage/out/
