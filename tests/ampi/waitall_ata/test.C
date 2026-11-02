@@ -11,7 +11,10 @@
  * have entered the MPI_Ialltoall (on one PE it always does).
  *
  * Item 2: blocks of two outstanding MPI_Ialltoalls from the same sender use
- * the same tag and source, so they must be matched in send order.
+ * the same tag and source, so they must be matched in send order. Stage
+ * "large" sends blocks big enough for the zero-copy and the rendezvous
+ * protocols between processes; its non-contiguous blocks also found that
+ * MPI_Ialltoall placed send blocks by the type's size, not its extent.
  *
  * Every received value is checked. A failure calls MPI_Abort before
  * MPI_Finalize (AMPI's MPI_Finalize does not return, so a nonzero return from
@@ -49,25 +52,41 @@ static int val(int id, int src, int dst, int k)
   return id * 1000003 + src * 1009 + dst * 31 + k;
 }
 
+// A block of `count` ints per destination. With stride > 1 the ints are
+// `stride` apart and the block is sent as one element of a non-contiguous
+// vector type, resized so that consecutive blocks follow each other; the
+// receive side uses the same type, so the ints land `stride` apart again.
 struct Ata {
-  int id, count;
+  int id, count, stride, sendCount;
   int *sbuf, *rbuf;
+  MPI_Datatype type;
   MPI_Request req;
 };
 
-static void ataInit(Ata &a, int id, int count)
+static void ataInit(Ata &a, int id, int count, int stride = 1)
 {
   int rank, size;
   getRS(rank, size);
   a.id = id;
   a.count = count;
-  a.sbuf = (int *)malloc(sizeof(int) * count * size);
-  a.rbuf = (int *)malloc(sizeof(int) * count * size);
+  a.stride = stride;
+  a.sbuf = (int *)malloc(sizeof(int) * count * stride * size);
+  a.rbuf = (int *)malloc(sizeof(int) * count * stride * size);
+  for (int i = 0; i < count * stride * size; i++) a.sbuf[i] = a.rbuf[i] = -1;
   for (int d = 0; d < size; d++)
-    for (int k = 0; k < count; k++) {
-      a.sbuf[d * count + k] = val(id, rank, d, k);
-      a.rbuf[d * count + k] = -1;
-    }
+    for (int k = 0; k < count; k++)
+      a.sbuf[(d * count + k) * stride] = val(id, rank, d, k);
+  if (stride == 1) {
+    a.type = MPI_INT;
+    a.sendCount = count;
+  } else {
+    MPI_Datatype vec;
+    MPI_Type_vector(count, 1, stride, MPI_INT, &vec);
+    MPI_Type_create_resized(vec, 0, (MPI_Aint)count * stride * sizeof(int), &a.type);
+    MPI_Type_commit(&a.type);
+    MPI_Type_free(&vec);
+    a.sendCount = 1;
+  }
   a.req = MPI_REQUEST_NULL;
 }
 
@@ -75,7 +94,7 @@ static void ataStart(Ata &a)
 {
   int rank, size;
   getRS(rank, size);
-  MPI_Ialltoall(a.sbuf, a.count, MPI_INT, a.rbuf, a.count, MPI_INT, MPI_COMM_WORLD, &a.req);
+  MPI_Ialltoall(a.sbuf, a.sendCount, a.type, a.rbuf, a.sendCount, a.type, MPI_COMM_WORLD, &a.req);
 }
 
 static void ataCheck(const char *stage, Ata &a)
@@ -85,14 +104,16 @@ static void ataCheck(const char *stage, Ata &a)
   if (a.req != MPI_REQUEST_NULL) fail(stage, "request not set to MPI_REQUEST_NULL", a.req, MPI_REQUEST_NULL);
   for (int s = 0; s < size; s++)
     for (int k = 0; k < a.count; k++) {
-      int got = a.rbuf[s * a.count + k];
+      int got = a.rbuf[(s * a.count + k) * a.stride];
       int want = val(a.id, s, rank, k);
       if (got != want) {
         char what[128];
-        snprintf(what, sizeof(what), "alltoall %d count %d, block from %d, element %d", a.id, a.count, s, k);
+        snprintf(what, sizeof(what), "alltoall %d count %d stride %d, block from %d, element %d",
+                 a.id, a.count, a.stride, s, k);
         fail(stage, what, got, want);
       }
     }
+  if (a.stride > 1) MPI_Type_free(&a.type);
   free(a.sbuf);
   free(a.rbuf);
 }
@@ -160,6 +181,48 @@ static void stageTwo()
         MPI_Waitall(1, &b.req, MPI_STATUSES_IGNORE);
         MPI_Wait(&a.req, MPI_STATUS_IGNORE);
       } else { // both in one Waitall, last-posted listed first
+        MPI_Request r[2] = {b.req, a.req};
+        MPI_Waitall(2, r, MPI_STATUSES_IGNORE);
+        b.req = r[0];
+        a.req = r[1];
+      }
+      ataCheck(st, a);
+      ataCheck(st, b);
+    }
+  }
+}
+
+// 3b. Two outstanding MPI_Ialltoalls whose blocks are large enough to take
+// the other protocols between processes: a contiguous block of 100 KB or more
+// is sent with the zero-copy entry (ampi::genericRdma), and a non-contiguous
+// block of 128 KB or more as a sync message whose data the receiver fetches
+// (the rendezvous protocol; between processes the fetch completes later).
+// Within a process, blocks above 8 KB (32 KB on SMP) are sync messages too.
+static void stageLarge()
+{
+  int rank, size;
+  getRS(rank, size);
+  const char *st = "large";
+  struct { int count, stride; } shapes[][2] = {
+    {{25600, 1}, {4, 1}},       // 100 KB contiguous, then a small one
+    {{4, 1}, {32768, 2}},       // small, then 128 KB non-contiguous
+    {{32768, 2}, {25600, 1}},   // 128 KB non-contiguous, then 100 KB contiguous
+    {{32768, 2}, {32768, 2}},   // both non-contiguous
+  };
+  for (auto &sh : shapes) {
+    for (int order = 0; order < 3; order++) {
+      Ata a, b;
+      ataInit(a, 7, sh[0].count, sh[0].stride);
+      ataInit(b, 8, sh[1].count, sh[1].stride);
+      ataStart(a);
+      ataStart(b);
+      if (order == 0) {
+        MPI_Wait(&a.req, MPI_STATUS_IGNORE);
+        MPI_Wait(&b.req, MPI_STATUS_IGNORE);
+      } else if (order == 1) {
+        MPI_Wait(&b.req, MPI_STATUS_IGNORE);
+        MPI_Wait(&a.req, MPI_STATUS_IGNORE);
+      } else {
         MPI_Request r[2] = {b.req, a.req};
         MPI_Waitall(2, r, MPI_STATUSES_IGNORE);
         b.req = r[0];
@@ -349,6 +412,7 @@ static void stageMigrate()
 struct Stage { const char *name; void (*fn)(); };
 static const Stage stages[] = {
   {"single", stageSingle},   {"mix", stageMix},         {"two", stageTwo},
+  {"large", stageLarge},
   {"alltoallv", stageV},     {"testall", stageTestall}, {"anysome", stageAnySome},
   {"iscatter", stageScatter}, {"migrate", stageMigrate},
 };

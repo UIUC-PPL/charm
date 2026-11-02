@@ -1727,14 +1727,12 @@ class ATAReq final : public AmpiRequest {
   ATAReq() =default;
   ~ATAReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
-  /// An ATAReq receives no messages itself; its blocks do. Blocking on it
-  /// blocks on each of its outstanding blocks, so that each block's completion
-  /// decrements numBlockedReqs. A waiter counts getCount() blocked requests
-  /// for it, after a test() has dropped the blocks already complete.
+  /// An ATAReq receives no messages itself; its blocks do. Marking it blocked
+  /// marks each of its blocks, so that each block's completion decrements
+  /// numBlockedReqs; beginBlocking counts the incomplete blocks.
   void setBlocked(bool b) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
   int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override;
-  void endBlocking(ampiParent* parent) noexcept override;
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override { return true; }
   void receive(ampi *ptr, CkReductionMsg *msg) noexcept override {}
   int getCount() const noexcept { return reqs.size(); }
@@ -2910,8 +2908,6 @@ class ampi final : public CBase_ampi {
   bool inorder(AmpiMsg *msg) noexcept;
   void inorderBcast(AmpiMsg *msg, bool deleteMsg) noexcept;
   void inorderRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept;
-  inline void localInorder(char* buf, int size, int seqIdx, CMK_REFNUM_TYPE seq, int tag,
-                           int srcRank, IReq* ireq) noexcept;
 
   void init() noexcept;
   void findParentAfterMigration() noexcept;
