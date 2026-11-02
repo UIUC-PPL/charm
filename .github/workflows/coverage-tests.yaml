@@ -42,6 +42,10 @@ on:
         description: 'run even if a coverage-backlog pull request is open (its targets are left out)'
         type: boolean
         default: false
+      show_output:
+        description: "print the model step's full output in the log (for diagnosing a run that ends at once)"
+        type: boolean
+        default: false
 
 concurrency:
   group: coverage-tests
@@ -153,6 +157,7 @@ jobs:
           # The workflow token of this job, which can only read, instead of the
           # action's own app token.
           github_token: ${{ github.token }}
+          show_full_output: ${{ inputs.show_output == true }}
           claude_args: >-
             --model claude-opus-5-5
             --max-turns 80
