@@ -50,6 +50,42 @@ The example's letters where they exist (`-e -m -t -k -i -u -z -p -c -n -L -C
     --dtype fp32|bf16        bf16 weights and activations, throughput only
     --fuse                   one chunked pass per expert over all sources
     --no-pipeline            synchronize the host at every step end
+    --replicate              one copy of the hottest expert from the start (EPLB-style redundancy)
+    -G, --forward-only       serving: forward only, no gradient GEMMs, no update (the example's -G)
+    --trace FILE             replay a recorded routing trace (the example's -E), see below
+    --attn [--heads 32 --seq 1024]
+                             a transformer block: the attention sublayer before the MoE (the example's -w)
+
+The same `--trace`, `--attn` and `--forward-only` exist in `megatron_moe.py`
+and `fastmoe_moe.py`; `make_router`, `routing_line`, `Attention` and
+`attention_step` in `moe_ref.py` are shared by all three.
+
+### Real routing: traces of a checkpoint on WikiText-103
+
+`trace_routing.py --model M --tokens N --out traces/m` loads a Hugging Face
+MoE checkpoint in bf16 over the node's GPUs (`device_map="auto"`), runs
+WikiText-103's training text through it with `output_router_logits=True` and
+writes, per MoE layer, the top-k expert ids of every token in text order
+(`traces/m_Lnn.trace`: int32 header {magic, experts, k, tokens}, then
+ids[tokens][k]); `--tokenize-only` / `--token-file` split the tokenization
+off (the dataset read is slow on Lustre). `trace_stats.py traces/m` prints
+each layer's skew: the hottest expert's share, its ratio to the mean 1/E and
+to a GPU's share 1/P, and the hottest share per 65536-token window (one
+8-GPU step). Every implementation replays a trace with the same rule, so the
+tokens routed are identical across them. The checkpoints used
+(`mistralai/Mixtral-8x7B-v0.1`, `allenai/OLMoE-1B-7B-0924`) are open; the HF
+cache is `HF_HOME=/scratch/mzu/bhosale/hf`.
+
+`smartmoe_trace.py <moe_trace dir> --out traces/smartmoe --every 10` builds
+traces of the other kind, training-time routing, from SmartMoE's
+expert-selection dataset (thu-pacman/SmartMoE-AE: per training iteration,
+rank and layer, the tokens each of 32 experts received from each 4096-token
+micro-batch, top-1, a GPT-MoE trained without a balancing loss; 501
+iterations, 16 ranks, 24 layers). The dataset has counts, not per-token ids,
+so a chunk's tokens get its experts in a hashed order with the recorded
+counts; the load per (chunk, expert) is exact. Skew: the hottest expert takes
+14-48% of a layer's tokens over the run (4.6-15x the mean, 1.1-3.8x a GPU's
+share on 8 GPUs), the strongest of the three sources.
 
 ## Run
 
@@ -129,7 +165,14 @@ against 568 at Llama size. A real framework goes further with a grouped GEMM
 over all local experts.
 
 **Precision.** Reference without LB: fp32 199 ms, TF32 120 ms, bf16 59 ms per
-step. The example at TF32 takes 148 ms against the reference's 120.
+step (that bf16 was pure bf16: weights, gradients and updates in bf16). The
+example at TF32 takes 148 ms against the reference's 120. Since 2026-10-31
+`--dtype bf16` is mixed precision as the example's `-B`: bf16 tokens,
+activations and weight copies for the GEMMs, fp32 accumulation (`torch.mm`
+with `out_dtype`), fp32 master weights, moments and gradient accumulators;
+its checksums then agree with the example's bf16 run to 3e-7 on `out2`
+(2.534871297842643e+06 against 2.534870436344967e+06 at the arguments of the
+2026-10-31 tables) and the fp32 path's bits are unchanged.
 
 **Exchange.** The reference moves 189 MB in and out per rank in an 18 ms
 dispatch, 10.5 GB/s. The example's token exchange moves 191 MB in 33 ms, 5.8
@@ -144,3 +187,145 @@ reference keeps the host a step ahead of the device, which the example does
 not need to do because its scheduler already overlaps; `--no-pipeline` costs
 the reference nothing here (190 against 189 ms), so this is not what separates
 them.
+
+## Megatron-Core (2026-10-31, one A40 node, four GPUs)
+
+`megatron_moe.py` builds one MoE layer with Megatron-Core 0.20's own modules
+(`get_gpt_layer_local_spec`, expert parallelism over the four ranks, the
+all-to-all token dispatcher, sequential or grouped-GEMM experts, fp32 or bf16)
+and replaces its router's top-k with this reference's `Router`, so every
+(token, slot) goes to the expert the example sends it to and the skew per step
+is the same. Placement is static, as Megatron trains; the loss is 1/2 |y|^2
+and the update SGD. Weights are Megatron's own, so only throughput compares.
+`run_mg.sh <jobid> <tag> [args]` launches it (logs in `../ranklogs/mg_<tag>/`);
+`megatron-core` and `grouped_gemm` are installed in the user site of the
+`pytorch-2.12.1-cu130` environment, and the environment's `libstdc++` and NCCL
+must lead `LD_LIBRARY_PATH` (the launcher does this) for Transformer Engine,
+which `megatron.core` imports, to load.
+
+Same arguments as the example's 2026-10-31 runs (`-e 64 -m 2048 -H 8192 -t
+8192 -z 1.3 -p 0 -i 60 -u 3`), steady state steps 33-63:
+
+| arm                                              | ms/step | forward, slowest / fastest rank |
+|--------------------------------------------------|--------:|--------------------------------:|
+| fp32, sequential experts                         |   294.1 | 248 / 144 ms                    |
+| fp32, grouped GEMM                               |   294.1 | 249 / 146                       |
+| bf16, grouped GEMM                               |    95.5 |  76 / 51                        |
+| fp32, sequential, uniform routing (`-z 0`)       |   161.2 |  77 / 72                        |
+| bf16, grouped GEMM, uniform routing (`-z 0`)     |    59.9 |  30 / 27                        |
+
+This reference without balancing ran 289.2 on the same arguments, so the
+PyTorch reference stands in for Megatron's structure at the same precision.
+The example ran 179.7 unbalanced and 115.3 (109.0 on the Megatron node) with
+ShedLB's copies; the uniform-routing arm shows that the example's balanced
+number is below what any balancing inside Megatron's lock-step structure
+reaches in fp32 on this node.
+
+Forward only (`--forward-only`: the layer under `no_grad`, no loss, no
+backward, no update; the example's `-G`), same arguments, steady state:
+
+| Megatron-Core arm, serving                        | ms/step |
+|---------------------------------------------------|--------:|
+| fp32, grouped GEMM, z 1.3                         |   150.1 |
+| bf16, grouped GEMM, z 1.3                         |    54.5 |
+| fp32, Mixtral-8x7B shape, unbalanced router z 1.0 |   536.4 |
+| bf16, Mixtral-8x7B shape, unbalanced router z 1.0 |   163.7 |
+
+The example served the same steps in 22.9 (bf16, z 1.3; 20.2 with ShedLB's
+copy) and, at the Mixtral shape with the unbalanced router, 287.4 / 219.6
+(fp32, plain / with the copy) and 110.3 / 85.8 (bf16). The real-model
+shapes (Mixtral-8x7B: 8 experts of 4096 x 14336, top-2; DeepSeek-V3: 256
+routed experts of 7168 x 2048, top-8) and the rest of the arms are in the
+example's README.
+
+Two nodes, eight GPUs, expert parallel over all eight (`NODES=2 ref/run_mg.sh`,
+job 23388275), steady state steps 23-43:
+
+| Megatron-Core arm, 8 GPUs                              | ms/step |
+|--------------------------------------------------------|--------:|
+| fp32, grouped GEMM, Mixtral-8x7B shape, z 0.3          |  1155.0 |
+| bf16, grouped GEMM, Mixtral-8x7B shape, z 0.3          |   337.7 |
+| fp32, grouped GEMM, Mixtral-8x7B shape, z 0.3, serving |   570.0 |
+| bf16, grouped GEMM, Mixtral-8x7B shape, z 0.3, serving |   201.3 |
+| fp32, grouped GEMM, default shape, z 1.0               |   385.0 |
+| fp32, grouped GEMM, Mixtral-8x7B shape, z 1.0          |  1882.1 |
+| bf16, grouped GEMM, Mixtral-8x7B shape, z 1.0          |   522.6 |
+| fp32, grouped GEMM, Mixtral-8x7B shape, z 1.0, serving |   908.8 |
+| bf16, grouped GEMM, Mixtral-8x7B shape, z 1.0, serving |   279.6 |
+
+The example on the same eight GPUs: Mixtral shape 649.4 / 164.7 (fp32 / bf16
+training) and 280.0 / 113.4 (serving), default shape z 1.0 198.0 plain and
+134.1 with ShedLB's copy (the example's README has the tables).
+
+## FastMoE and FasterMoE (2026-11-01, two A40 nodes, eight GPUs)
+
+FasterMoE (He et al., PPoPP'22) is the prior system that replicates hot
+experts at run time: before every iteration a performance model picks the
+experts whose load would make them the critical path, broadcasts their
+weights to every worker ("shadows"), each worker computes its own tokens for
+them locally, and the gradients are reduced back to the owner after the
+backward. Its smart schedule splits the two all-to-alls into a group-wise
+exchange overlapped with the expert computation. Both are in FastMoE 1.x
+(`github.com/laekov/fastmoe`), switched on by FastMoE's own environment
+variables. FlexMoE (Nie et al., SIGMOD'23), which adds expand/shrink/migrate
+primitives over the same idea, has no public code; its paper reports 1.30x
+over FasterMoE on average.
+
+`fastmoe_moe.py` builds one FastMoE layer (`FMoE`, E/P experts per rank, the
+example's expert W1 - ReLU - W2 without bias on `FMoELinear`) with a gate that
+returns this reference's `Router` draws and 1/k scores, so the routing is the
+example's; loss 1/2 |y|^2, SGD, `--bf16`, `--forward-only`, the Megatron
+harness's timing and output format, plus the experts FasterMoE shadowed at
+each step. `run_fm.sh <jobid> <tag> <plain|sched|faster> [args]` runs FastMoE
+as shipped, with the smart schedule, or with schedule and shadowing (the
+FasterMoE system); `run_fm.sh <jobid> calib calib -m .. -H .. -t ..` first
+measures the two machine parameters the shadow policy takes on the ranks of
+the run (NCCL broadcast rate of one expert's weights across all ranks, cuBLAS
+GEMM rate at the expert shape in fp32 and bf16) and the launcher exports them
+as `FMOE_FASTER_GLBPLC_NETBW` / `FMOE_FASTER_GLBPLC_GPUTP`; `ALPHA` is set
+from `-H/-m`. FastMoE master (55af4f9, 2025-02-10) is installed in the user
+site of the same `pytorch-2.12.1-cu130` environment, built with plain gcc
+against the environment's NCCL headers and `libnccl.so.2`, with one patch: the
+smart-schedule backward's dtype dispatch covers bf16 (the forward already did).
+The group size of the group-wise exchange is FastMoE's default (4).
+
+Three patches were needed to run it at all, in the clone that was built
+(`git diff` against 55af4f9): the smart-schedule backward's dtype dispatch
+did not include bf16 (the forward's did); the shipped shadow policy sums the
+gathered token counts over the experts for each source rank instead of over
+the ranks for each expert (`sum(1)` of a [rank, expert] stack), so with one
+expert per rank every "load" is the rank's token count and nothing is ever
+shadowed, and with several experts per rank the sorted indices address the
+wrong experts; and FasterMoE's fused forward keeps the experts' recorded
+sub-graphs alive until a backward consumes them, so a forward-only run grows
+by the hot rank's activations every step and ran out of 44 GB (the harness
+drops the output and collects garbage each step in that mode). The FastMoE
+arms' input requires grad, as a transformer layer's does, because the fused
+forward builds its graph only through the input; the schedule returns the
+input gradient regardless, while Megatron's harness and the example do not
+compute it.
+
+Measured 2026-11-01 (job 23403736, gpub002+062), the cases of the example's
+8-GPU section, steady state steps 23-43. The policy ran with the measured
+parameters: NETBW 3.05 GB/s (a 470 MB expert broadcast to the 8 ranks took
+117-154 ms across three calibrations), GPUTP 23.7 TFLOP/s fp32 and 123
+bf16, ALPHA 3.5, group size 4 (FastMoE's default).
+
+| arm, 8 GPUs                                             | FastMoE plain | + smart schedule | FasterMoE: schedule + shadows |
+|---------------------------------------------------------|--------------:|-----------------:|------------------------------:|
+| fp32 training, Mixtral-8x7B shape, z 1.0                |        2102.5 |           2018.6 | 1195.0 (experts 1, 2, 4 shadowed every step) |
+| bf16 training, Mixtral-8x7B shape, z 1.0                |         631.2 |            579.5 | 402.9 (experts 1, 4; loss NaN from step 2) |
+| fp32 training, default shape, z 1.0                     |         509.6 |            449.1 | 322.1 (1.6 experts shadowed per step) |
+| fp32 serving, Mixtral-8x7B shape, z 1.0                 |         901.9 |     out of memory | 661.5 (28 steps, steady 14-28; 3 shadows) |
+| bf16 serving, Mixtral-8x7B shape, z 1.0                 |         276.3 |     out of memory | 306.7 (28 steps, steady 14-28; 2 shadows) |
+
+Serving under the smart schedule: the fused forward's recorded sub-graphs
+are released only by a backward, so a forward-only run grows every step by
+the hot rank's activations; the schedule-only arms ran out of the A40's 44 GB
+on the hot rank in every attempt (`no_grad`, grad enabled, a garbage
+collection per step), the shadow arms reached step 30 but not 43 with the
+collection, so their serving rows are 28-step runs. The example on the same
+cases (its README): Mixtral z 1.0 fp32 training 1209.9 plain / 692.7 with
+ShedLB's two copies, bf16 276.2 / 219.1, fp32 serving 491.9 / 282.0, bf16
+serving 121.8 / 113.3; default shape 198.0 / 134.1. Megatron-Core: 1882.1,
+522.6, 908.8, 279.6, 385.0.

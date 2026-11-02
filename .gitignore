@@ -71,3 +71,8 @@ tests/charm++/simplearrayhello/hello
 
 # Output of coverage/run.sh and coverage/report.sh
 coverage/out/
+
+# Routing traces of the MoE example (gigabytes; ref/trace_routing.py and
+# ref/smartmoe_trace.py regenerate them) and the token dump beside them
+examples/charm++/cuda/gpudirect/moe/traces/*.trace
+examples/charm++/cuda/gpudirect/moe/traces/*.npy

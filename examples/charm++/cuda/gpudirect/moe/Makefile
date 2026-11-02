@@ -15,11 +15,12 @@ MATHLIBS ?= $(subst /cuda/,/math_libs/,$(CUDA_DIR))
 ifeq ($(BUILD_HIP),1)
 NVCC = hipcc
 NVCC_FLAGS = -x hip -c -std=c++17 -ffast-math $(OPTS) $(patsubst %,--offload-arch=%,$(subst ;, ,$(HIP_ARCHS)))
-LD_LIBS = -module EveryLB -module DiffusionLB -L$(ROCM_PATH)/lib -lhipblas -Wl,-rpath,$(ROCM_PATH)/lib
+LD_LIBS = -balancer ShedLB -module EveryLB -module DiffusionLB -L$(ROCM_PATH)/lib -lhipblas -Wl,-rpath,$(ROCM_PATH)/lib
 else
 NVCC = nvcc
 NVCC_FLAGS = -c -std=c++17 -use_fast_math -gencode arch=compute_86,code=sm_86 $(OPTS) -I$(MATHLIBS)/include
-LD_LIBS = -module EveryLB -module DiffusionLB -L$(MATHLIBS)/lib64 -lcublas -Wl,-rpath,$(MATHLIBS)/lib64
+# ShedLB is this application's balancer (README: why); +balancer on the command line still overrides it.
+LD_LIBS = -balancer ShedLB -module EveryLB -module DiffusionLB -L$(MATHLIBS)/lib64 -lcublas -Wl,-rpath,$(MATHLIBS)/lib64
 endif
 
 TARGET = moe
@@ -72,7 +73,7 @@ KOKKOS_NVCC_FLAGS = -c -std=$(KOKKOS_STD) $(KOKKOS_DEV_FLAGS) $(OPTS) $(KOKKOS_B
 KOKKOS_LIBS = -L$(KOKKOS_DIR)/lib64 -lkokkoscore -ldl $(KOKKOS_DEV_LIBS) $(KOKKOS_BLAS_LIBS)
 
 $(TARGET).kokkos: $(TARGET).o $(TARGET)KOKKOS.o
-	$(CHARMC) -language charm++ -o $@ $^ -module EveryLB -module DiffusionLB $(KOKKOS_LIBS)
+	$(CHARMC) -language charm++ -o $@ $^ -balancer ShedLB -module EveryLB -module DiffusionLB $(KOKKOS_LIBS)
 
 $(TARGET)KOKKOS.o: $(TARGET)_kokkos.cpp $(TARGET).h ../hapi_kokkos.h
 	$(KOKKOS_CXX) -o $@ $(KOKKOS_NVCC_FLAGS) $(CHARM_INC) $<

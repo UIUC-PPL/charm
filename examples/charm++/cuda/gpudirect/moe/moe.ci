@@ -16,6 +16,8 @@ mainmodule moe {
   readonly int cap_src;
   readonly int n_disp;
   readonly int drift_period;
+  readonly std::string trace_path;
+  readonly int use_attn;
   readonly int first_lb;
   readonly int lb_freq;
   readonly int async_lb;
@@ -24,6 +26,8 @@ mainmodule moe {
   readonly int stats_freq;
   readonly int use_adam;
   readonly int use_tf32;
+  readonly int use_bf16;
+  readonly int serve_only;
   readonly int use_instrument;
   readonly double capacity_factor;
   readonly int fuse_sources;
@@ -32,6 +36,8 @@ mainmodule moe {
   readonly int tok_channels;
   readonly int print_place;
   readonly int flight_log;
+  readonly int rep_max;
+  readonly int rep_init_expert;
   readonly double zipf_z;
   readonly double learning_rate;
   readonly long moe_seed;
@@ -39,15 +45,24 @@ mainmodule moe {
   mainchare Main {
     entry Main(CkArgMsg* m);
     entry [reductiontarget] void dispReady();
+    entry void probeDone(double node_s, double remote_s);
     entry [reductiontarget] void expertsReady();
     // Each process's dispatcher, once it holds every expert's token channels.
     entry void dispChannelsReady();
     // Point-to-point from each process's dispatcher; a step is complete once
     // all n_disp have reported (see Main::dispStep).
     entry void dispStep(int disp, int step, double out2, double drop);
-    entry void stepStatsExpert(CkReductionMsg* msg);
+    // Point-to-point from each expert's rank-0 copy, one per step: its token
+    // total over all copies, its weight checksum, and the device time of up
+    // to two (PE, copy) pairs. A step is complete once all n_experts have
+    // reported, whatever copies exist, so a copy appearing or going away
+    // never changes the count.
+    // pool_busy / pool_tok: the reporting copy's PE-pooled device-busy
+    // seconds and tokens, from which Main derives the job-wide rate.
+    entry void expertStep(int e, int step, long n_tot, double w2, int npe, int pes[npe], long ns[npe], double gs[npe],
+                          double pool_busy, double pool_tok);
     entry void dispDone();
-    entry [reductiontarget] void expertsDone();
+    entry void expertDone(int e);
   };
 
   // One per PE. Owns the PE's token batch, routes it, ships one slab per
@@ -65,13 +80,33 @@ mainmodule moe {
     entry void sendDoneOdd();
     entry void sendsDrained();
     // Zerocopy device receive of one expert's outputs for this PE's tokens;
-    // the post entry method that supplies the device buffer is in moe.C
-    entry void receiveOutput(int ref, int e, int n, long long ts, int spe, int len, nocopydevice float buf[len]);
-    // An expert's token channels from this dispatcher, one per step parity.
-    entry void takeChannels(int e, CkDeviceChannel c0, CkDeviceChannel c1);
+    // the post entry method that supplies the device buffer is in moe.C.
+    // mult_next: how many copies of expert e serve the next step (the copy
+    // for dispatcher d is d mod mult_next).
+    // len: bytes (fp32 or bf16 elements, -B).
+    entry void receiveOutput(int ref, int e, int n, long long ts, int spe, int mult_next, int len,
+                             nocopydevice char buf[len]);
+    // An expert copy's token channels from this dispatcher, one per step parity.
+    entry void takeChannels(int e, int r, int late, CkDeviceChannel c0, CkDeviceChannel c1);
+    // The job-wide seconds per token, from Main (MoeCtx::global_spt).
+    entry void setRate(double spt);
+    // The exchange probe (Main::dispReady): one partial's transfer time to a PE on this node and
+    // to one on another, declared to the balancer as a copy's recurring cost (setLBReplica).
+    entry void probe();
+    entry void probeSendDone();
+    entry void probeAck();
+    entry void probeLand(int n, nocopydevice char buf[n]);
+    entry void setXchg(double node_s, double remote_s);
+    // A copy's channels (r > 0) are in: runStep waits for them before it routes
+    // a step that copy serves.
+    entry void chanArrived();
 
     entry void runStep() {
       serial { beginStep(); }
+      // Channels of copies that serve this step and arrived after the notice.
+      while (chans_new_in < chans_new_needed) {
+        when chanArrived() serial { chans_new_in++; }
+      }
       // This step's tokens, unless they went out during the previous step.
       if (sent_through < my_step) {
         serial { issueGather(my_step); }
@@ -83,8 +118,9 @@ mainmodule moe {
         when gathered() serial { sendTokens(); }
       }
       for (recv_count = 0; recv_count < n_experts; recv_count++) {
-        when receiveOutput[my_step](int ref, int e, int n, long long ts, int spe, int len, nocopydevice float buf[len])
-          serial { noteOutput(e, n, ts, spe); }
+        when receiveOutput[my_step](int ref, int e, int n, long long ts, int spe, int mult_next, int len,
+                                    nocopydevice char buf[len])
+          serial { noteOutput(e, n, ts, spe, mult_next); }
       }
       serial { combine(); }
       when combined() serial { gateDrain(); }
@@ -92,34 +128,67 @@ mainmodule moe {
     };
   };
 
-  // One per expert: the migratable unit. Holds the expert's weights (and
-  // optimizer state) on the device, receives one token slab per dispatcher
-  // per step, runs the chunked forward/backward, and sends each dispatcher its
-  // outputs back.
-  array [1D] Expert {
+  // One per expert copy: the migratable unit, (expert, copy rank). Holds the
+  // expert's weights (and optimizer state) on the device, receives one token
+  // slab per dispatcher of its partition per step, runs the chunked forward/
+  // backward into a gradient accumulator, exchanges the accumulator with its
+  // other copy when there is one, applies the update, and sends each
+  // dispatcher its outputs back. Created as (e, 0); (e, 1) is inserted when
+  // the balancer asks for a copy (ckClone) and destroyed when it retires it.
+  array [2D] Expert {
     entry Expert();
     entry void init();
     entry void initDone();
     // Load-balancing join point released: continue with this step's compute
     entry void resumed();
     entry void computeDone();
+    entry void applyDone();
     entry void sendDone();
     entry void sendsDrained();
-    entry void receiveTokens(int ref, int src, int n, long long ts, int spe, int len, nocopydevice float buf[len]);
+    // len: bytes (fp32 or bf16 elements, -B).
+    entry void receiveTokens(int ref, int src, int n, long long ts, int spe, int len, nocopydevice char buf[len]);
     // A token channel's note (tok_channels): a put landed, or a runtime event
     // the channel consumes. Not matched by step -- runtime notes carry none.
     entry void slabArrived(CkDataMsg* m);
     // A landed put, re-sent to this expert by slabArrived for step matching.
     entry void slabIn(int ref, int src, int n);
+    // The other copy's gradient partial for step ref: n_mine tokens it saw
+    // (0: the partial is empty and is not added), its PE and device time for
+    // the step report, and whether it retires after this step. Lands in
+    // dWpeer[ref & 1] (post entry method in moe.C).
+    entry void gradPartial(int ref, int from_rank, int n_mine, int pe, double gpu_s, int retiring, int n,
+                           nocopydevice float g1[n], nocopydevice float g2[n]);
+    // One of the partial's two device buffers was read by the transport;
+    // after both, gradSent: dWown may be rewritten.
+    entry void gradBufDone();
+    // Serving (-G): the other copy's step figures alone, in place of the
+    // partial -- there is no gradient to exchange.
+    entry void peerStats(int ref, int from_rank, int n_mine, int pe, double gpu_s, int retiring);
+    entry void gradSent();
+    // A new copy's state from the copy the balancer cloned: the weights after
+    // step `step` - 1 (and the Adam moments), the step it starts at, and the
+    // timing estimate. Lands in buffers the copy allocates in the post method.
+    entry void takeState(int step, int adam_t, double spt, int ncopies, int n, nocopydevice float w1[n],
+                         nocopydevice float w2[n]);
+    entry void takeMoments(int n, nocopydevice float a[n], nocopydevice float b[n],
+                           nocopydevice float c[n], nocopydevice float d[n]);
+    // One of the clone's state buffers was read by the transport; after all
+    // of them, cloneSent: the weights may be updated again.
+    entry void cloneBufDone();
+    entry void cloneSent();
+    // A dispatcher dropped its channels to this retiring copy.
+    entry void channelsDropped();
+    // The retiring copy destroys itself, outside the entry that decided it.
+    entry void die();
 
     entry void runStep() {
       serial { beginStep(); }
-      for (recv_count = 0; recv_count < n_disp; recv_count++) {
+      for (recv_count = 0; recv_count < n_expect; recv_count++) {
         if (tok_channels) {
           when slabIn[my_step](int ref, int src, int n)
             serial { noteTokens(src, n, 0, -1); }
         } else {
-          when receiveTokens[my_step](int ref, int src, int n, long long ts, int spe, int len, nocopydevice float buf[len])
+          when receiveTokens[my_step](int ref, int src, int n, long long ts, int spe, int len, nocopydevice char buf[len])
             serial { noteTokens(src, n, ts, spe); }
         }
       }
@@ -130,8 +199,34 @@ mainmodule moe {
       // in flight. AtSync (or the split AtSyncStart/AtSyncWait under async
       // LB) happens here.
       serial { lbPoint(); }
-      when resumed() serial { compute(); }
+      when resumed() serial { (void)0; }
+      // The previous step's transfers that read this copy's weights or its
+      // own accumulator must have completed before compute rewrites them.
+      if (clone_in_flight) {
+        when cloneSent() serial { clone_in_flight = false; }
+      }
+      if (grad_in_flight) {
+        when gradSent() serial { grad_in_flight = false; }
+      }
+      serial { compute(); }
       when computeDone() serial { sendOutputs(); }
+      if (replicated) {
+        // One block sum (or, serving, one note) from each of the other copies.
+        if (serve_only) {
+          for (gp_in = 0; gp_in < nc - 1; gp_in++) {
+            when peerStats[my_step](int ref, int from_rank, int n_mine, int pe, double gpu_s, int retiring)
+              serial { noteGrad(from_rank, n_mine, pe, gpu_s, retiring); }
+          }
+        } else {
+          for (gp_in = 0; gp_in < nc - 1; gp_in++) {
+            when gradPartial[my_step](int ref, int from_rank, int n_mine, int pe, double gpu_s, int retiring, int n,
+                                      nocopydevice float g1[n], nocopydevice float g2[n])
+              serial { noteGrad(from_rank, n_mine, pe, gpu_s, retiring); }
+          }
+          serial { applyReplicated(); }
+          when applyDone() serial { (void)0; }
+        }
+      }
       when sendsDrained() serial { endStep(); }
     };
   };

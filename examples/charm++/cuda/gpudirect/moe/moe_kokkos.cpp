@@ -1,4 +1,4 @@
-// Kokkos variant of moe.cu: the eight kernels as functors over the same raw pointers, launched on the lane's stream
+// Kokkos variant of moe.cu: the kernels as functors over the same raw pointers, launched on the lane's stream
 // through the Kokkos execution-space instance wrapping it (hapi_kokkos.h), as TeamPolicy leagues of BLOCK_1D-thread
 // teams with the grid-stride loops the kernels had. The GEMMs stay on cuBLAS: moe needs one handle per lane with a
 // fixed workspace and math mode for its bitwise-reproducible checksums, which KokkosBlas's cuBLAS path (one shared
@@ -71,6 +71,30 @@ static void gemm_rm(hapiBlasHandle_t h, bool tA, bool tB, int m, int n, int k,
       C, ldc));
 }
 
+// The mixed-precision product of the -B path (moe.cu gemm_rm_ex): operands of type `ab`, result `ct`, fp32 sums.
+static void gemm_rm_ex(hapiBlasHandle_t h, bool tA, bool tB, int m, int n, int k,
+    float alpha, const void* A, int lda, const void* B, int ldb, hapiDataType_t ab,
+    float beta, void* C, hapiDataType_t ct, int ldc) {
+  cublasCheck(hapiBlasGemmEx(h, tB ? HAPI_BLAS_OP_T : HAPI_BLAS_OP_N,
+      tA ? HAPI_BLAS_OP_T : HAPI_BLAS_OP_N, n, m, k, &alpha, B, ab, ldb, A, ab, lda,
+      &beta, C, ct, ldc));
+}
+
+// ---- bf16 by hand (moe.h: moe_bf16 is the bit pattern; moe.cu bf2f / f2bf) ----
+
+KOKKOS_FORCEINLINE_FUNCTION float bf2f(moe_bf16 h) { return Kokkos::bit_cast<float>((uint32_t)h << 16); }
+KOKKOS_FORCEINLINE_FUNCTION moe_bf16 f2bf(float f) {
+  uint32_t u = Kokkos::bit_cast<uint32_t>(f);
+  if ((u & 0x7fffffffu) > 0x7f800000u) return (moe_bf16)((u >> 16) | 0x40u);   // a NaN stays a NaN
+  u += 0x7fffu + ((u >> 16) & 1u);   // round to nearest even
+  return (moe_bf16)(u >> 16);
+}
+KOKKOS_FORCEINLINE_FUNCTION float toF(float v) { return v; }
+KOKKOS_FORCEINLINE_FUNCTION float toF(moe_bf16 v) { return bf2f(v); }
+template <class T> KOKKOS_FORCEINLINE_FUNCTION T fromF(float v);
+template <> KOKKOS_FORCEINLINE_FUNCTION float fromF<float>(float v) { return v; }
+template <> KOKKOS_FORCEINLINE_FUNCTION moe_bf16 fromF<moe_bf16>(float v) { return f2bf(v); }
+
 // ---- hashing ----
 
 KOKKOS_FORCEINLINE_FUNCTION unsigned long long splitmix64(unsigned long long x) {
@@ -98,8 +122,17 @@ struct InitUniformKernel {
   }
 };
 
+struct CastBf16Kernel {
+  const float* src; moe_bf16* dst; size_t n;
+  KOKKOS_INLINE_FUNCTION void operator()(const Member& m) const {
+    const size_t stride = gridStride(m);
+    for (size_t i = gridStart(m); i < n; i += stride) dst[i] = f2bf(src[i]);
+  }
+};
+
+template <class T>
 struct GatherKernel {
-  const float* x; const int* idx; float* out; size_t total; int dm;
+  const T* x; const int* idx; T* out; size_t total; int dm;
   KOKKOS_INLINE_FUNCTION void operator()(const Member& m) const {
     const size_t stride = gridStride(m);
     for (size_t e = gridStart(m); e < total; e += stride) {
@@ -110,8 +143,9 @@ struct GatherKernel {
   }
 };
 
+template <class T>
 struct CombineKernel {
-  const float* recv; const int* pos; float* y; size_t total; int k; int dm; float w;
+  const T* recv; const int* pos; float* y; size_t total; int k; int dm; float w;
   KOKKOS_INLINE_FUNCTION void operator()(const Member& m) const {
     const size_t stride = gridStride(m);
     for (size_t e = gridStart(m); e < total; e += stride) {
@@ -119,41 +153,67 @@ struct CombineKernel {
       int c = (int)(e - t * dm);
       float acc = 0.0f;
       for (int j = 0; j < k; j++)
-        acc += recv[(size_t)pos[t * k + j] * dm + c];
+        acc += toF(recv[(size_t)pos[t * k + j] * dm + c]);
       y[e] = w * acc;
     }
   }
 };
 
+template <class T>
 struct ReluKernel {
-  float* h; size_t n;
+  T* h; size_t n;
   KOKKOS_INLINE_FUNCTION void operator()(const Member& m) const {
     const size_t stride = gridStride(m);
     for (size_t i = gridStart(m); i < n; i += stride)
-      h[i] = h[i] > 0.0f ? h[i] : 0.0f;
+      if (!(toF(h[i]) > 0.0f)) h[i] = fromF<T>(0.0f);
   }
 };
 
+template <class T>
 struct ReluBackwardKernel {
-  float* dh; const float* h; size_t n;
+  T* dh; const T* h; size_t n;
   KOKKOS_INLINE_FUNCTION void operator()(const Member& m) const {
     const size_t stride = gridStride(m);
     for (size_t i = gridStart(m); i < n; i += stride)
-      dh[i] = h[i] > 0.0f ? dh[i] : 0.0f;
+      if (!(toF(h[i]) > 0.0f)) dh[i] = fromF<T>(0.0f);
+  }
+};
+
+// The step's gradient at i (moe.cu gradAt): the two partitions' accumulators
+// added in one fixed order (a missing one adds nothing), scaled by 1/n.
+KOKKOS_INLINE_FUNCTION float gradAt(const float* A, const float* B, size_t i, float inv_n) {
+  float g = A ? A[i] : 0.0f;
+  if (B) g += B[i];
+  return inv_n * g;
+}
+
+// W -= lr_over_n (A + B); Wb (when given) = bf16(W), the copy the GEMMs read
+struct ApplySgdKernel {
+  float* W; moe_bf16* Wb; const float* A; const float* B; size_t n; float lr_over_n;
+  KOKKOS_INLINE_FUNCTION void operator()(const Member& m) const {
+    const size_t stride = gridStride(m);
+    for (size_t i = gridStart(m); i < n; i += stride) {
+      const float w = W[i] - gradAt(A, B, i, lr_over_n);
+      W[i] = w;
+      if (Wb) Wb[i] = f2bf(w);
+    }
   }
 };
 
 struct AdamKernel {
-  float* W; float* mm; float* v; const float* g; size_t n; float lr, b1, b2, eps, c1, c2;
+  float* W; moe_bf16* Wb; float* mm; float* v; const float* A; const float* B; float inv_n; size_t n;
+  float lr, b1, b2, eps, c1, c2;
   KOKKOS_INLINE_FUNCTION void operator()(const Member& m) const {
     const size_t stride = gridStride(m);
     for (size_t i = gridStart(m); i < n; i += stride) {
-      float gi = g[i];
+      float gi = gradAt(A, B, i, inv_n);
       float mi = b1 * mm[i] + (1.0f - b1) * gi;
       float vi = b2 * v[i] + (1.0f - b2) * gi * gi;
       mm[i] = mi;
       v[i] = vi;
-      W[i] -= lr * (mi * c1) / (sqrtf(vi * c2) + eps);
+      const float w = W[i] - lr * (mi * c1) / (sqrtf(vi * c2) + eps);
+      W[i] = w;
+      if (Wb) Wb[i] = f2bf(w);
     }
   }
 };
@@ -201,73 +261,143 @@ void moeInitUniform(float* p, size_t n, uint64_t seed, float bound,
   hapiCheck(hapiPeekAtLastError());
 }
 
-void moeGather(const float* x, const int* idx, float* out, int n_slots,
-    int dm, hapiStream_t s) {
+void moeCastBf16(const float* src, moe_bf16* dst, size_t n, hapiStream_t s) {
+  static std::once_flag once;
+  site(once, "moe::castBf16", teamOf(s, nblocks(n), BLOCK_1D), CastBf16Kernel{src, dst, n});
+  hapiCheck(hapiPeekAtLastError());
+}
+
+void moeGather(const void* x, const int* idx, void* out, int n_slots,
+    int dm, bool bf16, hapiStream_t s) {
   if (n_slots <= 0) return;
   size_t total = (size_t)n_slots * dm;
-  static std::once_flag once;
-  site(once, "moe::gather", teamOf(s, nblocks(total), BLOCK_1D), GatherKernel{x, idx, out, total, dm});
+  static std::once_flag o_f, o_b;
+  if (bf16)
+    site(o_b, "moe::gather", teamOf(s, nblocks(total), BLOCK_1D),
+         GatherKernel<moe_bf16>{(const moe_bf16*)x, idx, (moe_bf16*)out, total, dm});
+  else
+    site(o_f, "moe::gather", teamOf(s, nblocks(total), BLOCK_1D),
+         GatherKernel<float>{(const float*)x, idx, (float*)out, total, dm});
   hapiCheck(hapiPeekAtLastError());
 }
 
-void moeCombine(const float* recv, const int* pos, float* y, int n_tok,
-    int k, int dm, float w, hapiStream_t s) {
+void moeCombine(const void* recv, const int* pos, float* y, int n_tok,
+    int k, int dm, float w, bool bf16, hapiStream_t s) {
   size_t total = (size_t)n_tok * dm;
-  static std::once_flag once;
-  site(once, "moe::combine", teamOf(s, nblocks(total), BLOCK_1D), CombineKernel{recv, pos, y, total, k, dm, w});
+  static std::once_flag o_f, o_b;
+  if (bf16)
+    site(o_b, "moe::combine", teamOf(s, nblocks(total), BLOCK_1D),
+         CombineKernel<moe_bf16>{(const moe_bf16*)recv, pos, y, total, k, dm, w});
+  else
+    site(o_f, "moe::combine", teamOf(s, nblocks(total), BLOCK_1D),
+         CombineKernel<float>{(const float*)recv, pos, y, total, k, dm, w});
   hapiCheck(hapiPeekAtLastError());
 }
 
-void moeZeroGrad(MoeGpu* g, int dm, int dff) {
-  size_t bytes = sizeof(float) * (size_t)dm * dff;
-  hapiCheck(hapiMemsetAsync(g->dW1, 0, bytes, g->stream));
-  hapiCheck(hapiMemsetAsync(g->dW2, 0, bytes, g->stream));
+// The relu and its backward on the lane, fp32 or bf16 scratch (one launch site per type).
+static void relu(MoeGpu* g, size_t nh) {
+  static std::once_flag o_f, o_b;
+  if (g->bf16) site(o_b, "moe::relu", teamOf(g->stream, nblocks(nh), BLOCK_1D), ReluKernel<moe_bf16>{(moe_bf16*)g->h, nh});
+  else site(o_f, "moe::relu", teamOf(g->stream, nblocks(nh), BLOCK_1D), ReluKernel<float>{(float*)g->h, nh});
+}
+static void reluBackward(MoeGpu* g, size_t nh) {
+  static std::once_flag o_f, o_b;
+  if (g->bf16)
+    site(o_b, "moe::reluBackward", teamOf(g->stream, nblocks(nh), BLOCK_1D),
+         ReluBackwardKernel<moe_bf16>{(moe_bf16*)g->dh, (const moe_bf16*)g->h, nh});
+  else
+    site(o_f, "moe::reluBackward", teamOf(g->stream, nblocks(nh), BLOCK_1D),
+         ReluBackwardKernel<float>{(float*)g->dh, (const float*)g->h, nh});
 }
 
-void moeExpertChunks(MoeGpu* g, float* W1, float* W2, const float* x,
-    float* y, int n, int dm, int dff, int chunk, float lr, float scale,
-    bool adam) {
+// One run of the expert's step (moe.cu moeExpertChunks): the gradient GEMMs
+// accumulate with alpha 1; the run's first chunk overwrites when zeroFirst.
+// Under g->bf16 the operands are bf16 and the GEMMs sum in fp32 (gemm_rm_ex).
+void moeExpertChunks(MoeGpu* g, const void* W1, const void* W2, const void* x,
+    void* y, int n, int dm, int dff, int chunk, float* dW1, float* dW2,
+    bool zeroFirst) {
   hapiBlasHandle_t h = (hapiBlasHandle_t)g->blas;
-  static std::once_flag o_relu, o_relub;
+  const size_t esz = g->bf16 ? sizeof(moe_bf16) : sizeof(float);
   for (int c0 = 0; c0 < n; c0 += chunk) {
     const int nc = (n - c0 < chunk) ? (n - c0) : chunk;
-    const float* xc = x + (size_t)c0 * dm;
-    float* yc = y + (size_t)c0 * dm;
+    const char* xc = (const char*)x + (size_t)c0 * dm * esz;
+    char* yc = (char*)y + (size_t)c0 * dm * esz;
     const size_t nh = (size_t)nc * dff;
-
-    gemm_rm(h, false, false, nc, dff, dm, 1.0f, xc, dm, W1, dff, 0.0f, g->h,
-        dff);
-    site(o_relu, "moe::relu", teamOf(g->stream, nblocks(nh), BLOCK_1D), ReluKernel{g->h, nh});
-    gemm_rm(h, false, false, nc, dm, dff, 1.0f, g->h, dff, W2, dm, 0.0f, yc,
-        dm);
-
-    gemm_rm(h, false, true, nc, dff, dm, 1.0f, yc, dm, W2, dm, 0.0f, g->dh,
-        dff);
-    site(o_relub, "moe::reluBackward", teamOf(g->stream, nblocks(nh), BLOCK_1D), ReluBackwardKernel{g->dh, g->h, nh});
-    if (adam) {
-      gemm_rm(h, true, false, dff, dm, nc, scale, g->h, dff, yc, dm, 1.0f,
-          g->dW2, dm);
-      gemm_rm(h, true, false, dm, dff, nc, scale, xc, dm, g->dh, dff, 1.0f,
-          g->dW1, dff);
+    const float beta = (zeroFirst && c0 == 0) ? 0.0f : 1.0f;
+    if (!g->bf16) {
+      const float* xf = (const float*)xc;
+      float* yf = (float*)yc;
+      float* hf = (float*)g->h;
+      float* dhf = (float*)g->dh;
+      gemm_rm(h, false, false, nc, dff, dm, 1.0f, xf, dm, (const float*)W1, dff, 0.0f, hf, dff);
+      relu(g, nh);
+      gemm_rm(h, false, false, nc, dm, dff, 1.0f, hf, dff, (const float*)W2, dm, 0.0f, yf, dm);
+      gemm_rm(h, false, true, nc, dff, dm, 1.0f, yf, dm, (const float*)W2, dm, 0.0f, dhf, dff);
+      reluBackward(g, nh);
+      gemm_rm(h, true, false, dff, dm, nc, 1.0f, hf, dff, yf, dm, beta, dW2, dm);
+      gemm_rm(h, true, false, dm, dff, nc, 1.0f, xf, dm, dhf, dff, beta, dW1, dff);
     } else {
-      gemm_rm(h, true, false, dff, dm, nc, -lr * scale, g->h, dff, yc, dm, 1.0f, W2,
-          dm);
-      gemm_rm(h, true, false, dm, dff, nc, -lr * scale, xc, dm, g->dh, dff, 1.0f, W1,
-          dff);
+      moe_bf16* hb = (moe_bf16*)g->h;
+      moe_bf16* dhb = (moe_bf16*)g->dh;
+      gemm_rm_ex(h, false, false, nc, dff, dm, 1.0f, xc, dm, W1, dff, HAPI_R_16BF, 0.0f, hb, HAPI_R_16BF, dff);
+      relu(g, nh);
+      gemm_rm_ex(h, false, false, nc, dm, dff, 1.0f, hb, dff, W2, dm, HAPI_R_16BF, 0.0f, yc, HAPI_R_16BF, dm);
+      gemm_rm_ex(h, false, true, nc, dff, dm, 1.0f, yc, dm, W2, dm, HAPI_R_16BF, 0.0f, dhb, HAPI_R_16BF, dff);
+      reluBackward(g, nh);
+      gemm_rm_ex(h, true, false, dff, dm, nc, 1.0f, hb, dff, yc, dm, HAPI_R_16BF, beta, dW2, HAPI_R_32F, dm);
+      gemm_rm_ex(h, true, false, dm, dff, nc, 1.0f, xc, dm, dhb, dff, HAPI_R_16BF, beta, dW1, HAPI_R_32F, dff);
     }
   }
   hapiCheck(hapiPeekAtLastError());
 }
 
+// Serving (moe.cu moeExpertForward): the forward alone.
+void moeExpertForward(MoeGpu* g, const void* W1, const void* W2, const void* x,
+    void* y, int n, int dm, int dff, int chunk) {
+  hapiBlasHandle_t h = (hapiBlasHandle_t)g->blas;
+  const size_t esz = g->bf16 ? sizeof(moe_bf16) : sizeof(float);
+  for (int c0 = 0; c0 < n; c0 += chunk) {
+    const int nc = (n - c0 < chunk) ? (n - c0) : chunk;
+    const char* xc = (const char*)x + (size_t)c0 * dm * esz;
+    char* yc = (char*)y + (size_t)c0 * dm * esz;
+    const size_t nh = (size_t)nc * dff;
+    if (!g->bf16) {
+      float* hf = (float*)g->h;
+      gemm_rm(h, false, false, nc, dff, dm, 1.0f, (const float*)xc, dm, (const float*)W1, dff, 0.0f, hf, dff);
+      relu(g, nh);
+      gemm_rm(h, false, false, nc, dm, dff, 1.0f, hf, dff, (const float*)W2, dm, 0.0f, (float*)yc, dm);
+    } else {
+      moe_bf16* hb = (moe_bf16*)g->h;
+      gemm_rm_ex(h, false, false, nc, dff, dm, 1.0f, xc, dm, W1, dff, HAPI_R_16BF, 0.0f, hb, HAPI_R_16BF, dff);
+      relu(g, nh);
+      gemm_rm_ex(h, false, false, nc, dm, dff, 1.0f, hb, dff, W2, dm, HAPI_R_16BF, 0.0f, yc, HAPI_R_16BF, dm);
+    }
+  }
+  hapiCheck(hapiPeekAtLastError());
+}
+
+void moeApplySGD(MoeGpu* g, float* W1, float* W2, moe_bf16* W1b, moe_bf16* W2b,
+    const float* A1, const float* A2, const float* B1, const float* B2, int dm, int dff,
+    float lr_over_n) {
+  const size_t n = (size_t)dm * dff;
+  static std::once_flag o1, o2;
+  site(o1, "moe::applySgd", teamOf(g->stream, nblocks(n), BLOCK_1D), ApplySgdKernel{W1, W1b, A1, B1, n, lr_over_n});
+  site(o2, "moe::applySgd", teamOf(g->stream, nblocks(n), BLOCK_1D), ApplySgdKernel{W2, W2b, A2, B2, n, lr_over_n});
+  hapiCheck(hapiPeekAtLastError());
+}
+
 void moeAdamApply(MoeGpu* g, float* W1, float* m1, float* v1, float* W2,
-    float* m2, float* v2, int dm, int dff, float lr, int t) {
+    float* m2, float* v2, moe_bf16* W1b, moe_bf16* W2b, const float* A1, const float* A2,
+    const float* B1, const float* B2, int dm, int dff, float lr, float inv_n, int t) {
   const float b1 = 0.9f, b2 = 0.999f, eps = 1e-8f;
   const float c1 = 1.0f / (1.0f - powf(b1, (float)t));
   const float c2 = 1.0f / (1.0f - powf(b2, (float)t));
   const size_t n = (size_t)dm * dff;
   static std::once_flag o1, o2;
-  site(o1, "moe::adam", teamOf(g->stream, nblocks(n), BLOCK_1D), AdamKernel{W1, m1, v1, g->dW1, n, lr, b1, b2, eps, c1, c2});
-  site(o2, "moe::adam", teamOf(g->stream, nblocks(n), BLOCK_1D), AdamKernel{W2, m2, v2, g->dW2, n, lr, b1, b2, eps, c1, c2});
+  site(o1, "moe::adam", teamOf(g->stream, nblocks(n), BLOCK_1D),
+       AdamKernel{W1, W1b, m1, v1, A1, B1, inv_n, n, lr, b1, b2, eps, c1, c2});
+  site(o2, "moe::adam", teamOf(g->stream, nblocks(n), BLOCK_1D),
+       AdamKernel{W2, W2b, m2, v2, A2, B2, inv_n, n, lr, b1, b2, eps, c1, c2});
   hapiCheck(hapiPeekAtLastError());
 }
 

@@ -165,20 +165,134 @@ class Router:
         return slot_expert, counts
 
 
+TRACE_MAGIC = 0x4D4F4554
+
+
+class TraceRouter:
+    """Routing replayed from a recorded trace (trace_routing.py): token t of
+    rank pe at step s is text token ((s - 1) * P + pe) * T + t, modulo the
+    trace length, the same rule as the example's -E, so every implementation
+    routes the same tokens. perm[0] is the hottest expert over the text and
+    p_max the largest share any expert takes of one rank's tokens in one step."""
+
+    def __init__(self, path, E, T, K, pe, P):
+        hdr = np.fromfile(path, dtype=np.int32, count=4)
+        if hdr.size < 4 or hdr[0] != TRACE_MAGIC:
+            sys.exit("--trace %s: not a routing trace" % path)
+        if hdr[1] != E or hdr[2] != K:
+            sys.exit("--trace %s: the trace has %d experts and top-%d, the run %d and top-%d" % (
+                path, hdr[1], hdr[2], E, K))
+        self.E, self.T, self.K, self.pe, self.P = E, T, K, pe, P
+        self.n = int(hdr[3])
+        self.ids = np.fromfile(path, dtype=np.int32, offset=16).reshape(self.n, K)
+        cnt = np.bincount(self.ids.reshape(-1), minlength=E)
+        self.perm = np.argsort(-cnt, kind="stable")
+        self.share_max = cnt.max() / cnt.sum()
+        nchunks = self.n // T
+        chunks = self.ids[:nchunks * T].reshape(nchunks, T * K)
+        self.p_max = max(np.bincount(c, minlength=E).max() for c in chunks) / float(T * K)
+        self.path = path
+
+    def build_phase(self, phase):
+        pass
+
+    def route(self, step):
+        g0 = ((step - 1) * self.P + self.pe) * self.T
+        idx = (g0 + np.arange(self.T)) % self.n
+        slot_expert = self.ids[idx].reshape(-1).astype(np.int64)
+        counts = np.bincount(slot_expert, minlength=self.E).astype(np.int64)
+        return slot_expert, counts
+
+
+def make_router(a, pe, P):
+    """The example's router for this rank: the replayed trace (--trace) or the hashed Zipf."""
+    if getattr(a, "trace", None):
+        return TraceRouter(a.trace, a.experts, a.tokens, a.topk, pe, P)
+    return Router(a.experts, a.tokens, a.topk, a.zipf, a.drift, a.seed, pe)
+
+
+def routing_line(a, router):
+    """The 'Routing:' line of the header, as the example prints it."""
+    E = a.experts
+    if getattr(a, "trace", None):
+        return "Routing: trace %s (%d tokens; hottest expert %.1fx average over the text, %.1fx in its hottest step; replayed in text order, a chunk of %d tokens per rank and step)" % (
+            router.path, router.n, router.share_max * E, router.p_max * E, a.tokens)
+    H = sum(math.pow(r + 1, -a.zipf) for r in range(E)) if a.zipf > 0 else E
+    return "Routing: zipf %.2f (hottest expert %.1fx average), hot set reshuffled every %d steps, seed %d" % (
+        a.zipf, E / H, a.drift, a.seed)
+
+
+class Attention(torch.nn.Module):
+    """The block's attention sublayer, the same in every harness (--attn): q, k, v
+    and o projections (d_model x d_model, no bias) and causal scaled-dot-product
+    attention with `heads` heads over sequences of `seq` tokens (a rank's tokens
+    are tokens/seq sequences). It is trained on its own loss 1/2 |h|^2 with SGD,
+    and the MoE sublayer takes h detached, so the MoE layer's contract (weight
+    gradients, no input gradient) is unchanged and the attention work, local to
+    the rank, is identical in every implementation. The example's -w does the
+    same with cuBLAS."""
+
+    def __init__(self, d_model, heads, seq, dtype, device, seed):
+        super().__init__()
+        g = torch.Generator(device="cpu").manual_seed(seed)
+        bound = 1.0 / math.sqrt(d_model)
+        self.w = torch.nn.Parameter(
+            (torch.rand(4, d_model, d_model, generator=g) * 2 - 1).mul_(bound).to(device=device, dtype=dtype))
+        self.heads, self.seq, self.d = heads, seq, d_model
+
+    def forward(self, x):
+        T, d = x.shape
+        S, H = self.seq, self.heads
+        q = (x @ self.w[0]).view(T // S, S, H, d // H).transpose(1, 2)
+        k = (x @ self.w[1]).view(T // S, S, H, d // H).transpose(1, 2)
+        v = (x @ self.w[2]).view(T // S, S, H, d // H).transpose(1, 2)
+        o = torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)
+        return o.transpose(1, 2).reshape(T, d) @ self.w[3]
+
+
+def attention_step(attn, opt, x, lr_scale, serving):
+    """One attention sublayer step: forward, and unless serving its loss, backward and
+    update. Returns the detached output, the MoE sublayer's input."""
+    if serving:
+        with torch.no_grad():
+            return attn(x)
+    h = attn(x)
+    (0.5 * h.float().square().sum() * lr_scale).backward()
+    opt.step()
+    opt.zero_grad(set_to_none=True)
+    return h.detach()
+
+
+def add_attention_args(ap):
+    ap.add_argument("--attn", action="store_true",
+                    help="a transformer block: an attention sublayer (q/k/v/o, causal SDPA) before the MoE sublayer")
+    ap.add_argument("--heads", type=int, default=32)
+    ap.add_argument("--seq", type=int, default=1024, help="sequence length the rank's tokens are split into")
+
+
 # ---------------------------------------------------------------- placement
-def place_greedy(owner, load, P, tol=0.02):
+def place_greedy(owner, load, P, tol=0.02, owner2=None):
     """Pairwise transfers from the most to the least loaded rank until the gap
     is within tol of the average; each move takes the expert whose load is
-    closest to half the gap. Few moves, like a diffusion balancer."""
+    closest to half the gap. Few moves, like a diffusion balancer. A
+    replicated expert (owner2 >= 0) is pinned and counts half on each rank."""
     owner = owner.copy()
-    R = np.bincount(owner, weights=load, minlength=P)
+    load = load.copy()
+    extra = np.zeros(P)
+    pinned = np.zeros(len(load), dtype=bool)
+    if owner2 is not None:
+        for e in np.flatnonzero(owner2 >= 0):
+            pinned[e] = True
+            load[e] *= 0.5
+            extra[owner2[e]] += load[e]
+    R = np.bincount(owner, weights=load, minlength=P) + extra
     avg = load.sum() / P
     while True:
         hi, lo = int(R.argmax()), int(R.argmin())
         gap = R[hi] - R[lo]
         if gap <= tol * avg:
             break
-        cands = np.flatnonzero(owner == hi)
+        cands = np.flatnonzero((owner == hi) & ~pinned)
         cands = cands[load[cands] < gap]
         if cands.size == 0:
             break
@@ -220,10 +334,12 @@ class Lane:
         with torch.cuda.stream(self.stream):
             self.h = torch.empty(chunk, dff, dtype=dtype, device=device)
             self.dh = torch.empty(chunk, dff, dtype=dtype, device=device)
-            self.grads = None
-            if adam:
-                self.grads = (torch.zeros(dm, dff, dtype=dtype, device=device),
-                              torch.zeros(dff, dm, dtype=dtype, device=device))
+            # One gradient accumulator pair per source partition (even and odd
+            # ranks), as the Charm++ app keeps per dispatcher partition: the
+            # step's update is applied once from their sum. fp32 whatever the
+            # operand dtype, as the app's accumulators are.
+            self.grads = [(torch.zeros(dm, dff, dtype=torch.float32, device=device),
+                           torch.zeros(dff, dm, dtype=torch.float32, device=device)) for _ in range(2)]
             self.fx = self.fy = None
             self.fuse = fuse_rows
             self.dm, self.dtype, self.device = dm, dtype, device
@@ -239,12 +355,17 @@ class Lane:
         return self.fx[:rows], self.fy[:rows]
 
 
-def expert_chunks(lane, W1, W2, x, y, chunk, lr, scale, grads=None):
+def expert_chunks(lane, W1, W2, x, y, chunk, grads, zero_first, serve=False):
     """moeExpertChunks: per chunk h = relu(x W1), y = h W2, dh = y W2^T,
-    dz = dh * (h > 0), W2 -= lr scale h^T y, W1 -= lr scale x^T dz (the dh
-    GEMM reads the pre-update W2); with grads=(dW1, dW2) the gradients are
-    accumulated instead (Adam)."""
+    dz = dh * (h > 0), dW2 += h^T y, dW1 += x^T dz into grads=(dW1, dW2) with
+    alpha 1 (the first chunk overwrites when zero_first). The weights are
+    read only; the update is applied once per step (apply_sgd / adam_apply).
+    W1/W2 are the operands the GEMMs read: the masters in fp32, their bf16
+    copies under --dtype bf16, where the gradient GEMMs write fp32 from bf16
+    operands (torch.mm out_dtype) into the fp32 accumulators, as the app's
+    hapiBlasGemmEx does."""
     n = x.shape[0]
+    bf16 = x.dtype == torch.bfloat16
     for c0 in range(0, n, chunk):
         nc = min(chunk, n - c0)
         xc = x[c0:c0 + nc]
@@ -254,14 +375,41 @@ def expert_chunks(lane, W1, W2, x, y, chunk, lr, scale, grads=None):
         torch.mm(xc, W1, out=h)
         h.relu_()
         torch.mm(h, W2, out=yc)
+        if serve:
+            continue
         torch.mm(yc, W2.t(), out=dh)
         dh.masked_fill_(h <= 0, 0.0)
-        if grads is None:
-            W2.addmm_(h.t(), yc, alpha=-lr * scale)
-            W1.addmm_(xc.t(), dh, alpha=-lr * scale)
+        first = zero_first and c0 == 0
+        if bf16:
+            g2 = torch.mm(h.t(), yc, out_dtype=torch.float32)
+            g1 = torch.mm(xc.t(), dh, out_dtype=torch.float32)
+            if first:
+                grads[1].copy_(g2)
+                grads[0].copy_(g1)
+            else:
+                grads[1].add_(g2)
+                grads[0].add_(g1)
         else:
-            grads[1].addmm_(h.t(), yc, alpha=scale)
-            grads[0].addmm_(xc.t(), dh, alpha=scale)
+            beta = 0.0 if first else 1.0
+            grads[1].addmm_(h.t(), yc, beta=beta, alpha=1.0)
+            grads[0].addmm_(xc.t(), dh, beta=beta, alpha=1.0)
+
+
+def grad_sum(gA, gB, inv_n):
+    """The step's gradient: the two partitions' accumulators (either None
+    when its partition sent nothing) added in one order, scaled by 1/n."""
+    if gA is None:
+        g = gB.clone()
+    else:
+        g = gA.clone()
+        if gB is not None:
+            g.add_(gB)
+    g.mul_(inv_n)
+    return g
+
+
+def apply_sgd(W, gA, gB, lr_over_n):
+    W.sub_(grad_sum(gA, gB, lr_over_n))
 
 
 def adam_apply(W, m, v, g, lr, t):
@@ -274,10 +422,14 @@ def adam_apply(W, m, v, g, lr, t):
 
 
 class Expert:
-    __slots__ = ("W1", "W2", "m1", "v1", "m2", "v2", "adam_t")
+    """W1/W2 are the fp32 master weights (what moves, what the checksum reads);
+    W1b/W2b their bf16 copies under --dtype bf16, rewritten after every update
+    and remade on arrival, as the app's."""
+    __slots__ = ("W1", "W2", "W1b", "W2b", "m1", "v1", "m2", "v2", "adam_t")
 
     def __init__(self):
         self.W1 = self.W2 = None
+        self.W1b = self.W2b = None
         self.m1 = self.v1 = self.m2 = self.v2 = None
         self.adam_t = 0
 
@@ -286,6 +438,21 @@ class Expert:
         if adam:
             ts += [self.m1, self.v1, self.m2, self.v2]
         return ts
+
+    def read(self):
+        """The operands the GEMMs read."""
+        return (self.W1b, self.W2b) if self.W1b is not None else (self.W1, self.W2)
+
+    def arrived(self, dtype):
+        """The masters are in place (init or a migration): make the copies."""
+        if dtype == torch.bfloat16:
+            self.W1b = self.W1.to(torch.bfloat16)
+            self.W2b = self.W2.to(torch.bfloat16)
+
+    def updated(self):
+        if self.W1b is not None:
+            self.W1b.copy_(self.W1)
+            self.W2b.copy_(self.W2)
 
 
 def main():
@@ -299,6 +466,7 @@ def main():
     ap.add_argument("-i", "--steps", type=int, default=50, help="timed steps")
     ap.add_argument("-u", "--warmup", type=int, default=5)
     ap.add_argument("-z", "--zipf", type=float, default=1.0)
+    ap.add_argument("--trace", help="routing trace to replay (trace_routing.py) instead of the hashed Zipf")
     ap.add_argument("-p", "--drift", type=int, default=10)
     ap.add_argument("-c", "--chunk", type=int, default=1024)
     ap.add_argument("-n", "--lanes", type=int, default=4, help="compute streams per rank")
@@ -312,12 +480,22 @@ def main():
     ap.add_argument("-A", "--adam", action="store_true")
     ap.add_argument("-T", "--tf32", action="store_true")
     ap.add_argument("--dtype", choices=["fp32", "bf16"], default="fp32",
-                    help="bf16 runs weights and activations in bf16 (throughput only)")
+                    help="bf16: tokens, activations and the weights' copies the GEMMs read are bf16, "
+                         "with fp32 accumulation, fp32 master weights, moments and gradient "
+                         "accumulators (the app's -B)")
     ap.add_argument("--fuse", action="store_true",
                     help="one chunked pass per expert over all sources (changes chunk boundaries)")
+    ap.add_argument("--replicate", action="store_true",
+                    help="EPLB-style redundancy: the hottest expert of the (static) hot set has a "
+                         "second copy on another rank; even ranks' tokens go to the first copy, odd "
+                         "ranks' to the second; the copies all-reduce their gradients and apply the "
+                         "same update. Needs -p 0.")
     ap.add_argument("-P", "--print-place", action="store_true")
     ap.add_argument("--no-pipeline", action="store_true",
                     help="synchronize the host at every step end (no run-ahead)")
+    ap.add_argument("-G", "--forward-only", action="store_true",
+                    help="serving: forward only, no gradient GEMMs, no update (the example's -G)")
+    add_attention_args(ap)
     a = ap.parse_args()
 
     rank = int(os.environ.get("RANK", os.environ.get("SLURM_PROCID", 0)))
@@ -335,8 +513,6 @@ def main():
         torch.backends.cuda.matmul.allow_tf32 = True
     dtype = torch.bfloat16 if a.dtype == "bf16" else torch.float32
     esz = 2 if dtype == torch.bfloat16 else 4
-    if a.adam and dtype != torch.float32:
-        sys.exit("Adam needs fp32")
     if a.lb != "none" and a.first_lb <= a.warmup:
         sys.exit("the first LB step must come after the warmup")
 
@@ -346,20 +522,57 @@ def main():
 
     # ---- placement and weights: expert e starts on rank e * P // E (block map)
     owner = np.array([(e * P) // E for e in range(E)], dtype=np.int64)
+    # Redundancy (--replicate): owner2[e] is the rank of expert e's second
+    # copy, -1 for none. Tokens from even ranks go to owner[e], from odd ranks
+    # to owner2[e]; the two copies all-reduce their gradient partials and apply
+    # the same update, so their weights stay identical. Neither copy moves.
+    owner2 = np.full(E, -1, dtype=np.int64)
+    pair_group = None
+    if a.replicate:
+        if a.drift != 0 and not a.trace:
+            sys.exit("--replicate needs a static hot set (-p 0)")
+        if P < 2:
+            sys.exit("--replicate needs at least two ranks")
+        r0 = make_router(a, 0, P)
+        r0.build_phase(0)
+        hot = int(r0.perm[0])
+        owner2[hot] = (int(owner[hot]) + P // 2) % P
+        pair_group = dist.new_group([int(owner[hot]), int(owner2[hot])])
+        log("Replication: expert %d has copies on ranks %d (even sources) and %d (odd sources)" % (
+            hot, owner[hot], owner2[hot]))
+
+    def serves(src, e):
+        """Whether this rank computes expert e's tokens from rank src."""
+        if owner2[e] >= 0 and src % 2 == 1:
+            return owner2[e] == rank
+        return owner[e] == rank
+
+    def owners_for(src):
+        """Effective owner per expert for the tokens rank src sends."""
+        if src % 2 == 1:
+            return np.where(owner2 >= 0, owner2, owner)
+        return owner
+
     experts = {}
     for e in range(E):
-        if owner[e] == rank:
+        if owner[e] == rank or owner2[e] == rank:
             x = Expert()
             x.W1 = init_uniform(dm * dff, hmix(hmix(a.seed, 1), e), 1.0 / math.sqrt(dm),
-                                device, dtype).view(dm, dff)
+                                device, torch.float32).view(dm, dff)
             x.W2 = init_uniform(dm * dff, hmix(hmix(a.seed, 2), e), 1.0 / math.sqrt(dff),
-                                device, dtype).view(dff, dm)
+                                device, torch.float32).view(dff, dm)
             if a.adam:
                 x.m1, x.v1 = torch.zeros_like(x.W1), torch.zeros_like(x.W1)
                 x.m2, x.v2 = torch.zeros_like(x.W2), torch.zeros_like(x.W2)
+            x.arrived(dtype)
             experts[e] = x
     x_in = init_uniform(T * dm, hmix(hmix(a.seed, 1000), rank), math.sqrt(3.0),
                         device, dtype).view(T, dm)
+    attn = opt_a = None
+    if a.attn:
+        attn = Attention(dm, a.heads, a.seq, dtype, device, hmix(a.seed, 2000))
+        opt_a = torch.optim.SGD(attn.parameters(), lr=a.lr / T)
+        x_tok = x_in
 
     main = torch.cuda.current_stream()
     # A rank can receive every token of every rank in the worst case.
@@ -371,11 +584,11 @@ def main():
     recv_buf = [torch.empty(cap_rows, dm, dtype=dtype, device=device) for _ in range(2)]
     out_buf = [torch.empty(cap_rows, dm, dtype=dtype, device=device) for _ in range(2)]
     back_buf = [torch.empty(TK, dm, dtype=dtype, device=device) for _ in range(2)]
-    y = torch.empty(T, dm, dtype=dtype, device=device)
-    router = Router(E, T, K, a.zipf, a.drift, a.seed, rank)
+    y = torch.empty(T, dm, dtype=torch.float32, device=device)   # the combine sums in fp32
+    router = make_router(a, rank, P)
 
     n_total = a.warmup + a.steps
-    wbytes = esz * dm * dff * 2 * (3 if a.adam else 1)
+    wbytes = 4 * dm * dff * 2 * (3 if a.adam else 1) + (esz * dm * dff * 2 if esz != 4 else 0)
     H = sum(math.pow(r + 1, -a.zipf) for r in range(E)) if a.zipf > 0 else E
     p_max = 1.0 / H
     log("\n[PyTorch expert-parallel MoE reference]")
@@ -384,14 +597,14 @@ def main():
     log("Tokens: %d per rank per step on %d ranks, top-%d, chunk %d, %d compute lanes%s%s" % (
         T, P, K, a.chunk, a.lanes, ", fused sources" if a.fuse else "",
         ", no run-ahead" if a.no_pipeline else ""))
-    log("Routing: zipf %.2f (hottest expert %.1fx average), hot set reshuffled every %d steps, seed %d" % (
-        a.zipf, p_max * E, a.drift, a.seed))
+    log(routing_line(a, router))
     log("Per expert: %.1f MB weights; torch %s, NCCL %s, NCCL_P2P_LEVEL %s" % (
         wbytes / 1e6, torch.__version__, ".".join(map(str, torch.cuda.nccl.version())),
         os.environ.get("NCCL_P2P_LEVEL", "default")))
-    log("Steps: %d (+%d warmup), LB: %s%s, first LB: %d, LB frequency: %d" % (
+    log("Steps: %d (+%d warmup), LB: %s%s, first LB: %d, LB frequency: %d%s%s" % (
         a.steps, a.warmup, a.lb, "" if a.lb == "none" else " (" + a.place + ")",
-        a.first_lb, a.lb_freq))
+        a.first_lb, a.lb_freq, "; forward only (serving)" if a.forward_only else "",
+        "; attention sublayer (%d heads, sequences of %d) before the MoE" % (a.heads, a.seq) if a.attn else ""))
 
     def is_lb_step(s):
         return a.lb != "none" and (s == a.first_lb or (a.lb_freq > 0 and s > a.first_lb
@@ -408,8 +621,8 @@ def main():
                     ops.append(dist.P2POp(dist.isend, t, dst))
             elif dst == rank:
                 x = Expert()
-                x.W1 = torch.empty(dm, dff, dtype=dtype, device=device)
-                x.W2 = torch.empty(dff, dm, dtype=dtype, device=device)
+                x.W1 = torch.empty(dm, dff, dtype=torch.float32, device=device)
+                x.W2 = torch.empty(dff, dm, dtype=torch.float32, device=device)
                 if a.adam:
                     x.m1, x.v1 = torch.empty_like(x.W1), torch.empty_like(x.W1)
                     x.m2, x.v2 = torch.empty_like(x.W2), torch.empty_like(x.W2)
@@ -472,6 +685,7 @@ def main():
                 if src == rank:
                     del experts[e]
                 elif dst == rank:
+                    arr.arrived(dtype)
                     experts[e] = arr
             owner = pending_owner
             pending_owner, pending_moves = None, []
@@ -483,7 +697,8 @@ def main():
 
         moves = []
         if is_lb_step(s):
-            new_owner = (place_greedy if a.place == "greedy" else place_lpt)(owner, load, P)
+            new_owner = place_greedy(owner, load, P, owner2=owner2) if a.place == "greedy" \
+                else place_lpt(owner, load, P)
             moves = [(e, int(owner[e]), int(new_owner[e])) for e in range(E)
                      if owner[e] != new_owner[e]]
             n_moved[s] = len(moves)
@@ -498,19 +713,24 @@ def main():
                 if src == rank:
                     del experts[e]
             for (e, x) in arrivals:
+                x.arrived(dtype)
                 experts[e] = x
             owner = new_owner
         ev[s][1].record(main)
 
-        send_idx, recv_pos, in_splits = layout(slot_expert, counts, owner)
-        mine = [e for e in range(E) if owner[e] == rank]
-        out_splits = np.array([int(C[src][mine].sum()) for src in range(P)], dtype=np.int64)
+        send_idx, recv_pos, in_splits = layout(slot_expert, counts, owners_for(rank))
+        mine = [e for e in range(E) if owner[e] == rank or owner2[e] == rank]
+        out_splits = np.array([int(sum(C[src][e] for e in mine if serves(src, e)))
+                               for src in range(P)], dtype=np.int64)
         tot = int(out_splits.sum())
         my_tok = np.bincount(owner, weights=load, minlength=P)
         step_tok[s] = (my_tok.max(), load.max(), tot)
         if s > a.warmup:
             a2a_bytes += (tot + TK) * dm * esz
 
+        # the attention sublayer (--attn) runs here, on the step's tokens, before they are gathered
+        if attn is not None:
+            x_in = attention_step(attn, opt_a, x_tok, 1.0, a.forward_only)
         # dispatch: gather rows in slab order, one all_to_all
         idx_t = torch.from_numpy(send_idx).to(device)
         torch.index_select(x_in, 0, idx_t, out=send_buf[b])
@@ -525,6 +745,8 @@ def main():
         off = 0
         for src in range(P):
             for e in mine:
+                if not serves(src, e):
+                    continue
                 seg[(src, e)] = off
                 off += int(C[src][e])
         moving = set(e for (e, src, dst) in moves) if a.lb == "async" else set()
@@ -536,37 +758,70 @@ def main():
             lane = lanes[li % a.lanes]
             x = experts[e]
             n_tot = int(load[e])
-            scale = 1.0 / n_tot if n_tot > 0 else 0.0
-            g = lane.grads
             with torch.cuda.stream(lane.stream):
                 if n_tot > 0:
-                    if a.adam:
-                        g[0].zero_()
-                        g[1].zero_()
-                    if a.fuse:
-                        segs = [(seg[(src, e)], int(C[src][e])) for src in range(P) if C[src][e] > 0]
-                        xs, ys = lane.fused(n_tot)
-                        o = 0
-                        for (so, n) in segs:
-                            xs[o:o + n].copy_(recv_buf[b][so:so + n])
-                            o += n
-                        expert_chunks(lane, x.W1, x.W2, xs, ys, a.chunk, a.lr, scale, g)
-                        o = 0
-                        for (so, n) in segs:
-                            out_buf[b][so:so + n].copy_(ys[o:o + n])
-                            o += n
-                    else:
-                        for src in range(P):
-                            n = int(C[src][e])
-                            if n == 0:
-                                continue
-                            so = seg[(src, e)]
-                            expert_chunks(lane, x.W1, x.W2, recv_buf[b][so:so + n],
-                                          out_buf[b][so:so + n], a.chunk, a.lr, scale, g)
-                    if a.adam:
+                    # Two runs, one per source partition (even and odd ranks),
+                    # each into its own accumulators; the update once from both.
+                    # This is the app's partition structure (moe.C), so the
+                    # bits agree whether or not it replicated the expert.
+                    have = [False, False]
+                    for part in range(2):
+                        srcs = [src for src in range(P) if src % 2 == part and C[src][e] > 0
+                                and serves(src, e)]
+                        if not srcs:
+                            continue
+                        have[part] = True
+                        g = lane.grads[part]
+                        if a.fuse:
+                            segs = [(seg[(src, e)], int(C[src][e])) for src in srcs]
+                            n_run = sum(n for (_, n) in segs)
+                            xs, ys = lane.fused(n_run)
+                            o = 0
+                            for (so, n) in segs:
+                                xs[o:o + n].copy_(recv_buf[b][so:so + n])
+                                o += n
+                            expert_chunks(lane, *x.read(), xs, ys, a.chunk, g, True, a.forward_only)
+                            o = 0
+                            for (so, n) in segs:
+                                out_buf[b][so:so + n].copy_(ys[o:o + n])
+                                o += n
+                        else:
+                            first = True
+                            for src in srcs:
+                                n = int(C[src][e])
+                                so = seg[(src, e)]
+                                expert_chunks(lane, *x.read(), recv_buf[b][so:so + n],
+                                              out_buf[b][so:so + n], a.chunk, g, first, a.forward_only)
+                                first = False
+                    if a.forward_only:
+                        x.updated()
+                        have = [False, False]
+                    if owner2[e] >= 0 and not a.forward_only:
+                        # The copies' partials, summed between them (NCCL on the
+                        # pair's communicator, on this lane's stream): each copy
+                        # holds one partition; an empty one contributes zeros.
+                        part = 0 if owner[e] == rank else 1
+                        g = lane.grads[part]
+                        if not have[part]:
+                            g[0].zero_()
+                            g[1].zero_()
+                        dist.all_reduce(g[0], group=pair_group)
+                        dist.all_reduce(g[1], group=pair_group)
+                        have = [part == 0, part == 1]
+                    gA = lane.grads[0] if have[0] else (None, None)
+                    gB = lane.grads[1] if have[1] else (None, None)
+                    inv_n = 1.0 / n_tot
+                    if a.forward_only:
+                        pass
+                    elif a.adam:
                         x.adam_t += 1
-                        adam_apply(x.W1, x.m1, x.v1, g[0], a.lr, x.adam_t)
-                        adam_apply(x.W2, x.m2, x.v2, g[1], a.lr, x.adam_t)
+                        adam_apply(x.W1, x.m1, x.v1, grad_sum(gA[0], gB[0], inv_n), a.lr, x.adam_t)
+                        adam_apply(x.W2, x.m2, x.v2, grad_sum(gA[1], gB[1], inv_n), a.lr, x.adam_t)
+                    else:
+                        apply_sgd(x.W1, gA[0], gB[0], a.lr * inv_n)
+                        apply_sgd(x.W2, gA[1], gB[1], a.lr * inv_n)
+                    if not a.forward_only:
+                        x.updated()
                 if e in moving:
                     evm = torch.cuda.Event()
                     evm.record(lane.stream)
@@ -594,14 +849,16 @@ def main():
         ev[s][4].record(main)
         pos_t = torch.from_numpy(recv_pos).to(device)
         if K == 1:
-            torch.index_select(back_buf[b], 0, pos_t, out=y)
+            y.copy_(back_buf[b].index_select(0, pos_t))
         else:
-            torch.sum(back_buf[b].index_select(0, pos_t).view(T, K, dm), dim=1, out=y)
+            torch.sum(back_buf[b].index_select(0, pos_t).view(T, K, dm).float(), dim=1, out=y)
             y.mul_(1.0 / K)
         if a.checksum > 0 and s % a.checksum == 0:
             chk_out[s] = y.double().square().sum()
             wsum = torch.zeros((), dtype=torch.float64, device=device)
             for e in mine:
+                if owner[e] != rank:
+                    continue   # the second copy holds the same weights
                 wsum += experts[e].W1.double().square().sum() + experts[e].W2.double().square().sum()
             chk_w[s] = wsum
         ev[s][5].record(main)
