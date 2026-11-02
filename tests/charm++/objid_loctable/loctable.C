@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <vector>
+#include <bitset>
 #include "cklocnode.h"
 #include "loctable.decl.h"
 
@@ -163,7 +164,7 @@ public:
           {
             ++checked;
             uint64_t bits = t->big.store(waitKey(k), CkMyPe(), 0);
-            extra += __builtin_popcountll(bits);
+            extra += (long)std::bitset<64>(bits).count();
             if (t->big.takeWaiters(waitKey(k)) != 0) ++violations;  // taken once only
           }
         break;

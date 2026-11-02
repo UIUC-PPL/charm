@@ -102,12 +102,18 @@ private:
     std::atomic<uint64_t> value;
     std::atomic<uint64_t> waiters;
   };
+  // Growth (cklocnode.C, findOrInsert and grow): an inserter counts itself in
+  // `active` of the head segment before it looks for its key, and leaves the count
+  // when done; the grower sets `sealed`, waits for `active` to reach 0, then
+  // publishes the bigger segment. So a key is never inserted into two segments.
   struct Segment
   {
     Segment* older;
     int log2;
     uint64_t mask;
     std::atomic<uint64_t> used;
+    std::atomic<int> active;
+    std::atomic<bool> sealed;
     Slot* slots;
   };
   std::atomic<Segment*> head;
@@ -118,6 +124,7 @@ private:
   Slot* find(uint64_t key) const;                  // newest segment first
   Slot* findOrInsert(uint64_t key);
   void grow(Segment* from);
+  void awaitGrowth(const Segment* from) const;  // spin until head != from
 };
 
 /// The process's table, created on first use after the command line is parsed.
@@ -156,12 +163,14 @@ public:
   static constexpr int SLOT_WORDS = 1 + KEY_WORDS + 1;
 
 private:
-  struct Segment
+  struct Segment  // active and sealed: as in LocTable::Segment
   {
     Segment* older;
     int log2;
     uint64_t mask;
     std::atomic<uint64_t> used;
+    std::atomic<int> active;
+    std::atomic<bool> sealed;
     std::atomic<uint64_t>* words;  // SLOT_WORDS per slot
   };
   std::atomic<Segment*> head;
@@ -176,6 +185,7 @@ private:
                                       uint64_t h, bool writer);
   std::atomic<uint64_t>* find(const uint64_t key[KEY_WORDS], uint64_t h, bool writer) const;
   void grow(Segment* from);
+  void awaitGrowth(const Segment* from) const;
 };
 
 IndexTable& indexTable();

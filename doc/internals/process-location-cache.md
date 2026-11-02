@@ -105,14 +105,18 @@ Writes are single-word compare-and-swap operations, never a lock:
 
 Keys never move and never change once published. Growth adds a segment: when a
 segment's load passes 7/8, a writer allocates a segment four times as large and
-publishes it with an atomic exchange of the head pointer. Readers and writers
-probe the newest segment first and stop at the first hit; a writer that finds
-no copy anywhere inserts into the head segment. A duplicate across two segments
-can arise only when a check-then-insert straddles a head change; from then on
-every update goes to the copy in the newer segment, and at most the one update
-that raced the growth is invisible until the next one. That is the same
-staleness a per-PE cache has today after any migration, and the same repair
-fixes it (section 3.2). Segments are never freed during the run.
+publishes it as the new head. Readers and writers probe the newest segment
+first and stop at the first hit; a writer that finds no copy anywhere inserts
+into the head segment. A key must not end up in two segments: updates and
+waiter bits would then split between the copies, and a wake or an epoch could
+be lost (objid_loctable phase 3 caught this on oversubscribed CI runners, where
+a writer's search missed, the head moved, and its insert landed in the old
+segment). So the search and the insert of a writer happen while the writer is
+counted as active in the head segment, and a grower first seals the segment,
+then waits until no writer is active in it, then publishes the bigger one. A
+writer that finds the segment sealed after counting itself waits for the new
+head and starts over there. Reads never touch the counter or the seal. Segments
+are never freed during the run.
 
 Eviction is not in the first version. The table grows with the number of
 distinct elements the process has addressed, which is what each PE's cache does

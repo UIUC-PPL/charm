@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <new>
+#include <thread>
 
 #include "converse.h"
 
@@ -34,6 +35,8 @@ LocTable::Segment* LocTable::makeSegment(int log2, Segment* older)
   seg->log2 = log2;
   seg->mask = (1ull << log2) - 1;
   seg->used.store(0, std::memory_order_relaxed);
+  seg->active.store(0, std::memory_order_relaxed);
+  seg->sealed.store(false, std::memory_order_relaxed);
   // Value-initialization zeroes every atomic: key 0 is the empty marker.
   seg->slots = new Slot[1ull << log2]();
   return seg;
@@ -80,50 +83,76 @@ LocTable::Slot* LocTable::find(uint64_t key) const
   return nullptr;
 }
 
-void LocTable::grow(Segment* from)
+void LocTable::awaitGrowth(const Segment* from) const
 {
-  Segment* bigger = makeSegment(from->log2 + 2, from);
-  Segment* expected = from;
-  if (head.compare_exchange_strong(expected, bigger, std::memory_order_acq_rel))
-  {
-    counts.growths.fetch_add(1, std::memory_order_relaxed);
-    return;
-  }
-  // Another writer grew the table first; ours is unused and unpublished.
-  delete[] bigger->slots;
-  delete bigger;
+  while (head.load(std::memory_order_acquire) == from) std::this_thread::yield();
 }
 
+// The one writer whose seal succeeds publishes the bigger segment once no insert
+// into `from` is in progress; the others wait for the publication. Inserters
+// that arrive after the seal wait too (findOrInsert).
+void LocTable::grow(Segment* from)
+{
+  if (from->sealed.exchange(true, std::memory_order_seq_cst))
+  {
+    awaitGrowth(from);
+    return;
+  }
+  Segment* bigger = makeSegment(from->log2 + 2, from);
+  while (from->active.load(std::memory_order_seq_cst) != 0) std::this_thread::yield();
+  head.store(bigger, std::memory_order_release);
+  counts.growths.fetch_add(1, std::memory_order_relaxed);
+}
+
+// The search for the key and the insert on a miss happen while this writer is
+// counted active in the head segment, and a segment is sealed before it is
+// superseded (grow). Either this writer saw the seal and starts over in the newer
+// segment, or the grower saw this writer and publishes only after it is done: no
+// insert into an older segment can be in progress or still to come while a writer
+// searches the newer one, so a key gets one slot in one segment. Without this, a
+// writer whose search missed and whose insert landed in the old segment after
+// the head moved left two copies, and updates and waiter bits went to one or the
+// other (found by objid_loctable on oversubscribed CI runners).
 LocTable::Slot* LocTable::findOrInsert(uint64_t key)
 {
   for (;;)
   {
-    if (Slot* s = find(key)) return s;
     Segment* seg = head.load(std::memory_order_acquire);
-    // Keep the load under 7/8 so probes stay short.
-    if ((seg->used.load(std::memory_order_relaxed) + 1) * 8 > (seg->mask + 1) * 7)
+    seg->active.fetch_add(1, std::memory_order_seq_cst);
+    if (seg->sealed.load(std::memory_order_seq_cst))
     {
-      grow(seg);
+      seg->active.fetch_sub(1, std::memory_order_release);
+      awaitGrowth(seg);
       continue;
     }
-    uint64_t i = slotIndex(key, seg->log2);
-    bool inserted = false;
-    for (uint64_t n = 0; n <= seg->mask; ++n, i = (i + 1) & seg->mask)
+    Slot* found = find(key);
+    if (found == nullptr)
     {
-      Slot& s = seg->slots[i];
-      uint64_t k = s.key.load(std::memory_order_acquire);
-      if (k == key) return &s;
-      if (k != 0) continue;
-      if (s.key.compare_exchange_strong(k, key, std::memory_order_acq_rel))
+      // Keep the load under 7/8 so probes stay short.
+      if ((seg->used.load(std::memory_order_relaxed) + 1) * 8 > (seg->mask + 1) * 7)
       {
-        seg->used.fetch_add(1, std::memory_order_relaxed);
-        inserted = true;
-        return &s;
+        seg->active.fetch_sub(1, std::memory_order_release);
+        grow(seg);
+        continue;
       }
-      if (k == key) return &s;  // lost the race to a writer of the same key
-      // Someone else took this slot for another key: keep probing.
+      uint64_t i = slotIndex(key, seg->log2);
+      for (uint64_t n = 0; n <= seg->mask && found == nullptr; ++n, i = (i + 1) & seg->mask)
+      {
+        Slot& s = seg->slots[i];
+        uint64_t k = s.key.load(std::memory_order_acquire);
+        if (k == key) found = &s;
+        else if (k != 0) continue;  // another key's slot: keep probing
+        else if (s.key.compare_exchange_strong(k, key, std::memory_order_acq_rel))
+        {
+          seg->used.fetch_add(1, std::memory_order_relaxed);
+          found = &s;
+        }
+        else if (k == key) found = &s;  // lost the race to a writer of the same key
+      }
     }
-    if (!inserted) grow(seg);  // the segment filled up under us
+    seg->active.fetch_sub(1, std::memory_order_release);
+    if (found) return found;
+    grow(seg);  // the segment filled up under us
   }
 }
 
@@ -269,6 +298,8 @@ IndexTable::Segment* IndexTable::makeSegment(int log2, Segment* older)
   seg->log2 = log2;
   seg->mask = (1ull << log2) - 1;
   seg->used.store(0, std::memory_order_relaxed);
+  seg->active.store(0, std::memory_order_relaxed);
+  seg->sealed.store(false, std::memory_order_relaxed);
   seg->words = new std::atomic<uint64_t>[(1ull << log2) * SLOT_WORDS]();
   return seg;
 }
@@ -328,15 +359,22 @@ std::atomic<uint64_t>* IndexTable::find(const uint64_t key[KEY_WORDS], uint64_t 
   return nullptr;
 }
 
+void IndexTable::awaitGrowth(const Segment* from) const
+{
+  while (head.load(std::memory_order_acquire) == from) std::this_thread::yield();
+}
+
+// As LocTable::grow.
 void IndexTable::grow(Segment* from)
 {
-  Segment* bigger = makeSegment(from->log2 + 2, from);
-  Segment* expected = from;
-  if (!head.compare_exchange_strong(expected, bigger, std::memory_order_acq_rel))
+  if (from->sealed.exchange(true, std::memory_order_seq_cst))
   {
-    delete[] bigger->words;
-    delete bigger;
+    awaitGrowth(from);
+    return;
   }
+  Segment* bigger = makeSegment(from->log2 + 2, from);
+  while (from->active.load(std::memory_order_seq_cst) != 0) std::this_thread::yield();
+  head.store(bigger, std::memory_order_release);
 }
 
 bool IndexTable::lookup(uint64_t collection, const CkArrayIndex& idx, uint64_t& id) const
@@ -354,10 +392,21 @@ uint64_t IndexTable::bind(uint64_t collection, const CkArrayIndex& idx, uint64_t
   uint64_t key[KEY_WORDS];
   makeKey(collection, idx, key);
   const uint64_t h = hashKey(key);
+  // Search and insert while counted active in the head segment: see
+  // LocTable::findOrInsert.
   for (;;)
   {
+    Segment* seg = head.load(std::memory_order_acquire);
+    seg->active.fetch_add(1, std::memory_order_seq_cst);
+    if (seg->sealed.load(std::memory_order_seq_cst))
+    {
+      seg->active.fetch_sub(1, std::memory_order_release);
+      awaitGrowth(seg);
+      continue;
+    }
     if (std::atomic<uint64_t>* idw = find(key, h, true))
     {
+      seg->active.fetch_sub(1, std::memory_order_release);
       uint64_t cur = idw->load(std::memory_order_acquire);
       for (;;)
       {
@@ -367,15 +416,16 @@ uint64_t IndexTable::bind(uint64_t collection, const CkArrayIndex& idx, uint64_t
           return cur;
       }
     }
-    Segment* seg = head.load(std::memory_order_acquire);
     if ((seg->used.load(std::memory_order_relaxed) + 1) * 8 > (seg->mask + 1) * 7)
     {
+      seg->active.fetch_sub(1, std::memory_order_release);
       grow(seg);
       continue;
     }
     uint64_t i = h >> (64 - seg->log2);
     bool again = false;  // our key's claim appeared in this segment: look it up again
-    for (uint64_t n = 0; n <= seg->mask && !again; ++n, i = (i + 1) & seg->mask)
+    bool claimed = false;
+    for (uint64_t n = 0; n <= seg->mask && !again && !claimed; ++n, i = (i + 1) & seg->mask)
     {
       std::atomic<uint64_t>* slot = seg->words + i * SLOT_WORDS;
       uint64_t claim = slot[0].load(std::memory_order_acquire);
@@ -386,11 +436,13 @@ uint64_t IndexTable::bind(uint64_t collection, const CkArrayIndex& idx, uint64_t
         for (int w = 0; w < KEY_WORDS; ++w) slot[1 + w].store(key[w], std::memory_order_relaxed);
         slot[1 + KEY_WORDS].store(id, std::memory_order_release);
         seg->used.fetch_add(1, std::memory_order_relaxed);
-        return 0;
+        claimed = true;
       }
-      if (claim == h) again = true;  // lost the claim to a writer of the same hash
+      else if (claim == h) again = true;  // lost the claim to a writer of the same hash
       // else another key took the slot: keep probing
     }
+    seg->active.fetch_sub(1, std::memory_order_release);
+    if (claimed) return 0;
     // No slot claimed: the key is in the segment now (again), or no empty slot was
     // left for it. Growing guarantees progress in the second case.
     if (!again) grow(seg);
