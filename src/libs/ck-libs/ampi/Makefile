@@ -6,7 +6,7 @@ PRE_HEADERS=ampi.h ampi_functions.h $(addprefix romio-stub/,mpio_globals.h)
 ifeq (1,$(CMK_CAN_LINK_FORTRAN))
   PRE_HEADERS += ampif.h
 endif
-HEADERS=$(PRE_HEADERS) ampi-interoperate.h ampiimpl.h ampi.decl.h ddt.h
+HEADERS=$(PRE_HEADERS) ampi-interoperate.h ampiimpl.h ampi.decl.h ddt.h campi.h campi_core.h
 ROMIO_HEADER_FILES := mpio.h mpio_functions.h
 ifeq (1,$(CMK_CAN_LINK_FORTRAN))
   ROMIO_HEADER_FILES += mpiof.h
@@ -21,7 +21,7 @@ HEADDEP=$(HEADERS) \
 COMPAT=compat_ampim.o compat_ampifm.o \
        compat_ampicpp.o compat_ampins.o compat_ampirs.o
 OBJS=ampi.o $(AMPIF_OBJ) ampiOneSided.o \
-     ampiMisc.o ddt.o mpich-alltoall.o ampi_mpix.o ampi_noimpl.o
+     ampiMisc.o ddt.o mpich-alltoall.o ampi_mpix.o ampi_noimpl.o campi.o
 
 AMPI_LIB=libmoduleampi
 AMPI_LIBDIR=$(CDIR)/lib
@@ -248,6 +248,9 @@ $(AMPIF_OBJ): ampif.C $(HEADDEP) headers | $(ROMIO_MAKEFILE)
 
 ampiOneSided.o: ampiOneSided.C ampiimpl.h $(HEADDEP) headers | $(ROMIO_MAKEFILE)
 	$(CHARMC) -language ampi -c $< -o $@
+
+campi.o: campi.C campi_core.h $(HEADDEP) headers | $(ROMIO_MAKEFILE)
+	$(CHARMC) -language ampi -std=c++20 -c $< -o $@
 
 ampiMisc.o: ampiMisc.C ampiimpl.h $(HEADDEP) headers | $(ROMIO_MAKEFILE)
 	$(CHARMC) -language ampi -c $< -o $@

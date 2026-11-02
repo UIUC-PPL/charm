@@ -7,6 +7,7 @@
 
 
 /* readonly */ CProxy_TraceUtilizationBOC traceUtilizationGroupProxy;
+/* readonly */ CProxy_TraceObjLoadsBOC traceObjLoadsGroupProxy;
 
 
 /// A reduction type for merging compressed sum detail data
@@ -22,6 +23,13 @@ void collectUtilizationData(void *ignored) {
 
 CkpvStaticDeclare(TraceUtilization*, _trace);
 
+/// Registered once per process (initnode): _createTraceutilization runs on
+/// every PE, and concurrent addReducer calls from several PE threads in one
+/// process can lose an entry and shift every later reducer index.
+void registerSumDetailCompressedReducer(void) {
+  sumDetailCompressedReducer=CkReduction::addReducer(sumDetailCompressedReduction, false, "sumDetailCompressedReduction");
+}
+
 /**
   For each TraceFoo module, _createTraceFoo() must be defined.
   This function is called in _createTraces() generated in moduleInit.C
@@ -30,9 +38,7 @@ void _createTraceutilization(char **argv)
 {
   //  CkPrintf("[%d] _createTraceutilization\n", CkMyPe());
 
-  // Register the reducer
   CkAssert(sizeof(short) == 2);
-  sumDetailCompressedReducer=CkReduction::addReducer(sumDetailCompressedReduction, false, "sumDetailCompressedReduction");
 
   CkpvInitialize(TraceUtilization*, _trace);
   CkpvAccess(_trace) = new TraceUtilization();
@@ -64,6 +70,17 @@ void TraceUtilization::beginExecute(int event,int msgType,int ep,int srcPe, int 
   // begin in cklocation.C, one inside the other. Count the nesting, as
   // trace-summary does, and attribute the time to the outer pair.
   execDepth++;
+  if (execDepth <= OBJ_MAX_DEPTH) {
+    ObjFrame &f = objFrames[execDepth];
+    // The element, set by whoever begins its execution (see
+    // _TRACE_SET_OBJECT); collection -1 for groups, chares, untraced work.
+    f.key = ObjKey(_TRACE_OBJECT_COLL(), _TRACE_OBJECT_ID());
+    f.valid = (f.key.first >= 0);
+    if (f.valid) {
+      f.start = TraceTimer();
+      f.nested = 0.0;
+    }
+  }
   if (execDepth > 1) return;
   if (execEp != INVALIDEP && execEp != TRACEON_EP) {
     TRACE_WARN("Warning: TraceUtilization two consecutive BEGIN_PROCESSING!\n");
@@ -77,6 +94,17 @@ void TraceUtilization::beginExecute(int event,int msgType,int ep,int srcPe, int 
 
 void TraceUtilization::endExecute(void)
 {
+  if (execDepth > 0 && execDepth <= OBJ_MAX_DEPTH) {
+    ObjFrame &f = objFrames[execDepth];
+    if (f.valid) {
+      double now = TraceTimer(), span = now - f.start;
+      ObjLoad &o = objLoads[f.key];
+      o.wall += span - f.nested;
+      o.lastSeen = now;
+      f.valid = false;
+      if (execDepth > 1 && objFrames[execDepth - 1].valid) objFrames[execDepth - 1].nested += span;
+    }
+  }
   if (execDepth > 0) execDepth--;
   if (execDepth > 0) return;
 
@@ -91,8 +119,43 @@ void TraceUtilization::endExecute(void)
  
   updateCpuTime(execEp, start, endTime);
 
-
   execEp = INVALIDEP;
+}
+
+
+void TraceUtilization::expireObjLoads()
+{
+  double now = TraceTimer();
+  for (auto it = objLoads.begin(); it != objLoads.end();) {
+    if (now - it->second.lastSeen > OBJ_EXPIRE)
+      it = objLoads.erase(it);
+    else
+      ++it;
+  }
+}
+
+void TraceUtilization::snapshotObjLoads(std::vector<char> &buf)
+{
+  expireObjLoads();
+  auto put = [&buf](const void *p, size_t n) {
+    buf.insert(buf.end(), (const char *)p, (const char *)p + n);
+  };
+  int pe = CkMyPe(), n = (int)objLoads.size();
+  double now = CkWallTimer(), elapsed = TraceTimer();
+  put(&pe, sizeof(int));
+  put(&now, sizeof(double));
+  put(&elapsed, sizeof(double));
+  put(&idleTotal, sizeof(double));
+  put(&n, sizeof(int));
+  for (const auto &kv : objLoads) {
+    CmiUInt8 id = kv.first.second;
+    int coll = kv.first.first;
+    unsigned char migratable = 1;
+    put(&id, sizeof(CmiUInt8));
+    put(&coll, sizeof(int));
+    put(&kv.second.wall, sizeof(double));
+    put(&migratable, 1);
+  }
 }
 
 
@@ -164,20 +227,71 @@ void TraceUtilizationBOC::ccsRequestSumDetailCompressed(CkCcsRequestMsg *m) {
 void TraceUtilizationBOC::ccsRequestSts(CkCcsRequestMsg *m) {
   char *text = NULL;
   size_t len = 0;
+#ifdef _WIN32
+  // Windows has no open_memstream: write to an anonymous temporary file
+  // (binary, so the bytes are the same) and read it back.
+  FILE *f = tmpfile();
+  if (f != NULL) {
+    traceWriteSTS(f, 0);
+    fprintf(f, "END\n");
+    long n = ftell(f);
+    if (n > 0 && (text = (char *)malloc((size_t)n)) != NULL) {
+      rewind(f);
+      len = fread(text, 1, (size_t)n, f);
+    }
+    fclose(f);
+  }
+#else
   FILE *f = open_memstream(&text, &len);
   if (f != NULL) {
     traceWriteSTS(f, 0);
     fprintf(f, "END\n");
     fclose(f);
   }
+#endif
   CcsSendDelayedReply(m->reply, (int)len, text != NULL ? text : "");
   free(text);
   delete m;
 }
 
 
+/** CCS handler "CkPerfObjLoads" (PE 0): every PE's per-object cumulative
+    execution time, in the layout LBManager's "LBObjLoads" uses, so a
+    client can read either. Reply: int32 numPes, then one record per PE
+    (see TraceUtilization::snapshotObjLoads). Requests that arrive while
+    a collection is in flight are answered from the same reduction. */
+void TraceObjLoadsBOC::ccsRequestObjLoads(CkCcsRequestMsg *m) {
+  objLoadsReplies.push_back(m->reply);
+  delete m;
+  if (!objLoadsCollecting) {
+    objLoadsCollecting = true;
+    thisProxy.collectObjLoads();
+  }
+}
+
+void TraceObjLoadsBOC::collectObjLoads() {
+  std::vector<char> buf;
+  CkpvAccess(_trace)->snapshotObjLoads(buf);
+  contribute(buf.size(), buf.data(), CkReduction::concat,
+             CkCallback(CkIndex_TraceObjLoadsBOC::objLoadsCollected(NULL), thisProxy[0]));
+}
+
+void TraceObjLoadsBOC::objLoadsCollected(CkReductionMsg *msg) {
+  int npes = CkNumPes();
+  std::vector<char> out(sizeof(int) + msg->getSize());
+  memcpy(out.data(), &npes, sizeof(int));
+  memcpy(out.data() + sizeof(int), msg->getData(), msg->getSize());
+  for (const CcsDelayedReply &r : objLoadsReplies)
+    CcsSendDelayedReply(r, (int)out.size(), out.data());
+  objLoadsReplies.clear();
+  objLoadsCollecting = false;
+  delete msg;
+}
+
+
 void TraceUtilizationBOC::collectSumDetailData() {
   TraceUtilization* t = CkpvAccess(_trace);
+  t->expireObjLoads();  // once a second, whether or not a client is polling
 
   // If we don't have enough data, just return and wait for the next invocation
   if (t->cpuTimeEntriesAvailable() - t->cpuTimeEntriesSentSoFar() < BIN_PER_SEC)

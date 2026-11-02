@@ -604,10 +604,11 @@ void LBManager::objLoadsRequest(const CcsDelayedReply& token)
 
 void LBManager::collectObjLoads()
 {
-  // Only a load balancer's constructor switches the instrumentation on;
-  // a program without one has it off. The first snapshot turns it on, so
-  // the client's differences are meaningful from the second one.
-  if (!lbdb_obj->StatsOn()) lbdb_obj->CollectStatsOn();
+  // Reports what the database holds and never switches the
+  // instrumentation on or off: that is the program's decision
+  // (LBTurnInstrumentOn/Off, +LBOff). A program linked -tracemode
+  // utilization also answers "CkPerfObjLoads", the same layout from the
+  // trace events, which does not depend on this switch.
   std::vector<char> buf;
   auto put = [&buf](const void* p, size_t n) {
     buf.insert(buf.end(), (const char*)p, (const char*)p + n);

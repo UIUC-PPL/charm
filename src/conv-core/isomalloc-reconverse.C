@@ -30,6 +30,15 @@ inside threads.C and isomalloc.C already.
 #include <stdio.h>
 #include <unistd.h>
 
+/* MSVC has no weak symbols. The linker's /alternatename gives the same
+   fallback: a reference to the first name binds to the second unless some
+   object in the link defines the first. */
+#if defined(_MSC_VER) && !defined(__clang__)
+#define CMI_HAS_WEAK 0
+#else
+#define CMI_HAS_WEAK 1
+#endif
+
 /****************** Down: Isomalloc as a thread-stack provider **************/
 
 /* Defined in isomalloc.C. Declared here rather than in memory-isomalloc.h
@@ -43,10 +52,22 @@ void CmiIsomallocInit(char ** argv);
    no-ops stand in otherwise, so that Isomalloc is usable for thread stacks
    even in a program whose heap is not intercepted; the real definitions
    override these whenever the memory module is present. */
+#if CMI_HAS_WEAK
 CLINKAGE __attribute__((weak)) void CmiMemoryIsomallocDisablePush(void) {}
 CLINKAGE __attribute__((weak)) void CmiMemoryIsomallocDisablePop(void) {}
 CLINKAGE __attribute__((weak)) void
 CmiMemoryIsomallocContextActivate(CmiIsomallocContext ctx) {}
+#else
+CLINKAGE void CmiMemoryIsomallocDisablePush(void);
+CLINKAGE void CmiMemoryIsomallocDisablePop(void);
+CLINKAGE void CmiMemoryIsomallocContextActivate(CmiIsomallocContext ctx);
+CLINKAGE void CmiMemoryIsomallocDisablePush_default(void) {}
+CLINKAGE void CmiMemoryIsomallocDisablePop_default(void) {}
+CLINKAGE void CmiMemoryIsomallocContextActivate_default(CmiIsomallocContext ctx) {}
+#pragma comment(linker, "/alternatename:CmiMemoryIsomallocDisablePush=CmiMemoryIsomallocDisablePush_default")
+#pragma comment(linker, "/alternatename:CmiMemoryIsomallocDisablePop=CmiMemoryIsomallocDisablePop_default")
+#pragma comment(linker, "/alternatename:CmiMemoryIsomallocContextActivate=CmiMemoryIsomallocContextActivate_default")
+#endif
 
 static int iso_enabled(void) { return CmiIsomallocEnabled(); }
 
@@ -132,7 +153,14 @@ static const CthIsomallocOps cmiIsomallocOps = {
    tested against null: Mach-O's linker does not accept an undefined weak
    reference that nothing defines. C++ linkage, to match memory.C's
    definition: Reconverse's converse.h does not declare this. */
+#if CMI_HAS_WEAK
 __attribute__((weak)) void CmiMemoryInit(char ** argv) {}
+#else
+void CmiMemoryInit(char ** argv);
+void CmiMemoryInit_default(char ** argv) {}
+/* The C++ names, as MSVC decorates them for x64. */
+#pragma comment(linker, "/alternatename:?CmiMemoryInit@@YAXPEAPEAD@Z=?CmiMemoryInit_default@@YAXPEAPEAD@Z")
+#endif
 
 /* stdio allocates a stream's buffer with malloc the first time the stream is
    written. With the isomalloc memory module linked, a process whose first
