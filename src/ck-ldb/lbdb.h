@@ -308,6 +308,28 @@ struct LDObjData {
 #if CMK_GPU
   size_t gpuPupSize;
 #endif
+  // Replication, declared by the application (CkMigratable::setLBReplica).
+  // replicaGroup < 0: the object cannot be replicated, which is the default
+  // and what every object that never declares has. Otherwise the objects
+  // sharing a group are copies of one logical object: replicaRank is this
+  // copy's index, replicaCount how many copies exist now, replicaMax how many
+  // the application can keep consistent, and replicaExtraBytes what one copy
+  // holds on its device beyond the object's own footprint (the state the
+  // copies exchange). A balancer that understands groups (ShedLB) may ask for
+  // a copy to be made or retired; see LBAction and CkMigratable::ckClone.
+  // replicaCostNode / replicaCostRemote: the load (same units as the declared
+  // load) one more copy adds to EACH copy per balancing interval for the
+  // exchange with that one peer, on the same node or across nodes; zero when
+  // the copies exchange nothing (serving). The balancer counts a copy as
+  // its share of the group's load plus its exchanges with every other copy.
+  int replicaGroup;
+  int replicaRank;
+  int replicaCount;
+  int replicaMax;
+  size_t replicaExtraBytes;
+  double replicaCostNode;
+  double replicaCostRemote;
+  inline bool replicable() const { return replicaGroup >= 0 && replicaMax > 1; }
   inline const LDOMHandle &omHandle() const { return handle.omhandle; }
   inline const LDOMid &omID() const { return handle.omhandle.id; }
   inline const CmiUInt8 &objID() const { return handle.id; }
@@ -405,6 +427,12 @@ struct LDCommData {
  * Callbacks from database to object managers
  */
 typedef void (*LDMigrateFn)(LDObjHandle handle, int dest);
+// A balancer's two replication decisions (LDObjData::replicaGroup): make a
+// copy of this object on dest with the given replica rank; retire this copy.
+typedef void (*LDCloneFn)(LDObjHandle handle, int dest, int rank);
+typedef void (*LDRetireFn)(LDObjHandle handle);
+typedef void (*LDCloneNoticeFn)(LDObjHandle handle, int dest, int rank);
+typedef void (*LDRetireNoticeFn)(LDObjHandle handle, int rank);
 typedef void (*LDStatsFn)(LDOMHandle h, int state);
 typedef void (*LDQueryEstLoadFn)(LDOMHandle h);
 typedef void (*LDMetaLBResumeWaitingCharesFn) (LDObjHandle handle, int lb_ideal_period);
@@ -412,6 +440,10 @@ typedef void (*LDMetaLBCallLBOnCharesFn) (LDObjHandle handle);
 
 struct LDCallbacks {
   LDMigrateFn migrate;
+  LDCloneFn clone;
+  LDRetireFn retire;
+  LDCloneNoticeFn cloneNotice;
+  LDRetireNoticeFn retireNotice;
   LDStatsFn setStats;
   LDQueryEstLoadFn queryEstLoad;
   LDMetaLBResumeWaitingCharesFn metaLBResumeWaitingChares;
@@ -504,6 +536,18 @@ inline void LDObjData::pup(PUP::er &p) {
   // rather than misreading the stream.
   if (_lb_version > 3) p|gpuCosts;
 #endif
+  // Version 8 adds the replication declaration; an older dump has none.
+  if (_lb_version > 7) {
+    p|replicaGroup; p|replicaRank; p|replicaCount; p|replicaMax; p|replicaExtraBytes;
+  } else if (p.isUnpacking()) {
+    replicaGroup = -1; replicaRank = 0; replicaCount = 1; replicaMax = 1; replicaExtraBytes = 0;
+  }
+  // Version 9 adds the copy's recurring exchange cost; an older dump has none.
+  if (_lb_version > 8) {
+    p|replicaCostNode; p|replicaCostRemote;
+  } else if (p.isUnpacking()) {
+    replicaCostNode = replicaCostRemote = 0.0;
+  }
 }
 
 inline bool LDCommDesc::operator==(const LDCommDesc &obj) const {

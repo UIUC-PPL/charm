@@ -139,12 +139,20 @@ public:
   inline MetaBalancer *getMetaBalancer(void) const {return the_metalb;}
   inline const LDObjHandle& getLdHandle() const{ return ldHandle; }
   static void staticMigrate(LDObjHandle h, int dest);
+  // The balancer's replication decisions (LDCallbacks::clone / retire),
+  // forwarded to CkMigratable::ckClone / ckRetire of the element(s) here.
+  static void staticClone(LDObjHandle h, int dest, int rank);
+  static void staticRetire(LDObjHandle h);
+  static void staticCloneNotice(LDObjHandle h, int dest, int rank);
+  static void staticRetireNotice(LDObjHandle h, int rank);
   static void staticMetaLBResumeWaitingChares(LDObjHandle h, int lb_ideal_period);
   static void staticMetaLBCallLBOnChares(LDObjHandle h);
   void recvMigrate(int dest);
   void setMigratable(int migratable);	/// set migratable
   void setPupSize(size_t obj_pup_size);
   void setGPUPupSize(size_t obj_gpu_pup_size);
+  void setObjReplica(int group, int rank, int count, int maxCount, size_t extraBytes,
+                     double costNode = 0.0, double costRemote = 0.0);
   void AsyncMigrate(bool use);
   bool isAsyncMigrate()   { return asyncMigrate; }
   void ReadyMigrate(bool ready) { readyMigrate = ready; } ///called from user

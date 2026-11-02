@@ -747,6 +747,9 @@ private:
   // registration cache retire receive-side entries when the element migrates.
   friend CkLocRec* CkFindDeviceRecvElement(CkGroupID aid, CmiUInt8 id);
   friend void _deferredMigrateHandler(void* arg);
+  // The balancer's replication decisions reach the element(s) at a location
+  // through callMethod (CkLocRec::staticClone / staticRetire).
+  friend class CkLocRec;
 
   // Call this member function on each element of this location:
   typedef void (CkMigratable::*CkMigratable_voidfn_t)(void);

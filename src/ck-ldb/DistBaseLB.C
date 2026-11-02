@@ -454,6 +454,8 @@ void DistBaseLB::BroadcastSingleLocationUpdate(const LDObjHandle& h, int to_pe) 
   msg->moves[0].from_pe = CkMyPe();
   msg->moves[0].to_pe = to_pe;
   msg->moves[0].async_arrival = 0;
+  msg->moves[0].kind = LB_DECISION_MOVE;
+  msg->moves[0].rank = 0;
   thisProxy.ReceiveLocationUpdate(msg);
 }
 

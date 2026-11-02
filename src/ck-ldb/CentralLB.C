@@ -1135,6 +1135,11 @@ void CentralLB::ApplyDecision() {
       CkPrintf("CharmLB> memory contract: executing this step's %d migrations "
                "in %d batches\n", nMoves, nBatches);
       std::vector<int> savedTo = statsData->to_proc;
+      // Replication decisions stage nothing and the application executes
+      // them once the step has resumed, so they ride the last batch only.
+      std::vector<LBAction> savedClones, savedRetires;
+      savedClones.swap(statsData->clones);
+      savedRetires.swap(statsData->retires);
       lbBatchMsgs.clear();
       for (int k = 0; k < nBatches; k++) {
         for (int i = 0; i < (int)statsData->objData.size(); i++)
@@ -1142,6 +1147,10 @@ void CentralLB::ApplyDecision() {
             statsData->to_proc[i] = statsData->from_proc[i];
           else
             statsData->to_proc[i] = savedTo[i];
+        if (k == nBatches - 1) {
+          statsData->clones = savedClones;
+          statsData->retires = savedRetires;
+        }
         LBMigrateMsg* bm = createMigrateMsg(statsData);
         bm->lb_batch = k;
         bm->lb_nbatches = nBatches;
@@ -1239,6 +1248,7 @@ void CentralLB::InitiateScatter(LBMigrateMsg *msg) {
     LBScatterMsg(middlePe, CkNumPes() - 1);
   leftMsg->lb_batch = msg->lb_batch;
   leftMsg->lb_nbatches = msg->lb_nbatches;
+  leftMsg->totalDecisions = rightMsg->totalDecisions = msg->n_moves;
   leftMsg->next_lb = msg->next_lb;
   rightMsg->lb_batch = msg->lb_batch;
   rightMsg->lb_nbatches = msg->lb_nbatches;
@@ -1251,8 +1261,12 @@ void CentralLB::InitiateScatter(LBMigrateMsg *msg) {
 
   for (int i = 0; i < msg->n_moves; i++) {
     MigrateInfo* item = (MigrateInfo*) &msg->moves[i];
-    if (item->async_arrival) futureTally[item->to_pe]++;
-    else migrateTally[item->to_pe]++;
+    // Replication decisions are executed by the application and never
+    // arrive through immigrate, so no PE expects them.
+    if (item->isMove()) {
+      if (item->async_arrival) futureTally[item->to_pe]++;
+      else migrateTally[item->to_pe]++;
+    }
     if (item->from_pe < middlePe) {
       leftMsg->moves[leftMsg->numMigrates++] = *item;
     }
@@ -1302,6 +1316,7 @@ void CentralLB::ScatterMigrationResults(LBScatterMsg *msg) {
         msgCopy->lb_batch = msg->lb_batch;
         msgCopy->lb_nbatches = msg->lb_nbatches;
         msgCopy->next_lb = msg->next_lb;
+        msgCopy->totalDecisions = msg->totalDecisions;
         msgCopy->numMigrates = msg->numMigrates;
         memcpy(msgCopy->numMigratesPerPe, msg->numMigratesPerPe,
                numPesInSpan * sizeof(int));
@@ -1327,6 +1342,7 @@ void CentralLB::ScatterMigrationResults(LBScatterMsg *msg) {
       rightMsg->lb_batch = leftMsg->lb_batch;
       rightMsg->lb_nbatches = leftMsg->lb_nbatches;
       rightMsg->next_lb = leftMsg->next_lb;
+      rightMsg->totalDecisions = leftMsg->totalDecisions;
       leftMsg->numMigrates = 0;
       leftMsg->lastPeInSpan = middlePe - 1;
       for (int i = 0; i < numMigrates; i++) {
@@ -1514,10 +1530,24 @@ void CentralLB::ProcessMigrationDecision() {
   migrates_expected = m->numMigratesPerPe[myIdx];
   future_migrates_expected = m->numFutureMigratesPerPe[myIdx];
   cur_ld_balancer = m->next_lb;
+  lbmgr->SetLastRoundDecisions(m->totalDecisions);
 
   for(int i = 0; i < m->numMigrates; i++) {
     MigrateDecision& move = m->moves[i];
     const int me = CkMyPe();
+    if (!move.isMove()) {
+      // A replication decision: handed to the object at once; the
+      // application chooses when to act on it (CkMigratable::ckClone).
+      if (move.fromPe == me) {
+        LDObjHandle h;
+        if (lbmgr->LiveObjHandle(move.dbIndex, move.id, h))
+          executeReplicaDecision(h, move.kind, move.toPe, move.rank);
+        else if (_lb_args.debug() > 0)
+          CkPrintf("[%d] CharmLB> replication decision for object %llu dropped: the object is gone\n",
+                   CkMyPe(), (unsigned long long)move.id);
+      }
+      continue;
+    }
     if (move.fromPe == me) {
       if (move.toPe == me) {
         CkAbort("[%d] Error, attempting to migrate from myself to myself\n",
@@ -1543,6 +1573,31 @@ void CentralLB::ProcessMigrationDecision() {
 #endif
 }
 
+// A Clone / Retire record addressed to this PE (CentralLB.h). The database
+// checks that the handle still names the object the strategy planned for;
+// the object itself decides when to act (CkMigratable::ckClone / ckRetire),
+// so nothing here waits and nothing is counted as an expected arrival.
+void CentralLB::executeReplicaDecision(const LDObjHandle& h, unsigned char kind, int toPe, int rank)
+{
+#if CMK_LBDB_ON
+  int delivered = 0;
+  static const char* const names[] = {"move", "clone", "retire", "clone notice", "retire notice"};
+  const char* name = kind <= LB_DECISION_RETIRE_NOTICE ? names[kind] : "decision";
+  if (kind == LB_DECISION_CLONE) delivered = lbmgr->Clone(h, toPe, rank);
+  else if (kind == LB_DECISION_RETIRE) delivered = lbmgr->Retire(h);
+  else if (kind == LB_DECISION_CLONE_NOTICE) delivered = lbmgr->CloneNotice(h, toPe, rank);
+  else if (kind == LB_DECISION_RETIRE_NOTICE) delivered = lbmgr->RetireNotice(h, rank);
+  if (_lb_args.debug() > 0) {
+    if (!delivered)
+      CkPrintf("[%d] CharmLB> %s of object %llu dropped: the object is gone\n", CkMyPe(), name,
+               (unsigned long long)h.id);
+    else
+      CkPrintf("[%d] CharmLB> %s for object %llu (PE %d, replica %d)\n", CkMyPe(), name,
+               (unsigned long long)h.id, toPe, rank);
+  }
+#endif
+}
+
 void CentralLB::ProcessReceiveMigration()
 {
   // CmiPrintf("[%d] ProcessReceiveMigration\n", CkMyPe());
@@ -1561,10 +1616,17 @@ void CentralLB::ProcessReceiveMigration()
   CmiAssert(migrates_expected <= 0 || migrates_completed == migrates_expected);
   migrates_expected = 0;
   future_migrates_expected = 0;
+  lbmgr->SetLastRoundDecisions(m->n_moves);
   // CmiPrintf("[%d] ProcessReceiveMigration: n_moves=%d\n", CkMyPe(), m->n_moves);
   for(i=0; i < m->n_moves; i++) {
     MigrateInfo& move = m->moves[i];
     const int me = CkMyPe();
+    if (!move.isMove()) {
+      // A replication decision: handed to the object at once; the
+      // application chooses when to act on it (CkMigratable::ckClone).
+      if (move.from_pe == me) executeReplicaDecision(move.obj, move.kind, move.to_pe, move.rank);
+      continue;
+    }
     if (move.from_pe == me && move.to_pe != me) {
 #if CMK_DRONE_MODE
       int to_pe_rank0 = CMK_RANK_0(move.to_pe);
@@ -1945,7 +2007,20 @@ LBMigrateMsg* CentralLB::strategyFinish(LDStats* stats)
       m.toPe = &stats->to_proc[i];
       cvMoves.push_back(m);
     }
-    ContractVerifier::verifyAndRepair(stats, cvMoves);
+    ContractVerifier::verifyAndRepair(stats, cvMoves, 0.95, nullptr, &stats->clones);
+    // The notices of a clone the verifier refused go with it (a notice names
+    // the clone's rank; the group is the object's).
+    {
+      std::vector<LBAction> kept;
+      for (const LBAction& n : stats->cloneNotices) {
+        const int g = stats->objData[n.obj].replicaGroup;
+        bool live = false;
+        for (const LBAction& c : stats->clones)
+          if (stats->objData[c.obj].replicaGroup == g && c.rank == n.rank) live = true;
+        if (live) kept.push_back(n);
+      }
+      stats->cloneNotices.swap(kept);
+    }
   }
 #endif
 
@@ -2013,7 +2088,8 @@ void CentralLB::work(LDStats* stats)
   stats->print();
 }
 
-// generate migrate message from stats->from_proc and to_proc
+// generate migrate message from stats->from_proc and to_proc, followed by
+// the strategy's replication decisions (stats->clones / retires)
 LBMigrateMsg * CentralLB::createMigrateMsg(LDStats* stats)
 {
   int i;
@@ -2032,6 +2108,41 @@ LBMigrateMsg * CentralLB::createMigrateMsg(LDStats* stats)
       migrateMe->async_arrival = objData.asyncArrival;
       migrateInfo.push_back(migrateMe);
     }
+  }
+  for (const LBAction& a : stats->clones) {
+    MigrateInfo *rec = new MigrateInfo;
+    rec->obj = stats->objData[a.obj].handle;
+    rec->from_pe = a.fromPe;
+    rec->to_pe = a.toPe;
+    rec->kind = LB_DECISION_CLONE;
+    rec->rank = a.rank;
+    migrateInfo.push_back(rec);
+  }
+  for (const LBAction& a : stats->retires) {
+    MigrateInfo *rec = new MigrateInfo;
+    rec->obj = stats->objData[a.obj].handle;
+    rec->from_pe = a.fromPe;
+    rec->to_pe = a.fromPe;
+    rec->kind = LB_DECISION_RETIRE;
+    migrateInfo.push_back(rec);
+  }
+  for (const LBAction& a : stats->cloneNotices) {
+    MigrateInfo *rec = new MigrateInfo;
+    rec->obj = stats->objData[a.obj].handle;
+    rec->from_pe = a.fromPe;
+    rec->to_pe = a.toPe;
+    rec->kind = LB_DECISION_CLONE_NOTICE;
+    rec->rank = a.rank;
+    migrateInfo.push_back(rec);
+  }
+  for (const LBAction& a : stats->retireNotices) {
+    MigrateInfo *rec = new MigrateInfo;
+    rec->obj = stats->objData[a.obj].handle;
+    rec->from_pe = a.fromPe;
+    rec->to_pe = a.fromPe;
+    rec->kind = LB_DECISION_RETIRE_NOTICE;
+    rec->rank = a.rank;
+    migrateInfo.push_back(rec);
   }
 
   int migrate_count=migrateInfo.size();
@@ -2252,6 +2363,7 @@ void getPredictedLoadWithMsg(BaseLB::LDStats* stats, int count,
  	// update to_proc according to migration msgs
 	for(int i = 0; i < msg->n_moves; i++) {
 	  MigrateInfo &mInfo = msg->moves[i];
+	  if (!mInfo.isMove()) continue;   // a clone or retire changes no assignment
 	  int idx = stats->getHash(mInfo.obj.objID(), mInfo.obj.omID());
 	  CmiAssert(idx != -1);
           stats->to_proc[idx] = mInfo.to_pe;

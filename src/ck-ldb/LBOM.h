@@ -35,6 +35,10 @@ private:
 
   void DepositHandle(LDOMHandle _h) { myhandle = _h; };
   void Migrate(LDObjHandle _h, int dest) { callbacks.migrate(_h,dest); };
+  void Clone(LDObjHandle _h, int dest, int rank) { callbacks.clone(_h, dest, rank); };
+  void Retire(LDObjHandle _h) { callbacks.retire(_h); };
+  void CloneNotice(LDObjHandle _h, int dest, int rank) { callbacks.cloneNotice(_h, dest, rank); };
+  void RetireNotice(LDObjHandle _h, int rank) { callbacks.retireNotice(_h, rank); };
 #if CMK_LBDB_ON
   void MetaLBResumeWaitingChares(LDObjHandle _h, int lb_ideal_period) {
     callbacks.metaLBResumeWaitingChares(_h, lb_ideal_period);

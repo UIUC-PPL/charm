@@ -1,0 +1,45 @@
+mainmodule replica_test {
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Worker workers;
+  readonly int nWorkers;
+  readonly int nSteps;
+  readonly int lbPeriod;
+  readonly int nItems;
+  readonly int repMax;
+  readonly double unitMs;
+
+  mainchare Main {
+    entry Main(CkArgMsg* m);
+    entry void cloned(int w, int step, int pe);
+    entry void retired(int w, int step, int pe);
+    entry void done(int w, double acc, int steps);
+  };
+
+  // (w, r): copy r of worker w. Created as (w, 0); (w, 1) is inserted when the
+  // balancer asks for a copy and destroyed when it retires it.
+  array [2D] Worker {
+    entry Worker();
+    entry void start();
+    entry void resumed();
+    // The other copy's partial for step ref; retiring: its last step.
+    entry void partial(int ref, double v, int retiring);
+    // A new copy's state from the copy that was cloned.
+    entry void takeState(int step, double acc);
+    entry void die();
+
+    entry void run() {
+      while (step < nSteps) {
+        serial { beginStep(); }
+        if (atLB) {
+          when resumed() serial { atLB = false; }
+        }
+        serial { compute(); }
+        if (replicated) {
+          when partial[step](int ref, double v, int retiring) serial { notePeer(v, retiring); }
+        }
+        serial { endStep(); }
+      }
+      serial { finish(); }
+    };
+  };
+};

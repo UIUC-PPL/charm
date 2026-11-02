@@ -17,7 +17,9 @@ using json = nlohmann::json;
 
 // 4 adds GpuObjectEpochCosts to LDObjData and GpuDeviceDescriptor to ProcStats.
 // 5 adds the device pool's arena quantum and the IPC slot budget to ProcStats.
-#define LB_FORMAT_VERSION 7
+// 8 adds the replication declaration (replicaGroup ...) to LDObjData.
+// 9 adds a copy's recurring exchange cost (replicaCostNode / replicaCostRemote).
+#define LB_FORMAT_VERSION 9
 
 #define LB_MANAGER_VERSION 1
 
@@ -460,6 +462,12 @@ class LBManager : public CBase_LBManager
     return lbdb_obj->RegisterOM(userID, userptr, cb);
   }
   int Migrate(LDObjHandle h, int dest) { return lbdb_obj->Migrate(h, dest); }
+  // Replication decisions (see LDObjData::replicaGroup); 0 when the handle no
+  // longer names the object the decision was made for.
+  int Clone(LDObjHandle h, int dest, int rank) { return lbdb_obj->Clone(h, dest, rank); }
+  int Retire(LDObjHandle h) { return lbdb_obj->Retire(h); }
+  int CloneNotice(LDObjHandle h, int dest, int rank) { return lbdb_obj->CloneNotice(h, dest, rank); }
+  int RetireNotice(LDObjHandle h, int rank) { return lbdb_obj->RetireNotice(h, rank); }
 
   // ---- Migration move ledger --------------------------------------------
   // One entry per move this PE must execute in the current balancer step,
@@ -571,6 +579,16 @@ class LBManager : public CBase_LBManager
   // moved it; see LDObjData::prevPe.
   void SetObjPrev(LDObjHandle h, int pe, int stepNo) { lbdb_obj->ObjPrev(h, pe, stepNo); }
   void GetObjPrev(LDObjHandle h, int& pe, int& stepNo) { lbdb_obj->GetObjPrev(h, pe, stepNo); }
+  // Replication declaration; see LDObjData::replicaGroup.
+  void SetObjReplica(LDObjHandle h, int group, int rank, int count, int maxCount, size_t extraBytes,
+                     double costNode = 0.0, double costRemote = 0.0)
+  {
+    lbdb_obj->ObjReplica(h, group, rank, count, maxCount, extraBytes, costNode, costRemote);
+  }
+  void GetObjReplica(LDObjHandle h, int& group, int& rank, int& count, int& maxCount, size_t& extraBytes)
+  {
+    lbdb_obj->GetObjReplica(h, group, rank, count, maxCount, extraBytes);
+  }
   void* GetObjUserData(LDObjHandle& h) { return lbdb_obj->GetObjUserData(h); }
   void MetaLBCallLBOnChares() { lbdb_obj->MetaLBCallLBOnChares(); }
   void MetaLBResumeWaitingChares(int lb_period)
@@ -579,6 +597,7 @@ class LBManager : public CBase_LBManager
   }
   void ClearLoads(void) { lbdb_obj->ClearLoads(); }
   const LDObjHandle& GetObjHandle(int idx) { return lbdb_obj->GetObjHandle(idx); }
+  bool LiveObjHandle(int idx, CmiUInt8 id, LDObjHandle& h) { return lbdb_obj->LiveObjHandle(idx, id, h); }
   void IdleTime(LBRealType* walltime) { lbdb_obj->IdleTime(walltime); }
   void TotalTime(LBRealType* walltime, LBRealType* cputime)
   {
@@ -670,6 +689,12 @@ class LBManager : public CBase_LBManager
   int AddMigrationDoneFn(std::function<void()> fn);
   void RemoveMigrationDoneFn(int handle);
   void MigrationDone();
+  // How many decisions (moves, copies, retirements, job-wide) the last
+  // balancing round made, known on every PE before its MigrationDone callbacks
+  // run; -1 before the first round. An application that holds work back
+  // around a round for the sake of migrations can let it go when this is 0.
+  void SetLastRoundDecisions(int n) { lastRoundDecisions = n; }
+  int LastRoundDecisions() const { return lastRoundDecisions; }
 
  public:
   inline void TurnManualLBOn() { useBarrier = false; }
@@ -777,6 +802,7 @@ class LBManager : public CBase_LBManager
 
   std::vector<StartLBCB*> startLBFnList;
   std::vector<MigrationDoneCB*> migrationDoneCBList;
+  int lastRoundDecisions = -1;
 
  public:
   BaseLB** getLoadBalancers() { return loadbalancers.data(); }

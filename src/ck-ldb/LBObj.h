@@ -27,6 +27,13 @@ public:
 #if CMK_GPU
     data.gpuPupSize = 0;
 #endif
+    // Not replicable until the application declares it (setLBReplica).
+    data.replicaGroup = -1;
+    data.replicaRank = 0;
+    data.replicaCount = 1;
+    data.replicaMax = 1;
+    data.replicaExtraBytes = 0;
+    data.replicaCostNode = data.replicaCostRemote = 0.0;
     Clear();
     localUserData = usr_ptr;
   }
@@ -211,6 +218,27 @@ public:
   {
     pe = data.prevPe;
     stepNo = data.prevStep;
+  }
+
+  // Replication declaration; see LDObjData::replicaGroup.
+  inline void setReplica(int group, int rank, int count, int maxCount, size_t extraBytes,
+                         double costNode = 0.0, double costRemote = 0.0)
+  {
+    data.replicaGroup = group;
+    data.replicaRank = rank;
+    data.replicaCount = count;
+    data.replicaMax = maxCount;
+    data.replicaExtraBytes = extraBytes;
+    data.replicaCostNode = costNode;
+    data.replicaCostRemote = costRemote;
+  }
+  inline void getReplica(int& group, int& rank, int& count, int& maxCount, size_t& extraBytes) const
+  {
+    group = data.replicaGroup;
+    rank = data.replicaRank;
+    count = data.replicaCount;
+    maxCount = data.replicaMax;
+    extraBytes = data.replicaExtraBytes;
   }
 
   inline void setGPUTiming(LBRealType gputime)

@@ -280,7 +280,12 @@ void LBSimulation::PrintDecisions(LBMigrateMsg *m, char *simFileName,
   fprintf(f, "%d %d\n", peCount, m->n_moves); // header
   for (int i=0; i<m->n_moves; i++) {
     fprintf(f, "%" PRIu64 " ", m->moves[i].obj.id);
-    fprintf(f, "%d\n",m->moves[i].to_pe);
+    if (m->moves[i].kind == LB_DECISION_CLONE)
+      fprintf(f, "%d clone %d\n", m->moves[i].to_pe, m->moves[i].rank);
+    else if (m->moves[i].kind == LB_DECISION_RETIRE)
+      fprintf(f, "%d retire\n", m->moves[i].from_pe);
+    else
+      fprintf(f, "%d\n",m->moves[i].to_pe);
   }
   fclose(f);
 }

@@ -404,6 +404,58 @@ int LBDatabase::Migrate(LDObjHandle h, int dest)
   return 1;
 }
 
+// The slot an object's handle names is reused through the free list once the
+// object dies (RegisterObj), so a decision planned from older statistics can
+// name a slot that now holds a different object. Migrate above tolerates only
+// the empty slot; a replication decision executed on the wrong object would
+// copy or destroy it, so both are checked against the id the handle carries.
+LBObj* LBDatabase::replicaTarget(const LDObjHandle& h, const char* what) const
+{
+  if (h.handle < 0 || (size_t)h.handle >= objs.size())
+    CmiAbort("[%d] LBDB::%s: handle %d out of range 0-%zu\n", CkMyPe(), what, h.handle, objs.size());
+  LBObj* obj = objs[h.handle].obj;
+  if (obj == nullptr || obj->ObjData().handle.id != h.id)
+  {
+    if (_lb_args.debug() > 0)
+      CkPrintf("[%d] LBDB::%s: handle %d no longer names object %llu; decision dropped\n",
+               CkMyPe(), what, h.handle, (unsigned long long)h.id);
+    return nullptr;
+  }
+  return obj;
+}
+
+int LBDatabase::Clone(LDObjHandle h, int dest, int rank)
+{
+  LBObj* obj = replicaTarget(h, "Clone");
+  if (obj == nullptr) return 0;
+  oms[obj->parentOM().handle]->Clone(h, dest, rank);
+  return 1;
+}
+
+int LBDatabase::Retire(LDObjHandle h)
+{
+  LBObj* obj = replicaTarget(h, "Retire");
+  if (obj == nullptr) return 0;
+  oms[obj->parentOM().handle]->Retire(h);
+  return 1;
+}
+
+int LBDatabase::CloneNotice(LDObjHandle h, int dest, int rank)
+{
+  LBObj* obj = replicaTarget(h, "CloneNotice");
+  if (obj == nullptr) return 0;
+  oms[obj->parentOM().handle]->CloneNotice(h, dest, rank);
+  return 1;
+}
+
+int LBDatabase::RetireNotice(LDObjHandle h, int rank)
+{
+  LBObj* obj = replicaTarget(h, "RetireNotice");
+  if (obj == nullptr) return 0;
+  oms[obj->parentOM().handle]->RetireNotice(h, rank);
+  return 1;
+}
+
 void LBDatabase::MetaLBResumeWaitingChares(int lb_ideal_period) {
 #if CMK_LBDB_ON
   for (int i = 0; i < objs.size(); i++) {

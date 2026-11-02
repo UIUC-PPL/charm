@@ -2687,6 +2687,21 @@ infrastructure:
   Charm++, so there is no need to separately get this
   dependence. (``+balancer MetisLB``)
 
+- **ShedLB**: Threshold refinement that minimises the bytes migrated:
+  every bin above :math:`(1 + \epsilon)` times the mean load sheds, one
+  object at a time, the object that clears the most load per byte and that
+  some other bin can take while staying under the threshold; nothing else
+  is touched. Under CUDA a bin is a GPU and the balanced quantity is device
+  time; otherwise a bin is a PE and the quantity is host time. It is the
+  balancer for objects with large device state whose loads differ widely
+  (an expert of a mixture-of-experts layer). :math:`\epsilon` is
+  ``+LBShedEps`` (default 0.10); set it to the rate at which load drifts
+  between balancing steps, not as tight as possible. An object heavier
+  than the threshold cannot be placed anywhere; if the application declared
+  it replicable (``setLBReplica`` below) ShedLB asks for a copy of it
+  instead, and takes the copy back once the object is light again.
+  (``+balancer ShedLB``, or ``-balancer ShedLB`` at link time)
+
 - **ScotchLB**: Uses the `SCOTCH
   <http://www.labri.fr/perso/pelegrin/scotch/>`__ library for
   partitioning the object communication graph, while also taking
@@ -3148,6 +3163,38 @@ to configure the load balancer, etc. These functions are:
    element. This function can be called in an array element constructor
    to tell the load balancer whether this object is migratable or
    not [7]_.
+
+-  **setLBReplica(int group, int rank, int count, int maxCount, size_t
+   extraBytes, double costNode = 0, double costRemote = 0)**: is a member
+   function of array element. It declares the element one of ``count``
+   copies of logical object ``group`` (its copy index ``rank``), of which
+   the application can keep up to ``maxCount`` consistent; ``extraBytes``
+   is what one copy holds on its device beyond the element's own state
+   (the buffers the copies exchange); ``costNode`` and ``costRemote`` are
+   the load, in the units of the declared load and over the same
+   interval, that one more copy adds to each copy for its exchange with
+   that one peer, on the same node or on another (zero when the copies
+   exchange nothing). The balancer prices a copy as its share of the
+   group's load plus its exchanges with every other copy, and makes one
+   only where that lowers the fullest processor's load by more than its
+   tolerance. Call it before every ``AtSync``, like ``setObjGPUTime``. A balancer that
+   understands replication (ShedLB) may then ask for a copy with
+   **ckClone(int toPe, int rank)** and take one back with **ckRetire()**,
+   two virtual methods of the array element; the other copies of the group
+   get **ckCloneNotice(int toPe, int rank)** or **ckRetireNotice(int
+   rank)** (virtuals that do nothing unless overridden) before the round
+   releases them, so every copy can act in the same step. The runtime decides when,
+   which object and where; the application decides whether an object type
+   can be replicated and implements the copy: ``ckClone`` inserts the new
+   element (a second array index, so the array needs ``setBounds`` room
+   for it) and sends it the state, and the copies keep themselves
+   consistent; ``ckRetire`` ends a copy after its last step. Both are
+   delivered as soon as the decision reaches the PE, which may be at any
+   point of the element's own step, and the element acts at a point of its
+   choosing; the runtime moves no state for them and does not count them
+   as migrations. An element that never calls ``setLBReplica`` is never
+   replicated. The example ``examples/charm++/cuda/gpudirect/moe`` and the
+   test ``tests/charm++/load_balancing/replica_test`` implement both.
 
 -  **double LBManager::GetLBPeriod()**: returns the current load
    balancing period when using *periodic load balancing mode*. Returns

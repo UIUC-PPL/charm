@@ -35,6 +35,7 @@ entry, and is planned once there is more than one chapter.
 | Chare arrays: creation, insertion, migration, sections | not yet written |
 | Groups and nodegroups | not yet written |
 | Load balancing: the LB framework and TreeLB | not yet written |
+| [Replication as a load-balancing decision](lb-multiplicity.md) | written 2026-10-31 (the replica declaration, clone/retire decision kinds, their delivery and memory accounting, ShedLB's group pass) |
 | Checkpoint, restart, shrink/expand | not yet written |
 | The reconverse layer: what Charm++ asks of the machine layer | not yet written |
 

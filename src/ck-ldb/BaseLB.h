@@ -13,6 +13,28 @@
 #define PER_MESSAGE_RECV_OVERHEAD  	    0.0
 #define PER_BYTE_RECV_OVERHEAD      	    0.0
 
+/// What a decision record asks of its object. A Move is a migration from
+/// from_pe to to_pe. A Clone asks the object on from_pe to make a copy of
+/// itself on to_pe with replica rank `rank`; a Retire asks the copy on
+/// from_pe to go away. Both apply only to objects whose application declared
+/// them replicable (LDObjData::replicaGroup) and are executed by the
+/// application through CkMigratable::ckClone / ckRetire; the balancer never
+/// counts them as arrivals.
+// A notice goes to every other copy of the group a clone or retire changes, so all copies act in the
+// same step (the application partitions its work by copy count).
+enum LBDecisionKind : unsigned char { LB_DECISION_MOVE = 0, LB_DECISION_CLONE = 1, LB_DECISION_RETIRE = 2,
+                                      LB_DECISION_CLONE_NOTICE = 3, LB_DECISION_RETIRE_NOTICE = 4 };
+
+/// A replication decision a strategy adds beside its to_proc assignment
+/// (LDStats::clones / retires): obj is the stats index of the copy it
+/// addresses -- the source of a clone, the copy a retire removes.
+struct LBAction {
+  int obj;
+  int fromPe;
+  int toPe;   // the clone's destination; unused by a retire
+  int rank;   // the clone's replica rank; unused by a retire
+};
+
 /// Base class for all LB strategies.
 /**
   BaseLB is the base class for all LB strategy class.
@@ -138,6 +160,13 @@ public:
     std::vector<LDObjData> objData;	// LDObjData and LDCommData defined in lbdb.h
     std::vector<int> from_proc;	// current pe an object is on
     std::vector<int> to_proc;		// new pe you want the object to be on
+    // Replication decisions beside the assignment above (see LBAction). Only
+    // a strategy that understands replica groups fills them; createMigrateMsg
+    // turns them into Clone / Retire records after the moves.
+    std::vector<LBAction> clones;
+    std::vector<LBAction> retires;
+    std::vector<LBAction> cloneNotices;    // to the other copies: obj = the copy told, toPe/rank = the clone's
+    std::vector<LBAction> retireNotices;   // to the other copies: obj = the copy told, rank = the retired copy's
 
     std::vector<LDCommData> commData;	// communication data - edge list representation
 				// of the communication between objects
@@ -174,6 +203,10 @@ public:
       commData.clear();
       from_proc.clear();
       to_proc.clear();
+      clones.clear();
+      retires.clear();
+      cloneNotices.clear();
+      retireNotices.clear();
       deleteCommHash();
     }
     void clearBgLoad() {
@@ -210,14 +243,17 @@ public:
 };
 
 /// migration decision for an obj.
-struct MigrateInfo {  
+struct MigrateInfo {
     int index;   // object index in objData array
     LDObjHandle obj;
     int from_pe;
     int to_pe;
     int async_arrival;	    // if an object is available for immediate migrate
-    MigrateInfo():  async_arrival(0) {
+    unsigned char kind;     // LBDecisionKind
+    int rank;               // replica rank of the copy a Clone makes
+    MigrateInfo():  async_arrival(0), kind(LB_DECISION_MOVE), rank(0) {
     }
+    bool isMove() const { return kind == LB_DECISION_MOVE; }
 
     void pup(PUP::er &p) {
       p | index;
@@ -225,6 +261,8 @@ struct MigrateInfo {
       p | from_pe;
       p | to_pe;
       p | async_arrival;
+      p | kind;
+      p | rank;
     }
 };
 
@@ -236,12 +274,21 @@ struct MigrateDecision {
   // The destination counts the two kinds separately, so a decision message
   // that leaves it out cannot tell the destination what to expect.
   bool asyncArrival;
+  unsigned char kind;     // LBDecisionKind
+  int rank;
+  // The object's id, so a Clone / Retire can be checked against the slot
+  // dbIndex names on its PE (slots are reused when objects die).
+  CmiUInt8 id;
+  bool isMove() const { return kind == LB_DECISION_MOVE; }
 
   MigrateDecision &operator=(const MigrateInfo &mInfo) {
     dbIndex = mInfo.obj.handle;
     fromPe = mInfo.from_pe;
     toPe = mInfo.to_pe;
     asyncArrival = mInfo.async_arrival;
+    kind = mInfo.kind;
+    rank = mInfo.rank;
+    id = mInfo.obj.id;
 
     return *this;
   }
@@ -260,6 +307,8 @@ public:
   // The PE that runs the next centralized step, carried so the peer decision
   // path needs nothing from the broadcast it replaces.
   int next_lb;
+  // Decisions of the whole step, job-wide (LBManager::LastRoundDecisions).
+  int totalDecisions;
   // Arrivals the LB waits for, and arrivals it does not, per PE in the span.
   int *numMigratesPerPe;
   int *numFutureMigratesPerPe;

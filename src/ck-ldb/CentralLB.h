@@ -239,6 +239,9 @@ public:
 	virtual void changeFreq(int n);
   virtual LBMigrateMsg * createMigrateMsg(LDStats* stats);
   virtual LBMigrateMsg * extractMigrateMsg(LBMigrateMsg *m, int p);
+  // Hands a Clone / Retire record (LBDecisionKind) addressed to this PE to its
+  // object; see LDObjData::replicaGroup.
+  void executeReplicaDecision(const LDObjHandle& h, unsigned char kind, int toPe, int rank);
 
   // Not to be used -- maintained for legacy applications
   virtual LBMigrateMsg* Strategy(LDStats* stats, int nprocs) {

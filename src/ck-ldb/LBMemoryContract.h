@@ -362,6 +362,20 @@ public:
   void commit(int obj, int fromPe, int toPe) { apply(obj, fromPe, toPe, +1); }
   void rollback(int obj, int fromPe, int toPe) { apply(obj, fromPe, toPe, -1); }
 
+  // New device state of `bytes` appearing on toPe's device with no departure
+  // anywhere: a copy of an object (LDStats::clones). The copy lands in pool
+  // memory, so it draws on H_g like a migration arrival; nothing is staged.
+  bool feasibleArrival(size_t bytes, int toPe) const {
+    const int d = model_->deviceOfPe(toPe);
+    if (d < 0 || bytes == 0) return true;
+    return memAvail_[d] >= (long long)bytes;
+  }
+  void commitArrival(size_t bytes, int toPe) {
+    const int d = model_->deviceOfPe(toPe);
+    if (d < 0) return;
+    memAvail_[d] -= (long long)bytes;
+  }
+
   size_t memAvailOn(int dev) const {
     return memAvail_[dev] > 0 ? (size_t)memAvail_[dev] : 0;
   }
@@ -424,9 +438,24 @@ public:
     int* toPe;  // points into the strategy's decision storage, edited on refusal
   };
 
+  // The bytes a copy of object i adds to its destination device: what the
+  // object holds plus what one copy holds for the exchange between copies
+  // (LDObjData::replicaExtraBytes). When the object is not yet replicated
+  // its own device grows by the extra too (sourceExtra).
+  static size_t cloneBytes(const LBMemoryModel& model, const BaseLB::LDStats* stats, int i) {
+    return model.footprint(i) + stats->objData[i].replicaExtraBytes;
+  }
+  static size_t sourceExtra(const BaseLB::LDStats* stats, int i) {
+    const LDObjData& od = stats->objData[i];
+    return od.replicaCount <= 1 ? od.replicaExtraBytes : 0;
+  }
+
+  // `clones`, when given, are the strategy's copy decisions (LDStats::clones):
+  // arrivals with no departure. A refused clone is removed from the list.
   static int verifyAndRepair(BaseLB::LDStats* stats, std::vector<Move>& moves,
                              double headroom = 0.95,
-                             const LBMemoryTopology* topo = nullptr) {
+                             const LBMemoryTopology* topo = nullptr,
+                             std::vector<LBAction>* clones = nullptr) {
     LBMemoryModel model;
     model.build(stats, topo);
     const int D = model.numDevices();
@@ -435,7 +464,7 @@ public:
     ledger.init(&model, headroom, /*waveStaging=*/false);
 
     const bool dbg = (getenv("CHARM_DEBUG_MEMCONTRACT") != NULL);
-    int refused = 0;
+    int refused = 0, refusedClones = 0;
     if (dbg) model.print("[memcontract]");
 
     auto refuse = [&](Move& m, const char* why) {
@@ -446,8 +475,19 @@ public:
       refused++;
     };
 
+    // Arrivals are keyed so moves and clones sort together: key k < M is
+    // moves[k], key M + j is (*clones)[j].
+    const int M = (int)moves.size();
+    const int C = clones ? (int)clones->size() : 0;
+    std::vector<char> cloneDropped(C, 0);
+    auto isClone = [&](int key) { return key >= M; };
+    auto objOf = [&](int key) { return isClone(key) ? (*clones)[key - M].obj : moves[key].obj; };
+    auto bytesOf = [&](int key) {
+      return isClone(key) ? cloneBytes(model, stats, objOf(key)) : model.footprint(objOf(key));
+    };
+
     std::vector<long long> net(D, 0);
-    std::vector<std::vector<int>> arrivals(D);  // indices into moves
+    std::vector<std::vector<int>> arrivals(D);  // keys, see above
     for (size_t k = 0; k < moves.size(); k++) {
       Move& m = moves[k];
       if (*m.toPe == m.fromPe) continue;
@@ -464,23 +504,33 @@ public:
       net[s] -= f;
       arrivals[d].push_back((int)k);
     }
-    auto loadOf = [&](int k) {
-      const LDObjData& od = stats->objData[moves[k].obj];
+    for (int j = 0; j < C; j++) {
+      const LBAction& a = (*clones)[j];
+      const int s = model.deviceOfPe(a.fromPe), d = model.deviceOfPe(a.toPe);
+      if (d < 0) continue;
+      net[d] += (long long)cloneBytes(model, stats, a.obj);
+      if (s >= 0) net[s] += (long long)sourceExtra(stats, a.obj);
+      arrivals[d].push_back(M + j);
+    }
+    auto loadOf = [&](int key) {
+      const LDObjData& od = stats->objData[objOf(key)];
       double l = (double)od.wallTime;
 #if CMK_GPU
       l += (double)od.gpuTime + (double)od.driverTime;
 #endif
+      // A copy carries the group's load split one way further.
+      if (isClone(key)) l /= (double)(od.replicaCount + 1);
       return l > 0.0 ? l : 0.0;
     };
     for (int g = 0; g < D; g++)
       std::sort(arrivals[g].begin(), arrivals[g].end(), [&](int a, int b) {
-        const size_t fa = model.footprint(moves[a].obj), fb = model.footprint(moves[b].obj);
+        const size_t fa = bytesOf(a), fb = bytesOf(b);
         // load/footprint ascending, cross-multiplied so a move without a
         // footprint -- which refusing would free nothing for -- sorts last.
         const double da = loadOf(a) * (double)fb, db = loadOf(b) * (double)fa;
         if (da != db) return da < db;
         if (fa != fb) return fa > fb;
-        return moves[a].obj < moves[b].obj;
+        return objOf(a) < objOf(b);
       });
 
     std::vector<size_t> cursor(D, 0);
@@ -489,7 +539,24 @@ public:
       for (int g = 0; g < D; g++) {
         const long long H = (long long)ledger.memAvailOn(g);
         while (net[g] > H && cursor[g] < arrivals[g].size()) {
-          Move& m = moves[arrivals[g][cursor[g]++]];
+          const int key = arrivals[g][cursor[g]++];
+          if (isClone(key)) {
+            LBAction& a = (*clones)[key - M];
+            if (dbg)
+              CkPrintf("[%d] memcontract: refusing copy of obj %d (%zu bytes) onto pe %d: "
+                       "destination device would overfill\n",
+                       CkMyPe(), a.obj, cloneBytes(model, stats, a.obj), a.toPe);
+            cloneDropped[key - M] = 1;
+            refusedClones++;
+            net[g] -= (long long)cloneBytes(model, stats, a.obj);
+            const int s = model.deviceOfPe(a.fromPe);
+            if (s >= 0) {
+              net[s] -= (long long)sourceExtra(stats, a.obj);
+              if (s < g) again = true;
+            }
+            continue;
+          }
+          Move& m = moves[key];
           if (*m.toPe == m.fromPe) continue;
           const int s = model.deviceOfPe(m.fromPe);
           const long long f = (long long)model.footprint(m.obj);
@@ -500,10 +567,16 @@ public:
         }
       }
     }
-    if (refused)
-      CkPrintf("CharmLB> memory contract: refused %d of %zu move(s) that would "
-               "overfill a device\n", refused, moves.size());
-    return refused;
+    if (refusedClones) {
+      std::vector<LBAction> kept;
+      for (int j = 0; j < C; j++)
+        if (!cloneDropped[j]) kept.push_back((*clones)[j]);
+      clones->swap(kept);
+    }
+    if (refused || refusedClones)
+      CkPrintf("CharmLB> memory contract: refused %d of %zu move(s) and %d of %d copy(ies) "
+               "that would overfill a device\n", refused, moves.size(), refusedClones, C);
+    return refused + refusedClones;
   }
 };
 

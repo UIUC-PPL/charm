@@ -2202,6 +2202,18 @@ void CkMigratable::pup(PUP::er& p)
     if (p.isUnpacking())
       myRec->setObjPrev(prevPe, prevStep);
   }
+  // The replication declaration travels with the element and is declared
+  // again to the database of the PE it arrives on, like the position.
+  p | lbReplicaGroup;
+  p | lbReplicaRank;
+  p | lbReplicaCount;
+  p | lbReplicaMax;
+  p | lbReplicaExtraBytes;
+  p | lbReplicaCostNode;
+  p | lbReplicaCostRemote;
+  if (p.isUnpacking() && lbReplicaGroup >= 0)
+    myRec->setObjReplica(lbReplicaGroup, lbReplicaRank, lbReplicaCount, lbReplicaMax,
+                         lbReplicaExtraBytes, lbReplicaCostNode, lbReplicaCostRemote);
 #endif
 
   if (p.isUnpacking())
@@ -2210,6 +2222,18 @@ void CkMigratable::pup(PUP::er& p)
 
 void CkMigratable::ckDestroy(void) {}
 void CkMigratable::ckAboutToMigrate(void) {}
+void CkMigratable::ckClone(int toPe, int rank)
+{
+  if (lbReplicable())
+    CkAbort("the balancer asked for a copy of this element (replica %d on PE %d) but it does "
+            "not implement ckClone; setLBReplica declared it replicable", rank, toPe);
+}
+void CkMigratable::ckRetire(void)
+{
+  if (lbReplicable())
+    CkAbort("the balancer asked this element to retire a copy but it does not implement "
+            "ckRetire; setLBReplica declared it replicable");
+}
 
 #if CMK_LBDB_ON
 void CkMigratable::ckSuspendBarrierForDeferredDestroy()
@@ -2913,6 +2937,19 @@ void CkMigratable::setPupSize(size_t obj_pup_size) { myRec->setPupSize(obj_pup_s
 
 void CkMigratable::setGPUPupSize(size_t obj_gpu_pup_size) { myRec->setGPUPupSize(obj_gpu_pup_size); }
 
+void CkMigratable::setLBReplica(int group, int rank, int count, int maxCount, size_t extraBytes,
+                                double costNode, double costRemote)
+{
+  lbReplicaGroup = group;
+  lbReplicaRank = rank;
+  lbReplicaCount = count;
+  lbReplicaMax = maxCount;
+  lbReplicaExtraBytes = extraBytes;
+  lbReplicaCostNode = costNode;
+  lbReplicaCostRemote = costRemote;
+  myRec->setObjReplica(group, rank, count, maxCount, extraBytes, costNode, costRemote);
+}
+
 
 void CkMigratable::CkAddThreadListeners(CthThread tid, void* msg)
 {
@@ -3298,6 +3335,57 @@ void CkLocRec::staticMigrate(LDObjHandle h, int dest)
   CkLocRec* el = (CkLocRec*)(LBManager::Object()->GetObjUserData(h));
   DEBL((AA "Load balancer wants to migrate %s to %d\n" AB, idx2str(el->idx), dest));
   el->recvMigrate(dest);
+}
+
+// The balancer's replication decisions go straight to the element(s) at this
+// location; the element chooses when to act (CkMigratable::ckClone).
+struct CkLocCloneArgs { int toPe; int rank; };
+void CkMigratable::ckCloneFromDecision(void* data)
+{
+  const CkLocCloneArgs* a = (const CkLocCloneArgs*)data;
+  ckClone(a->toPe, a->rank);
+}
+void CkLocRec::staticClone(LDObjHandle h, int dest, int rank)
+{
+  CkLocRec* el = (CkLocRec*)(LBManager::Object()->GetObjUserData(h));
+  DEBL((AA "Load balancer wants a copy of %s on %d as replica %d\n" AB, idx2str(el->idx), dest, rank));
+  CkLocCloneArgs args = {dest, rank};
+  el->myLocMgr->callMethod(el, &CkMigratable::ckCloneFromDecision, (void*)&args);
+}
+void CkMigratable::ckCloneNoticeFromDecision(void* data)
+{
+  const CkLocCloneArgs* a = (const CkLocCloneArgs*)data;
+  ckCloneNotice(a->toPe, a->rank);
+}
+void CkMigratable::ckRetireNoticeFromDecision(void* data)
+{
+  const CkLocCloneArgs* a = (const CkLocCloneArgs*)data;
+  ckRetireNotice(a->rank);
+}
+void CkLocRec::staticCloneNotice(LDObjHandle h, int dest, int rank)
+{
+  CkLocRec* el = (CkLocRec*)(LBManager::Object()->GetObjUserData(h));
+  CkLocCloneArgs args = {dest, rank};
+  el->myLocMgr->callMethod(el, &CkMigratable::ckCloneNoticeFromDecision, (void*)&args);
+}
+void CkLocRec::staticRetireNotice(LDObjHandle h, int rank)
+{
+  CkLocRec* el = (CkLocRec*)(LBManager::Object()->GetObjUserData(h));
+  CkLocCloneArgs args = {-1, rank};
+  el->myLocMgr->callMethod(el, &CkMigratable::ckRetireNoticeFromDecision, (void*)&args);
+}
+void CkLocRec::staticRetire(LDObjHandle h)
+{
+  CkLocRec* el = (CkLocRec*)(LBManager::Object()->GetObjUserData(h));
+  DEBL((AA "Load balancer wants %s retired\n" AB, idx2str(el->idx)));
+  if (_lb_args.debug() > 1)
+    CkPrintf("[%d] CkLocRec: retire decision reaches element %s\n", CkMyPe(), idx2str(el->idx));
+  el->myLocMgr->callMethod(el, &CkMigratable::ckRetire);
+}
+void CkLocRec::setObjReplica(int group, int rank, int count, int maxCount, size_t extraBytes,
+                             double costNode, double costRemote)
+{
+  lbmgr->SetObjReplica(ldHandle, group, rank, count, maxCount, extraBytes, costNode, costRemote);
 }
 
 #if CMK_LBDB_ON
@@ -6723,6 +6811,10 @@ void CkLocMgr::initLB(CkGroupID lbmgrID_, CkGroupID metalbID_)
   myId.id = thisgroup;
   LDCallbacks myCallbacks;
   myCallbacks.migrate = (LDMigrateFn)CkLocRec::staticMigrate;
+  myCallbacks.clone = (LDCloneFn)CkLocRec::staticClone;
+  myCallbacks.retire = (LDRetireFn)CkLocRec::staticRetire;
+  myCallbacks.cloneNotice = (LDCloneNoticeFn)CkLocRec::staticCloneNotice;
+  myCallbacks.retireNotice = (LDRetireNoticeFn)CkLocRec::staticRetireNotice;
   myCallbacks.setStats = NULL;
   myCallbacks.queryEstLoad = NULL;
   myCallbacks.metaLBResumeWaitingChares =

@@ -180,6 +180,15 @@ public:
     LbObj(h)->getPrev(pe, stepNo);
   };
 
+  // Replication declaration; see LDObjData::replicaGroup.
+  inline void ObjReplica(LDObjHandle h, int group, int rank, int count, int maxCount, size_t extraBytes,
+                         double costNode = 0.0, double costRemote = 0.0) {
+    LbObj(h)->setReplica(group, rank, count, maxCount, extraBytes, costNode, costRemote);
+  };
+  inline void GetObjReplica(LDObjHandle h, int& group, int& rank, int& count, int& maxCount, size_t& extraBytes) {
+    LbObj(h)->getReplica(group, rank, count, maxCount, extraBytes);
+  };
+
   inline void* GetObjUserData(LDObjHandle &h) {
     return LbObj(h)->getLocalUserData();
   }
@@ -237,6 +246,17 @@ public:
 
   LDOMHandle RegisterOM(LDOMid userID, void *userptr, LDCallbacks cb);
   int Migrate(LDObjHandle h, int dest);
+  // The balancer's replication decisions, delivered to the object's manager
+  // (LDCallbacks::clone / retire). Return 1 when the object was found, 0 when
+  // the handle no longer names it (it died, or its slot was reused since the
+  // statistics the decision was planned from).
+  int Clone(LDObjHandle h, int dest, int rank);
+  int Retire(LDObjHandle h);
+  int CloneNotice(LDObjHandle h, int dest, int rank);
+  int RetireNotice(LDObjHandle h, int rank);
+private:
+  LBObj* replicaTarget(const LDObjHandle& h, const char* what) const;
+public:
   void UnregisterOM(LDOMHandle omh);
   void RegisteringObjects(LDOMHandle omh);
   void DoneRegisteringObjects(LDOMHandle omh);
@@ -305,6 +325,13 @@ public:
   };
   inline const LDObjHandle &GetObjHandle(int idx) {
     return LbObjIdx(idx)->GetLDObjHandle();
+  }
+  // The handle of the object in slot idx, when the slot still holds the
+  // object with this id (GetObjHandle dereferences an empty slot).
+  inline bool LiveObjHandle(int idx, CmiUInt8 id, LDObjHandle& h) const {
+    if (idx < 0 || (size_t)idx >= objs.size() || objs[idx].obj == nullptr) return false;
+    h = objs[idx].obj->GetLDObjHandle();
+    return h.id == id;
   }
   void CollectStatsOn(void);
   inline void CollectStatsOff(void) { TurnStatsOff(); };

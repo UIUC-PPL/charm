@@ -225,6 +225,16 @@ static void _groupLBMigrate(LDObjHandle h, int dest) {
   CkAbort("[%d] A group branch registered with ckRegisterWithLB never migrates, "
           "but a load balancer asked to move it to PE %d\n", CkMyPe(), dest);
 }
+static void _groupLBClone(LDObjHandle h, int dest, int rank) {
+  CkAbort("[%d] A group branch registered with ckRegisterWithLB cannot be replicated, "
+          "but a load balancer asked for a copy on PE %d\n", CkMyPe(), dest);
+}
+static void _groupLBRetire(LDObjHandle h) {
+  CkAbort("[%d] A group branch registered with ckRegisterWithLB cannot be retired "
+          "by a load balancer\n", CkMyPe());
+}
+static void _groupLBCloneNotice(LDObjHandle, int, int) {}
+static void _groupLBRetireNotice(LDObjHandle, int) {}
 static void _groupLBResumeWaitingChares(LDObjHandle, int) {}
 static void _groupLBCallLBOnChares(LDObjHandle) {}
 
@@ -250,6 +260,10 @@ void IrrGroup::ckRegisterWithLB(void) {
   omId.id = thisgroup;
   LDCallbacks cb;
   cb.migrate = _groupLBMigrate;
+  cb.clone = _groupLBClone;
+  cb.retire = _groupLBRetire;
+  cb.cloneNotice = _groupLBCloneNotice;
+  cb.retireNotice = _groupLBRetireNotice;
   cb.setStats = NULL;
   cb.queryEstLoad = NULL;
   cb.metaLBResumeWaitingChares = _groupLBResumeWaitingChares;

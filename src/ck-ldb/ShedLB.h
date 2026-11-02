@@ -38,10 +38,18 @@
  * deciding only which PE inside the group runs an object. Otherwise a bin is
  * a PE and the quantity is host time.
  *
- * eps is +LBShedEps, default 0.02. It cannot usefully go below the largest
- * object's share of the mean: with indivisible objects no assignment beats
- * the largest one, which is the regime where the answer is to split or
- * replicate the object rather than place it.
+ * eps is +LBShedEps, default 0.10 (LBManager.h says why). It cannot usefully
+ * go below the largest object's share of the mean: with indivisible objects
+ * no assignment beats the largest one.
+ *
+ * For objects the application has declared replicable (LDObjData::
+ * replicaGroup, CkMigratable::setLBReplica) that limit is lifted: before
+ * shedding, every group whose total load L_g exceeds T is asked for
+ * k = ceil(L_g / T) copies (up to its maximum), each carrying L_g / k, and a
+ * group whose load would fit in one fewer copy with margin gives one back.
+ * A copy costs the object's bytes at its destination like a move does, and
+ * copies of one group never share a bin. The decisions leave as LDStats::
+ * clones / retires and reach the object as ckClone / ckRetire.
 */
 
 #ifndef _SHED_LB_H_
