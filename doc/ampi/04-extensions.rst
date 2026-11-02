@@ -442,8 +442,9 @@ heaps return to the addresses they had, so the restart needs address
 space layout randomization off: on Linux, run it under
 ``setarch $(uname -m) -R``, placed in front of the program, which with
 ``srun`` or ``mpirun`` means inside the launch (``srun ... setarch
-$(uname -m) -R ./pgm +restart dir``; see the restarting section of the
-Charm++ manual).
+$(uname -m) -R ./pgm +restart dir``) and under the same stack size
+limit (``ulimit -s``) as the checkpoint; see the restarting section of
+the Charm++ manual.
 
 Checkpointing in memory allows applications to transparently tolerate
 failures online. The checkpointing scheme used here is a double

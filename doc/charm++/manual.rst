@@ -8602,7 +8602,11 @@ front of the program. A launcher that forks the processes itself
 (``lcrun``) passes the setting on, so there it may also go in front of
 the launcher; ``srun`` and ``mpirun`` start the tasks through their own
 daemons, which do not inherit it, so with them it goes inside the launch:
-``srun ... setarch $(uname -m) -R ./pgm +restart dir``. The checkpoint directory records
+``srun ... setarch $(uname -m) -R ./pgm +restart dir``. The restart
+must also run under the same stack size limit (``ulimit -s``) as the
+checkpoint: a limit above about 128 MB, or an unlimited one, changes
+where Linux loads the program and its libraries even with randomization
+off. The checkpoint directory records
 Isomalloc's address range in ``Isomalloc.dat``; a restart on a
 different number of processes or PEs reads it and uses the same range,
 and aborts with a message naming both ranges when that range is not
