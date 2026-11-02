@@ -20,19 +20,24 @@ Commits are counted with git in --src and in its contrib/reconverse checkout;
 a shallow clone with less than 90 days of history counts none and a warning
 says so.
 
-A block whose every line is an error path (error_path_lines below: a call that
-aborts, asserts or prints, possibly over several lines, or only braces, else,
-break and a bare return) is left out and counted in the summary.
+A block that is only an error path is left out and counted in the summary: a
+block in which some line is a call that aborts, asserts or prints (possibly
+over several lines) and every other line is only braces, else, break or a bare
+return (error_path_lines below). A block of only a bare return or break is a
+normal early exit and stays in. Lines outside every function (macro bodies,
+which llvm-cov attributes to the #define) are left out too.
 
-Rows are keyed by file, the text of the function's first line, the block's
-text, and the block's position among blocks with the same text in that
-function, so a row keeps its key when lines above it move. When --out already
-exists, the status of every row whose key is still present is kept; the status
-is one of STATUSES, and new rows are open. A row whose block is no longer
-uncovered disappears; the code a partial test left uncovered appears as a new
-row. Reading the old file skips blank or short rows and treats an unknown
-status as open, with a warning; --check validates a file strictly instead
-(exit 1 on any problem).
+Rows are keyed by file, the text of the function's signature (which names
+the function without depending on a demangler or on which template
+instantiations exist), the block's text, and the block's position among the
+blocks with that signature and text, so a row keeps its key when lines above
+it move. When --out already exists, the status of every row whose key is
+still present is kept; the status is one of STATUSES, and new rows are open. A
+row whose block is no longer uncovered disappears; the code a partial test left
+uncovered appears as a new row. Reading the old file skips blank or short rows
+and treats an unknown status as open, with a warning, but stops if the header
+is not the expected one (nothing may silently reset every status); --check
+validates a file strictly (exit 1 on any problem).
 
 Writes the TSV sorted by priority, highest first, and a summary to stderr;
 --top N also prints the first N open rows.
@@ -181,9 +186,11 @@ def match_close(code, i, open_='(', close=')'):
 
 
 def error_path_lines(src):
-    """The 1-based numbers of the lines that are only error path: every
-    character is inside an aborting, asserting or printing call statement, or
-    is a brace, semicolon, else, break or bare return."""
+    """(calls, filler), two sets of 1-based line numbers. calls: lines that are
+    an aborting, asserting or printing call statement, possibly with braces,
+    else, break or a bare return around it on the same line, or lines entirely
+    inside such a call spanning several lines. filler: lines of only braces,
+    semicolons, else, break or a bare return."""
     code = blank_comments_and_strings(src)
     starts = line_starts(src)
     inside = bytearray(len(code))
@@ -196,24 +203,40 @@ def error_path_lines(src):
             end += semi.end()
         for k in range(m.start(), end):
             inside[k] = 1
-    lines = set()
+    calls, filler = set(), set()
     for no, s in enumerate(starts, 1):
         e = starts[no] - 1 if no < len(starts) else len(code)
         rest = ''.join(' ' if inside[k] else code[k] for k in range(s, e))
         toks = re.findall(r'\w+|[^\s\w]', rest)
-        # Either some tokens, all of them braces, else, break or return (the
-        # rest of the line being inside error calls), or no tokens at all on a
-        # line that is inside an error call spanning several lines.
-        if all(t in ERROR_TOKENS for t in toks) and (toks or any(inside[s:e])):
-            lines.add(no)
-    return lines
+        if not all(t in ERROR_TOKENS for t in toks):
+            continue
+        if any(inside[s:e]):
+            calls.add(no)
+        elif toks:
+            filler.add(no)
+    return calls, filler
+
+
+def error_path_block(lines, calls, filler):
+    """Whether a block (its line numbers) is only an error path: some line is
+    an error call and every line is an error call or filler."""
+    return any(l in calls for l in lines) and all(l in calls or l in filler for l in lines)
+
+
+def not_counted(lines, calls, filler):
+    """The lines of a range that a test need not reach: the error calls, and
+    the filler around them when the range has any."""
+    if any(l in calls for l in lines):
+        return {l for l in lines if l in calls or l in filler}
+    return set()
 
 
 def function_extents(src, fn):
-    """{name: (first, last)} for each function in fn ({name: first line}),
-    the last line being that of the brace matching the first '{' at or after
+    """{name: (first, last, signature)} for each function in fn ({name: first
+    line}): last is the line of the brace matching the first '{' at or after
     the function's first line (the first line alone if none is found within
-    40 lines)."""
+    40 lines), and signature the text of the function's signature (see
+    signature_text), or '' without a brace."""
     code = blank_comments_and_strings(src)
     starts = line_starts(src)
     out = {}
@@ -222,17 +245,34 @@ def function_extents(src, fn):
             continue
         b = code.find('{', starts[first - 1])
         if b < 0 or line_of(starts, b) > first + 40:
-            out[name] = (first, first)
+            out[name] = (first, first, '')
             continue
         e = match_close(code, b, '{', '}')
-        out[name] = (first, line_of(starts, e - 1) if e > 0 else first)
+        out[name] = (first, line_of(starts, e - 1) if e > 0 else first,
+                     signature_text(code, starts, b))
     return out
+
+
+def signature_text(code, starts, brace):
+    """The source text before a function's opening brace back to the end of
+    the previous declaration or statement (a line with ; { or }, or a
+    preprocessor line), whitespace collapsed; code has comments and strings
+    blanked. llvm-cov puts a function's first line at its signature or at its
+    brace, and this text is the same either way."""
+    no = line_of(starts, brace)
+    parts = [code[starts[no - 1]:brace]]
+    for n in range(no - 1, max(0, no - 30), -1):
+        ln = code[starts[n - 1]:starts[n] - 1]
+        if re.search(r'[;{}]', ln) or ln.lstrip().startswith('#'):
+            break
+        parts.append(ln)
+    return re.sub(r'\s+', ' ', ' '.join(reversed(parts))).strip()
 
 
 def innermost(extents, pretty):
     """A function line -> (first line, name) of the innermost enclosing function;
     ties between functions with the same extent go to the smallest name."""
-    spans = sorted(((b - a, a, pretty.get(n, n), n) for n, (a, b) in extents.items()))
+    spans = sorted(((b - a, a, pretty.get(n, n), n) for n, (a, b, _) in extents.items()))
     cache = {}
 
     def at(line):
@@ -306,10 +346,14 @@ def demangle(names):
     return dict(zip(names, out))
 
 
-def blocks(cov, func_at):
-    """Yields each block as the list of its uncovered line numbers."""
+def blocks(cov, func_at, orphans):
+    """Yields each block as the list of its uncovered line numbers. Uncovered
+    lines in no function are counted in orphans and left out."""
     run = []
     for line in sorted(cov.da):
+        if cov.da[line] == 0 and func_at(line) is None:
+            orphans[0] += 1
+            continue
         if cov.da[line] == 0 and (not run or func_at(line) == func_at(run[0])):
             run.append(line)
             continue
@@ -322,17 +366,22 @@ def blocks(cov, func_at):
 
 # ---------------------------------------------------------------- the TSV
 
+class HeaderError(Exception):
+    """The file is not a backlog TSV (wrong header)."""
+
+
 def parse_tsv(path, strict):
     """(rows as dicts, problems). strict: every problem is reported; otherwise
-    blank and short rows are skipped and unknown statuses read as open."""
+    blank and short rows are skipped and unknown statuses read as open. Raises
+    HeaderError when the header is not COLUMNS, whatever strict is."""
     rows, problems = [], []
     with open(path) as fh:
-        header = fh.readline().rstrip('\n').split('\t')
+        header = fh.readline().rstrip('\r\n').split('\t')
         if header != COLUMNS:
-            return [], [f'{path}:1: header is not {" ".join(COLUMNS)}']
+            raise HeaderError(f'{path}:1: header is not {" ".join(COLUMNS)}')
         seen = {}
         for no, ln in enumerate(fh, 2):
-            ln = ln.rstrip('\n')
+            ln = ln.rstrip('\r\n')
             if not ln.strip():
                 if strict:
                     problems.append(f'{path}:{no}: blank line')
@@ -357,16 +406,20 @@ def parse_tsv(path, strict):
 def read_status(path):
     if not os.path.exists(path):
         return {}
-    rows, problems = parse_tsv(path, strict=False)
+    try:
+        rows, problems = parse_tsv(path, strict=False)
+    except HeaderError as e:
+        die(f'{e}; fix the file rather than lose every status')
     for p in problems:
         warn(p)
-    if not rows and problems:
-        warn(f'{path}: no usable rows; every status starts over as open')
     return {r['key']: r['status'] for r in rows}
 
 
 def check(path):
-    rows, problems = parse_tsv(path, strict=True)
+    try:
+        rows, problems = parse_tsv(path, strict=True)
+    except HeaderError as e:
+        rows, problems = [], [str(e)]
     for p in problems:
         print(f'backlog.py: {p}', file=sys.stderr)
     if problems:
@@ -399,7 +452,7 @@ def main():
     old = read_status(out)
     pretty = demangle(f for c in core.values() for f in c.fn)
 
-    rows, skipped, missing = [], collections.Counter(), []
+    rows, skipped, missing, orphans = [], collections.Counter(), [], [0]
     for name in sorted(core):
         path = os.path.join(src, name)
         try:
@@ -410,20 +463,22 @@ def main():
             continue
         text = source.split('\n')
         cov = core[name]
-        func_at = innermost(function_extents(source, cov.fn), pretty)
-        errors = error_path_lines(source)
+        extents = function_extents(source, cov.fn)
+        func_at = innermost(extents, pretty)
+        calls, filler = error_path_lines(source)
         t = tier_of(name)
+        # Blocks with the same text in a function of the same signature are
+        # numbered in order.
         occurrences = collections.Counter()
-        for run in blocks(cov, func_at):
-            f = func_at(run[0])
-            first, func = f if f else (0, '')
+        for run in blocks(cov, func_at, orphans):
+            _, func = func_at(run[0])
             label = re.sub(r'\s+', ' ', pretty.get(func, func))
             bt = 'C' if t == 'A' and DEMOTE.search(label) else t
-            if all(l in errors for l in run):
+            if error_path_block(run, calls, filler):
                 skipped[bt] += 1
                 continue
-            sig = text[first - 1].strip() if 0 < first <= len(text) else ''
             body = '\n'.join(text[l - 1].strip() for l in run if 0 < l <= len(text))
+            sig = extents[func][2]
             occurrences[(sig, body)] += 1
             k = hashlib.sha1(f'{name}\0{sig}\0{body}\0{occurrences[(sig, body)]}'
                              .encode()).hexdigest()[:12]
@@ -462,6 +517,9 @@ def main():
               f'partial {c["partial"]}, unreachable {c["unreachable"]}, '
               f'hpc-only {c["hpc-only"]}, skip {c["skip"]}; '
               f'{skipped[t]} error-path blocks left out', file=sys.stderr)
+    if orphans[0]:
+        print(f'  {orphans[0]} uncovered lines outside every function (macro bodies) left out',
+              file=sys.stderr)
     if missing:
         warn(f'{len(missing)} files in the lcov are not in --src (different commit?): '
              f'{", ".join(missing[:5])}')

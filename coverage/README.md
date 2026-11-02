@@ -196,8 +196,9 @@ one row per block of uncovered code in `src/ck-core` and
 under them; B: probably dead or not reachable on a CI runner; C: the rest), a
 priority, and a status (`open`, `tested`, `partial`, `unreachable`,
 `hpc-only`, `skip:<reason>`). Blocks that only abort, assert or print are left
-out. Rows are keyed by the text of the code, so statuses survive line moves;
-the code a `partial` test left uncovered comes back as a new, smaller row.
+out, and so are macro bodies (lines outside every function). Rows are keyed
+by the function and the text of the code, so statuses survive line moves; the
+code a `partial` test left uncovered comes back as a new, smaller row.
 `backlog.py --check <tsv>` validates the file.
 
 `coverage/check_lines.py <build> <test-dir> <file>:<first>-<last>` cleans,
@@ -206,15 +207,19 @@ whether the range is tested (every line that is not an error path reached),
 partial or not reached, with the branch outcomes in the range that never ran.
 
 `.github/workflows/coverage-tests.yaml` runs on Mondays and by hand, never on
-pull requests. It ranks the backlog from the newest run measured on `recharm`
-(`coverage/backlog_job.py rank`), builds an instrumented Charm++, and has
-Claude write tests for the first K open rows (default 3) or give them a
-status; `coverage/backlog_job.py finish` then keeps only changes under
-`tests/` and the targets' statuses, and the job opens one draft pull request
-labeled `coverage-backlog`. It does nothing while such a pull request is open.
-It uses the `ANTHROPIC_API_KEY` secret of the `claude-ci` environment, which
-only `recharm` may use. GitHub starts no CI for a pull request a workflow
-opens: close and reopen it to run CI.
+pull requests, and does nothing while a pull request labeled
+`coverage-backlog` is open. Its `tests` job ranks the backlog from the newest
+run measured on `recharm` (`coverage/backlog_job.py rank`), builds an
+instrumented Charm++, and has Claude write tests for the first K open rows
+(default 3) or give them a status; `backlog_job.py finish` then reduces the
+model's changes to a patch of text source files under `tests/` and the
+targets' statuses. That job runs with a read-only token and the
+`ANTHROPIC_API_KEY` secret of the `claude-ci` environment, which only
+`recharm` may use. A second job, `publish`, starts from a fresh checkout,
+checks the patch and the statuses again (`backlog_job.py publish`) and opens
+one draft pull request; it is the only job with write access and runs no
+model. GitHub starts no CI for a pull request a workflow opens: close and
+reopen it to run CI.
 
 ## Last verification run
 
