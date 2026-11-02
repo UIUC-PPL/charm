@@ -142,7 +142,8 @@ int main(int ac, char** av)
   MPI_Type_vector(1,1,DIMX,MPI_DOUBLE,&planevec);
   MPI_Type_commit(&planevec);
 
-  MPI_Win_create(cp->t, DIMX*DIMY*DIMZ, sizeof(double), 0, MPI_COMM_WORLD, &win);
+  // The window size is in bytes; disp_unit scales the displacements only.
+  MPI_Win_create(cp->t, DIMX*DIMY*DIMZ*sizeof(double), sizeof(double), 0, MPI_COMM_WORLD, &win);
 
   maxerr = 0.0;
   for(iter=1; iter<=niter; iter++) {
@@ -169,12 +170,12 @@ int main(int ac, char** av)
     AMPI_Iget_wait(&reqzp, &stszp, win);
     AMPI_Iget_wait(&reqzm, &stszm, win);
 
-    AMPI_Iget_data((double*)cp->sbxp, stsxp);
-    AMPI_Iget_data((double*)cp->sbxm, stsxm);
-    AMPI_Iget_data((double*)cp->sbyp, stsyp);
-    AMPI_Iget_data((double*)cp->sbym, stsym);
-    AMPI_Iget_data((double*)cp->sbzp, stszp);
-    AMPI_Iget_data((double*)cp->sbzm, stszm);
+    AMPI_Iget_data((void*)&cp->sbxp, stsxp);
+    AMPI_Iget_data((void*)&cp->sbxm, stsxm);
+    AMPI_Iget_data((void*)&cp->sbyp, stsyp);
+    AMPI_Iget_data((void*)&cp->sbym, stsym);
+    AMPI_Iget_data((void*)&cp->sbzp, stszp);
+    AMPI_Iget_data((void*)&cp->sbzm, stszm);
 
 
     if(iter > 25 &&  iter < 85 && thisIndex == 35)
