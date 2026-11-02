@@ -2164,10 +2164,12 @@ void CkArray::handleUnknownByID(CkArrayMessage* msg, CmiUInt8 id, CkDeliver_t ty
     return;
   }
 
-  // Otherwise hold it here until the location manager resolves the id.
-  if (bufferedIDMsgs.find(id) == bufferedIDMsgs.end())
+  // Otherwise hold it here until the location manager resolves the id. The request
+  // can find the location already written by another PE of this process.
+  if (bufferedIDMsgs.find(id) == bufferedIDMsgs.end() && locMgr->requestLocation(id))
   {
-    locMgr->requestLocation(id);
+    sendToPe(msg, locMgr->whichPe(id), type, opts);
+    return;
   }
   bufferedIDMsgs[id].push_back(msg);
 }
@@ -2221,10 +2223,19 @@ void CkArray::bufferForLocation(CkArrayMessage* msg, const CkArrayIndex& idx)
   CmiUInt8 id = msg->array_element_id();
   if (UsrToEnv(msg)->getRecipientID() != 0)
   {
-    CkAssert(bufferedIndexMsgs.find(idx) == bufferedIndexMsgs.end());
-    if (bufferedIDMsgs.find(id) == bufferedIDMsgs.end())
+    // An id another process addressed may be one this process has rebound since
+    // (hashed kind): hold the message under the index's current id.
+    CmiUInt8 current;
+    if (locMgr->lookupID(idx, current) && current != id)
     {
-      locMgr->requestLocation(id);
+      UsrToEnv(msg)->setRecipientID(makeID(current));
+      id = current;
+    }
+    CkAssert(bufferedIndexMsgs.find(idx) == bufferedIndexMsgs.end());
+    if (bufferedIDMsgs.find(id) == bufferedIDMsgs.end() && locMgr->requestLocation(id))
+    {
+      sendToPe(msg, locMgr->whichPe(id), CkDeliver_queue);
+      return;
     }
     bufferedIDMsgs[id].push_back(msg);
   }

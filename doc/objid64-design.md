@@ -1023,3 +1023,10 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   segments without moving keys. Eviction (7.7) deferred to a second version. The two residue
   items of Aditya's e417584dd (compressor overflow message, miss counters) ride with PR 3.
   Design chapter: doc/internals/process-location-cache.md.
+- 2026-11-02 (PR 3 implemented): location table, index table and retired ids per process
+  (src/ck-core/cklocnode.{h,C}); one location request per process via waiter bits; the
+  emigration is recorded before the migration message is sent. Left out of the first
+  version, with reasons in the chapter's section 9: the arriving state, epoch-carrying
+  tombstones, process-addressed messages (the CkLocNode nodegroup), eviction. Kale's
+  proposal of 2026-10-31, no home update for a move within a process, is section 3.7 of
+  the chapter and a later step.

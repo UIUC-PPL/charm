@@ -45,6 +45,8 @@ DIRS = \
   objid_bound \
   objid_tranche \
   objid_wide \
+  objid_migrate6 \
+  objid_loctable \
   collide \
   qd \
 

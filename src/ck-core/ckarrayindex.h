@@ -411,7 +411,9 @@ namespace ck {
       for (unsigned int i = 0; i < idx.dimension; ++i) {
         unsigned int numBits = bitsPerDim[i];
         unsigned int thisDim = shorts ? idx.indexShorts[i] : idx.index[i];
-        CkAssert(thisDim < (1UL << numBits));
+        CmiAssertMsg(thisDim < (1UL << numBits),
+                     "array index component %u is %u, outside the %u bits its bounds"
+                     " allow (CkArrayOptions::setBounds)", i, thisDim, numBits);
         eid = (eid << numBits) | thisDim;
       }
 

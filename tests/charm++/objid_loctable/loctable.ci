@@ -1,0 +1,20 @@
+mainmodule loctable {
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Tables tablesProxy;
+  readonly int nKeys;
+  readonly int nRounds;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void phaseDone(CkReductionMsg *m);
+  };
+
+  nodegroup Tables {
+    entry Tables();
+  };
+
+  group Worker {
+    entry Worker();
+    entry void run(int phase);
+  };
+};

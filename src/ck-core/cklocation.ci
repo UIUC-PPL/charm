@@ -11,6 +11,7 @@ module CkLocation {
     entry CkLocCache();
     entry [expedited] void requestLocation(CmiUInt8 id, int peToTell);
     entry [expedited] void updateLocation(const CkLocEntry& newEntry);
+    entry [expedited] void wake(CmiUInt8 id);
   };
 
   group [migratable] CkLocMgr {

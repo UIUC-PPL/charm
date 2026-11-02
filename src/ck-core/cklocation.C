@@ -2753,23 +2753,39 @@ void CkLocCache::pup(PUP::er& p)
   // branch shipped the home's remote entries, encoded against the old PE count.)
 }
 
-void CkLocCache::requestLocation(CmiUInt8 id)
+bool CkLocCache::requestLocation(CmiUInt8 id)
 {
-  int home = homePe(id);
-  if (home != CkMyPe())
+  ck::objid::LocTable& t = ck::objid::locTable();
+  const CmiUInt8 k = key(id);
+  // Register before re-reading: a write that lands between this PE's miss and its
+  // registration is seen by the re-read; one that lands after takes the bit and
+  // wakes this PE. Either way the message is not stranded (section 3.3).
+  const bool first = t.registerWaiter(k, CkMyRank());
+  if (t.pe(k) != -1) return true;
+  if (!first)
   {
+    if (ck::objid::_objidDiag) t.counters().requestsSkipped++;
+    return false;  // another PE of this process has asked; its reply wakes every waiter
+  }
+  const int home = homePe(id);
+  // The home's table is this table when the home is in this process: it has no
+  // location either, and the write that gives it one wakes the waiters here.
+  if (CkNodeOf(home) != CkMyNode())
+  {
+    if (ck::objid::_objidDiag) t.counters().requestsSent++;
     thisProxy[home].requestLocation(id, CkMyPe());
   }
+  return false;
 }
 
 void CkLocCache::requestLocation(CmiUInt8 id, const int peToTell)
 {
-  if (peToTell == CkMyPe()) return;
+  if (CkNodeOf(peToTell) == CkMyNode()) return;  // it reads the same table
 
-  LocationMap::const_iterator itr = locMap.find(id);
-  if (itr != locMap.end())
+  const CkLocEntry e = getLocationEntry(id);
+  if (e.pe != -1)
   {
-    thisProxy[peToTell].updateLocation(itr->second);
+    thisProxy[peToTell].updateLocation(e);
     return;
   }
   // No location: the element died or was re-created under a newer id. Answer by
@@ -2782,35 +2798,65 @@ void CkLocCache::requestLocation(CmiUInt8 id, const int peToTell)
 void CkLocCache::updateLocation(const CkLocEntry& newEntry)
 {
   CkAssert(newEntry.pe != -1);
-  CkLocEntry& oldEntry = locMap[newEntry.id];
-  if (newEntry.epoch > oldEntry.epoch)
+  bool written = false;
+  const CmiUInt8 waiters = ck::objid::locTable().update(key(newEntry.id), newEntry.pe,
+                                                        newEntry.epoch, false, &written);
+  if (written)
   {
-    oldEntry = newEntry;
     notifyListeners(newEntry.id, newEntry.pe);
+    wakeRanks(waiters, newEntry.id);
   }
 }
 
-void CkLocCache::recordEmigration(CmiUInt8 id, int pe)
+void CkLocCache::wake(CmiUInt8 id)
 {
-  LocationMap::iterator itr = locMap.find(id);
-
-  CkAssert(itr != locMap.end());
-  CkAssert(itr->second.pe == CkMyPe());
-
-  itr->second.pe = pe;
-  itr->second.epoch++;
+  const int pe = getPe(id);
+  if (pe != -1)
+    notifyListeners(id, pe);
+  else if (mgr)
+    mgr->releaseRetired(id);  // a retired id, or the location was cleared again
 }
 
+void CkLocCache::notifyRetired(CmiUInt8 id)
+{
+  wakeRanks(ck::objid::locTable().takeWaiters(key(id)), id);
+}
+
+void CkLocCache::wakeRanks(CmiUInt8 bits, CmiUInt8 id)
+{
+  if (bits == 0) return;
+  const int first = CkNodeFirst(CkMyNode());
+  const int size = CkMyNodeSize();
+  for (int r = 0; r < 64 && r < size; ++r)
+  {
+    if (!(bits & (1ull << r))) continue;
+    // Bit r stands for ranks r, r+64, ...; a wake to a rank with nothing buffered is
+    // a no-op. The writer's own rank was notified directly.
+    for (int rank = r; rank < size; rank += 64)
+    {
+      const int pe = first + rank;
+      if (pe == CkMyPe()) continue;
+      if (ck::objid::_objidDiag) ck::objid::locTable().counters().wakesSent++;
+      thisProxy[pe].wake(id);
+    }
+  }
+}
+
+int CkLocCache::recordEmigration(CmiUInt8 id, int pe)
+{
+  return ck::objid::locTable().recordEmigration(key(id), CkMyPe(), pe);
+}
 
 void CkLocCache::insert(CmiUInt8 id, int epoch)
 {
-  CkLocEntry& e = locMap[id];
-  // TODO: This should be > probably, but demand creation needs some fixing up
-  CkAssert(epoch >= e.epoch);
-  e.id = id;
-  e.pe = CkMyPe();
-  e.epoch = epoch;
-  notifyListeners(e.id, e.pe);
+  // The writer holds the element: the store is unconditional, as the per-PE cache's
+  // was. (Today's assert that epoch does not go backwards is kept for checking builds.)
+  ck::objid::LocTable& t = ck::objid::locTable();
+  const CmiUInt8 k = key(id);
+  CkAssert(epoch >= t.epoch(k));
+  const CmiUInt8 waiters = t.store(k, CkMyPe(), epoch);
+  notifyListeners(id, CkMyPe());
+  wakeRanks(waiters, id);
 }
 
 /*************************** LocMgr: CREATION *****************************/
@@ -3152,10 +3198,9 @@ bool CkLocMgr::addElementToRec(CkLocRec* rec, CkArray* mgr, CkMigratable* elt,
   return true;
 }
 
-// TODO: This might be not needed
-void CkLocMgr::requestLocation(CmiUInt8 id)
+bool CkLocMgr::requestLocation(CmiUInt8 id)
 {
-  cache->requestLocation(id);
+  return cache->requestLocation(id);
 }
 
 void CkLocMgr::requestLocation(const CkArrayIndex& idx)
@@ -3163,7 +3208,9 @@ void CkLocMgr::requestLocation(const CkArrayIndex& idx)
   CmiUInt8 id;
   if (lookupID(idx, id))
   {
-    requestLocation(id);
+    // Known already (written by another PE of this process): release what was
+    // buffered by index as well as by id.
+    if (requestLocation(id)) notifyListeners(idx, id, cache->getPe(id));
   }
   else
   {
@@ -3209,14 +3256,8 @@ bool CkLocMgr::recoverIndex(CmiUInt8 id, CkArrayIndex& idx) const
     idx = rec->getIndex();
     return true;
   }
-  // Hashed kind: an id that died or was rebound here (see retiredIds).
-  auto r = retiredIds.find(id);
-  if (r != retiredIds.end())
-  {
-    idx = r->second;
-    return true;
-  }
-  return false;
+  // Hashed kind: an id that died or was rebound in this process (retiredIds).
+  return ck::objid::retiredIds().find(makeID(id).getID(), idx);
 }
 
 #if CMK_LBDB_ON && CMK_GLOBAL_LOCATION_UPDATE
@@ -3242,19 +3283,9 @@ void CkLocMgr::updateLocationFromLB(CmiUInt8 id, int pe)
 void CkLocMgr::updateLocation(const CkArrayIndex& idx, const CkLocEntry& e)
 {
   CkAssert(e.pe != -1);
-  // Set the mapping from idx to id, noting an older id this PE had bound to it
+  // Set the mapping from idx to id, noting an older id this process had bound to it
   CmiUInt8 retired = 0;
-  bool hasRetired = false;
-  if (!compressor)
-  {
-    auto itr = idx2id.find(idx);
-    if (itr != idx2id.end() && itr->second != e.id)
-    {
-      retired = itr->second;
-      hasRetired = true;
-    }
-  }
-  insertID(idx, e.id);
+  const bool hasRetired = insertID(idx, e.id, &retired);
 
   // Update the location information
   cache->updateLocation(e);
@@ -3314,7 +3345,27 @@ void CkLocMgr::reclaim(CkLocRec* rec)
 // id -> idx so recoverIndex needs no scan; the idx -> id binding itself is kept.
 void CkLocMgr::noteDead(const CkArrayIndex& idx, CmiUInt8 id)
 {
-  if (!compressor) retiredIds[id] = idx;
+  if (!compressor) ck::objid::retiredIds().note(makeID(id).getID(), idx);
+}
+
+void CkLocMgr::retireId(CmiUInt8 oldId, const CkArrayIndex& idx)
+{
+  ck::objid::retiredIds().note(makeID(oldId).getID(), idx);
+  // Ranks waiting on the old id will never see a location for it; wake them so they
+  // re-address what they hold (releaseRetired). This PE's own queues are handled
+  // by the caller (updateLocation) or hold nothing it addressed under the old id.
+  cache->notifyRetired(oldId);
+  releaseRetired(oldId);
+}
+
+void CkLocMgr::releaseRetired(CmiUInt8 oldId)
+{
+  CkArrayIndex idx;
+  CmiUInt8 cur;
+  if (!recoverIndex(oldId, idx) || !lookupID(idx, cur) || cur == oldId) return;
+  const int pe = cache->getPe(cur);
+  if (pe == -1) return;  // the new element's location arrives later and wakes us
+  for (auto& m : managers) m.second->releaseRetiredMsgs(oldId, cur, pe);
 }
 
 // TODO: Rename to something more basic. This is just clearing entries from the
@@ -3372,6 +3423,12 @@ void CkLocMgr::multiHop(CkArrayMessage* msg)
     // PE before acting on it (UpdateLocation); the TreeLB-based ones (GreedyLB,
     // RefineLB, RotateLB, ...) are announced by the emigrate broadcast, which can
     // land after the program has resumed. All of these are repaired the same way.
+    // A sender in this process reads the table this PE's landing wrote: no repair.
+    if (CkNodeOf(srcPe) == CkMyNode())
+    {
+      if (ck::objid::_objidDiag) ck::objid::locTable().counters().repairsSkipped++;
+      return;
+    }
     cache->requestLocation(msg->array_element_id(), srcPe);
   }
 }
@@ -3549,6 +3606,11 @@ void CkLocMgr::emigrate(CkLocRec* rec, int toPe)
   // Let all the elements know we're leaving
   callMethod(rec, &CkMigratable::ckAboutToMigrate);
 
+  // Record the move in the process's table before the migration message exists: a
+  // destination in this process can land the element, and write its own entry,
+  // before this PE gets back from the send (W2 before W3, section 3.1).
+  const int newEpoch = cache->recordEmigration(id, toPe);
+
   // First pass: find size of migration message
   size_t bufSize;
   size_t gpuBufSize = 0;
@@ -3593,8 +3655,7 @@ void CkLocMgr::emigrate(CkLocRec* rec, int toPe)
                                                     false,
 #endif
                                                     bufSize, managers.size(),
-                                                    cache->getEpoch(id) + 1,
-                                                    gpuBufSize > 0);
+                                                    newEpoch, gpuBufSize > 0);
 
   {
     PUP::toMem p(msg->packData, gpuMsg, PUP::er::IS_MIGRATION);
@@ -3645,7 +3706,6 @@ void CkLocMgr::emigrate(CkLocRec* rec, int toPe)
   }
   duringMigration = false;
 
-  cache->recordEmigration(id, toPe);
   informHome(idx, toPe);
 
 #if CMK_GLOBAL_LOCATION_UPDATE

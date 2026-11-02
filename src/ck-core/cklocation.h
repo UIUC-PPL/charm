@@ -83,6 +83,7 @@ struct CkLocEntry {
 };
 PUPbytes(CkLocEntry);
 
+#include "cklocnode.h"
 #include "CkLocation.decl.h"
 
 /************************** Array Messages ****************************/
@@ -418,16 +419,20 @@ class CkLocMgr;
 class CkLocCache : public CBase_CkLocCache
 {
 private:
-  // Map of ID to PE
-  using LocationMap = std::unordered_map<CmiUInt8, CkLocEntry>;
-  LocationMap locMap;
-
+  // The location entries live in the process-level table (cklocnode.h), shared by
+  // every PE and every array; this group carries the messages and the per-PE
+  // listeners. doc/internals/process-location-cache.md.
   using Listener = std::function<void(CmiUInt8, int)>;
   std::list<Listener> listeners;
 
   // The location manager this cache serves (created one-to-one with it; bound arrays
-  // share both). Needed to compute the home of an id, which is not stored in the id.
+  // share both). Needed to compute the home of an id, which is not stored in the id,
+  // and the table key, which is the full id with the collection number.
   CkLocMgr* mgr = nullptr;
+
+  CmiUInt8 key(CmiUInt8 id) const;  // defined after CkLocMgr
+  // Wake the ranks whose bits a write took: each flushes its buffered messages.
+  void wakeRanks(CmiUInt8 bits, CmiUInt8 id);
 
 public:
   CkLocCache() = default;
@@ -437,28 +442,41 @@ public:
 
   void setManager(CkLocMgr* m) { mgr = m; }
 
-  void requestLocation(CmiUInt8 id);
+  /// This PE holds messages for id and needs its location. Registers this rank as a
+  /// waiter; the first rank of the process to do so sends the request. Returns true
+  /// if the location became known meanwhile, so the caller can send instead of
+  /// buffering.
+  bool requestLocation(CmiUInt8 id);
 
-  // Entry methods for updating location tables across PEs
+  // Entry methods for updating location tables across processes
   void requestLocation(CmiUInt8 id, int peToTell);
   void updateLocation(const CkLocEntry& e);
+  /// Another PE of this process wrote the location of id, or retired id: flush what
+  /// this PE holds for it.
+  void wake(CmiUInt8 id);
+  /// id was retired by this PE: wake the ranks holding messages for it.
+  void notifyRetired(CmiUInt8 id);
 
-  // Update the location table when an element migrates away
-  void recordEmigration(CmiUInt8 id, int pe);
+  // Update the location table when an element migrates away; returns the new epoch
+  int recordEmigration(CmiUInt8 id, int pe);
 
-  // Query the local location table
-  const CkLocEntry& getLocationEntry(CmiUInt8 id) const
+  // Query the shared location table
+  CkLocEntry getLocationEntry(CmiUInt8 id) const
   {
-    LocationMap::const_iterator itr = locMap.find(id);
-    return itr != locMap.end() ? itr->second : CkLocEntry::nullEntry;
+    CkLocEntry e;
+    const ck::objid::LocTable::Value v = ck::objid::locTable().lookup(key(id));
+    e.id = id;
+    e.pe = v.pe();
+    e.epoch = v.epoch();
+    return e;
   }
-  int getPe(const CmiUInt8 id) const { return getLocationEntry(id).pe; }
-  int getEpoch(const CmiUInt8 id) const { return getLocationEntry(id).epoch; }
+  int getPe(const CmiUInt8 id) const { return ck::objid::locTable().pe(key(id)); }
+  int getEpoch(const CmiUInt8 id) const { return ck::objid::locTable().epoch(key(id)); }
   int homePe(const CmiUInt8 id) const;  // via the manager; defined after CkLocMgr
 
   // Insertion and removal
   void insert(CmiUInt8 id, int epoch = 0);
-  void erase(CmiUInt8 id) { locMap.erase(id); }
+  void erase(CmiUInt8 id) { ck::objid::locTable().clear(key(id)); }
 
   void addListener(Listener l) { listeners.push_back(l); }
   void notifyListeners(CmiUInt8 id, int pe) const
@@ -488,7 +506,6 @@ private:
   using MsgBuffer = std::unordered_map<CmiUInt8, std::vector<CkArrayMessage*> >;
   using LocationRequestBuffer =
       std::unordered_map<CkArrayIndex, std::vector<int>, IndexHasher>;
-  using IdxIdMap = std::unordered_map<CkArrayIndex, CmiUInt8, IndexHasher>;
   using LocRecHash = std::unordered_map<CmiUInt8, CkLocRec*>;
   using ElemMap = std::unordered_map<CmiUInt8, CkMigratable*>;
 
@@ -553,11 +570,9 @@ private:
   bool wideCollection;
   CmiUInt8 collectionNumber;
   int payloadBits;
-  IdxIdMap idx2id;    // Explicit map for non-compressible case
-  // Hashed kind: ids that no longer name a live element -> index: an id this PE
-  // rebound to a newer one (insertID) and, at the home, every dead element's id
-  // (noteDead). Never pruned, like idx2id. doc/internals/object-ids.md, section 3.
-  std::unordered_map<CmiUInt8, CkArrayIndex> retiredIds;
+  // Hashed kind: the index -> id bindings and the retired ids are the process-level
+  // tables (cklocnode.h: ck::objid::indexTable(), retiredIds()), keyed by this
+  // manager's collection number. doc/internals/process-location-cache.md, 2.2.
   // Non-compressible case: this process's tranche of unique numbers for this array,
   // shared by all its PEs (see ck::objid::Tranche); resolved on first use.
   ck::objid::Tranche* tranche;
@@ -597,18 +612,24 @@ private:
   };
   std::vector<DeferredInsertion> deferredInsertions;  // this PE's, waiting for a tranche
 
-  // Insert the ID into the idx2id table
-  inline void insertID(const CkArrayIndex& idx, const CmiUInt8 id)
+  // Bind idx -> id in the process's index table (stored as the full id, which is
+  // never 0: an element id alone can be). True if the index was bound to an older
+  // id, which is retired; *retired receives it.
+  inline bool insertID(const CkArrayIndex& idx, const CmiUInt8 id, CmiUInt8* retired = nullptr)
   {
     if (compressor)
-      return;
-    auto ins = idx2id.emplace(idx, id);
-    if (!ins.second && ins.first->second != id)
-    {
-      retiredIds[ins.first->second] = idx;
-      ins.first->second = id;
-    }
+      return false;
+    const CmiUInt8 full = makeID(id).getID();
+    const CmiUInt8 prev = ck::objid::indexTable().bind(collectionNumber, idx, full);
+    if (prev == 0 || prev == full) return false;
+    const CmiUInt8 old = ck::ObjID(prev).getElementID();
+    if (retired) *retired = old;
+    retireId(old, idx);
+    return true;
   }
+  // The index was rebound away from oldId: record it and release the messages
+  // any PE of this process holds under oldId (they are re-addressed).
+  void retireId(CmiUInt8 oldId, const CkArrayIndex& idx);
 
   // Insert elements after migration
   // TODO: This probably needs some work and can be cleaned up to more closely match
@@ -708,8 +729,13 @@ public:
   {
     CmiUInt8 id;
     if (!lookupID(idx, id))
+    {
+      if (ck::objid::_objidDiag) ck::objid::locTable().counters().missNoId++;
       return -1;
-    return cache->getPe(id);
+    }
+    const int pe = cache->getPe(id);
+    if (ck::objid::_objidDiag && pe == -1) ck::objid::locTable().counters().missNoLocation++;
+    return pe;
   }
 
   CmiUInt8 lookupID(const CkArrayIndex& idx) const
@@ -721,9 +747,11 @@ public:
     }
     else
     {
-      IdxIdMap::const_iterator itr = idx2id.find(idx);
-      CkAssert(itr != idx2id.end());
-      return itr->second;
+      CmiUInt8 full = 0;
+      const bool bound = ck::objid::indexTable().lookup(collectionNumber, idx, full);
+      CkAssert(bound);
+      (void)bound;
+      return ck::ObjID(full).getElementID();
     }
   }
 
@@ -738,16 +766,10 @@ public:
     }
     else
     {
-      IdxIdMap::const_iterator itr = idx2id.find(idx);
-      if (itr == idx2id.end())
-      {
-        return false;
-      }
-      else
-      {
-        id = itr->second;
-        return true;
-      }
+      CmiUInt8 full;
+      if (!ck::objid::indexTable().lookup(collectionNumber, idx, full)) return false;
+      id = ck::ObjID(full).getElementID();
+      return true;
     }
   }
 
@@ -884,7 +906,12 @@ public:
   void immigrateGPU(CmiUInt8 id, int size, char* data);
   // Destination's ack: the staged payload has been read and can be released.
 #endif
-  void requestLocation(CmiUInt8 id);
+  /// Ask for the location of id (see CkLocCache::requestLocation); true if it is
+  /// known now and the caller should send rather than buffer.
+  bool requestLocation(CmiUInt8 id);
+  /// Messages this PE holds under an id this process has retired go to the index's
+  /// current id, if that has a location. Called on a wake for an id with none.
+  void releaseRetired(CmiUInt8 oldId);
   void requestLocation(const CkArrayIndex& idx);
   bool requestLocation(const CkArrayIndex& idx, int peToTell);
   void updateLocation(const CkArrayIndex& idx, const CkLocEntry& e);
@@ -923,6 +950,12 @@ inline int CkLocCache::homePe(const CmiUInt8 id) const
 {
   CkAssert(mgr != nullptr);
   return mgr->homePe(id);
+}
+
+inline CmiUInt8 CkLocCache::key(const CmiUInt8 id) const
+{
+  CkAssert(mgr != nullptr);
+  return mgr->makeID(id).getID();
 }
 
 #endif /*def(thisHeader)*/

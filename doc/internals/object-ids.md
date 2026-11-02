@@ -96,21 +96,23 @@ warning.
 
 ## 3. Location tables and delivery
 
-All tables are per PE today. PR 3 of the design moves the location and index
-tables to one shared table per process; its design is the chapter
-[process-location-cache.md](process-location-cache.md).
+The record table and the buffered messages are per PE; the location table, the
+index table and the retired ids are per process since objid PR 3, shared by all
+PEs of the process without a lock on the lookup path. The shared tables are the
+chapter [process-location-cache.md](process-location-cache.md); this section
+gives the protocol they serve.
 
 | table | key | value | owner |
 |---|---|---|---|
 | `CkLocMgr::hash` | id | `CkLocRec*` (index, LB handle, timing) | the PE that holds the element |
-| `CkLocCache::locMap` | id | {pe, epoch} | every PE that has heard where the element is; authoritative at the home |
-| `CkLocMgr::idx2id` | index | id | hashed kind only: the PE that created or holds the element, and the home |
-| `CkLocMgr::retiredIds` | id | index | hashed kind only: ids that no longer name a live element: an id this PE rebound to a newer one, and, at the home, every dead element's id; any PE re-addresses messages sent to such an id |
+| `ck::objid::LocTable` (`locTable()`) | full id | {pe, epoch, waiter bits} | every process that has heard where the element is; authoritative at the home |
+| `ck::objid::IndexTable` (`indexTable()`) | (collection, index) | full id | hashed kind only: the process that created or holds the element, and the home's |
+| `ck::objid::RetiredIds` (`retiredIds()`) | full id | index | hashed kind only: ids that no longer name a live element: an id this process rebound to a newer one, and, at the home, every dead element's id; any PE re-addresses messages sent to such an id |
 | `CkArray::bufferedIDMsgs` and siblings | id or index | messages waiting for a location | the sending PE |
 
 Delivery by id: a message carries the element id. The sender looks the id up in
-its `CkLocCache`; a hit sends the message to that PE, a miss sends it to the
-home. A PE that receives a message for an element it no longer holds forwards it
+its process's location table; a hit sends the message to that PE, a miss sends
+it to the home. A PE that receives a message for an element it no longer holds forwards it
 along its own cache entry, and the forwarded delivery teaches the original
 sender the current location (the sender-repair rule), so a stale cache costs one
 extra hop once. Delivery never needs the index on the sender's PE; the index
@@ -118,9 +120,9 @@ travels in the message only for insertion and demand creation.
 
 Delivery by index (a proxy indexed by `CkArrayIndex`): packed kind compresses
 the index to the id locally and proceeds as above. Hashed kind needs the id of an
-element it has never heard of, so it buffers the message and asks the home
-(`requestLocation(index)`); the home answers with the id and location from its
-`idx2id` binding, and the sender caches both.
+element its process has never heard of, so it buffers the message and asks the
+home (`requestLocation(index)`); the home answers with the id and location from
+its index table, and the sender's process records both.
 
 Migration: the element's record moves with it; the new PE registers the location
 at the home (an epoch counter orders updates from the same element, so a late
@@ -184,6 +186,7 @@ Every limit aborts, or warns, with a message that names what to change:
 | packed index wider than the payload | the array silently becomes hashed kind; a sized array without a compressor is a sign of bounds wider than 49 bits |
 | unique space too small (U < 16 at startup, or a tranche request that cannot be served) | abort naming `+objid_expand` and `setBounds` |
 | more than 2^H processes at restart | warning; homes still defined |
+| location or index table full | grows by a segment four times larger; `+objid_table_log2` sets the initial size, `+objid_diag` prints the sizes and counters per process at exit |
 
 ## 7. The wide layout (PR 1d, #4050)
 
@@ -212,6 +215,7 @@ addressed by `CkGroupID` alone; no `ObjID` is ever minted for them.
 | id layout, accessors | `src/ck-core/objid.h` |
 | index packing | `src/ck-core/ckarrayindex.h`, `FixedArrayIndexCompressor` |
 | per-run layout (H, F), hash key, tranche allocator, location manager, cache, checkpoint of the layout | `src/ck-core/cklocation.h`, `src/ck-core/cklocation.C` (namespace `ck::objid`, class `CkLocMgr`, class `CkLocCache`) |
+| process-level location table, index table, retired ids | `src/ck-core/cklocnode.h`, `src/ck-core/cklocnode.C` (chapter [process-location-cache.md](process-location-cache.md)) |
 | collection numbers, delivery by id, buffering | `src/ck-core/ckarray.C` (`CkCreateArray`, `CkArray::deliver*`) |
 | array options (bounds, wide) | `src/ck-core/ckarrayoptions.h` |
-| tests | `tests/charm++/objid_bound`, `objid_home`, `objid_insert`, `objid_sections`, `objid_tranche`, `objid_wide`, `unbounded_restart`, `unbounded_migration` |
+| tests | `tests/charm++/objid_bound`, `objid_home`, `objid_insert`, `objid_sections`, `objid_tranche`, `objid_wide`, `objid_migrate6`, `objid_loctable`, `unbounded_restart`, `unbounded_migration` |
