@@ -1756,6 +1756,17 @@ then
   fi
 fi
 
+# Coverage builds instrument every program compiled and linked with charmc.
+# Host tools (-seq, -host) are left alone: they are not measured, and their
+# compiler may not be clang.
+if [[ "$CMK_COVERAGE" = '1' && -z "$SEQUENTIAL" && -z "$NATIVE" ]]
+then
+    CMK_CC_FLAGS+=" -fprofile-instr-generate -fcoverage-mapping"
+    CMK_CXX_FLAGS+=" -fprofile-instr-generate -fcoverage-mapping"
+    CMK_LD_FLAGS+=" -fprofile-instr-generate"
+    CMK_LDXX_FLAGS+=" -fprofile-instr-generate"
+fi
+
 ########################################################################
 #
 # Finalize command parameters

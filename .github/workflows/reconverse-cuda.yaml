@@ -86,6 +86,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Build only: checkout and the cache need nothing more. The job installs the
+# cached .debs as root, and coverage-tests runs a model in a job that can write
+# recharm's cache, so this token must not be able to write.
+permissions:
+  contents: read
+
 jobs:
   # Build-only gate over the reconverse machine layer. It builds
   # `./build charm++`, not `LIBS`: AMPI rides on TCharm, and CMakeLists.txt

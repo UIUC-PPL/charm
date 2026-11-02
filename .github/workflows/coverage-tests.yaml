@@ -1,0 +1,288 @@
+name: coverage-tests
+
+# Weekly: writes tests for the top of the coverage backlog and opens one draft
+# pull request with them. It runs only on its schedule and when started by hand
+# (workflow_dispatch), never on pushes or pull requests, so it adds nothing to
+# the checks a pull request waits for. coverage/backlog.py ranks the uncovered
+# blocks of src/ck-core and contrib/reconverse/src from the newest published
+# coverage run (https://charmplusplus.org/charm-coverage/), the tests job takes
+# the first K open rows, and Claude writes a test that reaches each one or
+# marks it unreachable, hpc-only or skip:<reason>. The statuses are recorded in
+# coverage/backlog.tsv in the same pull request, so a row is not picked again.
+#
+# Bounds: nothing runs while an earlier pull request labeled coverage-backlog
+# is open, so the pace is the pace of review; K targets per run (input, default
+# 3); a turn limit and a time limit on the model's step.
+#
+# Two jobs keep the model away from anything that writes to the repository:
+# - tests runs the model with a read-only token (its job permissions) and the
+#   Anthropic API key of the claude-ci environment, which only the recharm
+#   branch may use. Before the model runs, the rank step records the start
+#   commit and the targets' keys as step outputs and uploads the ranked backlog
+#   as an artifact; after it, a copy of coverage/ taken before the model ran
+#   reduces the model's changes to a patch of text source files under tests/
+#   and the targets' statuses, and uploads them.
+# - publish starts from a fresh checkout of the start commit, checks the patch
+#   and the statuses again, and is the only job that commits, pushes and opens
+#   the pull request. It runs no model.
+#
+# The pull request is opened with the workflow token, so GitHub does not start
+# CI on it; close and reopen it to run CI.
+
+on:
+  schedule:
+    - cron: '17 12 * * 1'  # Mondays 12:17 UTC, after Sunday's coverage run
+  workflow_dispatch:
+    inputs:
+      k:
+        description: 'number of backlog targets for this run (1-99)'
+        type: number
+        default: 3
+      force:
+        description: 'run even if a coverage-backlog pull request is open (its targets are left out)'
+        type: boolean
+        default: false
+      show_output:
+        description: "print the model step's full output in the log (for diagnosing a run that ends at once)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: coverage-tests
+  cancel-in-progress: false
+
+env:
+  FI_PROVIDER: tcp
+  CC: clang
+  CXX: clang++
+  # The directory './build charm++ reconverse-linux-x86_64 clang' creates, as in
+  # coverage.yaml.
+  BUILD: reconverse-linux-x86_64-clang
+
+jobs:
+
+  tests:
+    if: github.repository == 'charmplusplus/charm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    environment: claude-ci
+    permissions:
+      contents: read
+      pull-requests: read  # the gate lists open backlog pull requests
+    outputs:
+      start_sha: ${{ steps.rank.outputs.start_sha }}
+      keys: ${{ steps.rank.outputs.keys }}
+      changed: ${{ steps.finish.outputs.changed }}
+      model: ${{ steps.claude.outcome }}
+    steps:
+      - name: skip while a backlog pull request is open
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          n=$(gh pr list -R "$GITHUB_REPOSITORY" --label coverage-backlog --state open --json number --jq length)
+          echo "open coverage-backlog pull requests: $n"
+          if [ "$n" != 0 ] && [ "$FORCE" != true ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipped: a coverage-backlog pull request is still open." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          submodules: true
+          fetch-depth: 0  # backlog.py counts the last 90 days of commits per file
+          persist-credentials: false  # the model's job holds no write credential
+
+      - name: install dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: sudo apt-get update && sudo apt-get install -y cmake libfabric-dev llvm
+
+      - name: rank the backlog from the newest coverage run of this branch
+        if: steps.gate.outputs.run == 'true'
+        id: rank
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # A scheduled run has no inputs; a dispatch passes k through unchanged
+          # (0 is refused, rather than becoming the default).
+          K: ${{ github.event_name == 'schedule' && 3 || inputs.k }}
+        run: |
+          set -e
+          git clone --quiet --depth 1 https://github.com/charmplusplus/charm-coverage.git "$RUNNER_TEMP/site"
+          # With force, leave out the targets of the open backlog pull requests.
+          exclude=()
+          for n in $(gh pr list -R "$GITHUB_REPOSITORY" --label coverage-backlog --state open \
+                       --json number --jq '.[].number'); do
+            git fetch --quiet origin "refs/pull/$n/head" || continue
+            git show FETCH_HEAD:coverage/backlog.tsv > "$RUNNER_TEMP/open-$n.tsv" 2>/dev/null || true
+            [ -s "$RUNNER_TEMP/open-$n.tsv" ] && exclude+=("$RUNNER_TEMP/open-$n.tsv")
+          done
+          python3 coverage/backlog_job.py rank --site "$RUNNER_TEMP/site" --k "$K" \
+            --work "$RUNNER_TEMP/work" ${exclude[@]:+--exclude-tsv "${exclude[@]}"} >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/work/targets.md" >> "$GITHUB_STEP_SUMMARY"
+          # The copy of the tooling that the finish step runs.
+          cp -r coverage "$RUNNER_TEMP/tools"
+
+      - name: keep the ranked backlog
+        if: steps.rank.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ranked
+          path: |
+            ${{ runner.temp }}/work/backlog.ranked.tsv
+            ${{ runner.temp }}/work/targets.md
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: build (instrumented)
+        if: steps.rank.outcome == 'success'
+        run: ./build charm++ reconverse-linux-x86_64 clang -j4 -g --coverage
+
+      - name: write tests
+        if: steps.rank.outcome == 'success'
+        id: claude
+        timeout-minutes: 120
+        # The job goes on to the finish step however this step ends (turn
+        # limit, error, time limit); the pull request's title says how.
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        env:
+          # Profiles from the model's own test runs go outside the tree.
+          LLVM_PROFILE_FILE: ${{ runner.temp }}/agent-profiles/%p-%m.profraw
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The workflow token of this job, which can only read, instead of the
+          # action's own app token.
+          github_token: ${{ github.token }}
+          show_full_output: ${{ inputs.show_output == true }}
+          claude_args: >-
+            --model claude-opus-5-5
+            --max-turns 80
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+            --disallowedTools "Bash(git:*),Bash(gh:*),Bash(curl:*),Bash(wget:*)"
+          prompt: |
+            You are adding tests to Charm++ (this checkout, branch recharm) for code
+            that no test reaches. Read AGENTS.md, coverage/README.md and the
+            doc/internals/ chapter for the subsystem of each target before writing
+            anything. The targets are in ${{ runner.temp }}/work/targets.md.
+
+            An instrumented build is in ./${{ env.BUILD }}. Check what a test reaches with
+              python3 coverage/check_lines.py ${{ env.BUILD }} <test-dir> <file>:<first>-<last>
+            using this checkout's line numbers for the target. It cleans and
+            rebuilds the directory each time and gives a verdict per range: tested
+            (every line that is not an error path reached), partial or not reached.
+
+            For each target, do exactly one of:
+            1. Write a test that reaches the lines and checks the behavior they
+               implement: a wrong result must make the test fail, not merely run.
+               Prefer extending an existing directory under tests/charm++/ whose
+               subject matches; otherwise add a directory with a Makefile that
+               includes ../../common.mk, has `test` and `clean` targets (`test`
+               using $(call run, ...)), and is listed in tests/charm++/Makefile.
+               Run the test 10 times with 1 and 2 processes (TESTRUN_PROCS=2); it
+               must pass every time and finish in under 30 seconds. Set the row's
+               status to check_lines.py's verdict: tested, or partial when you
+               cannot reach the rest (say which lines are left and why).
+            2. Set the status to unreachable if no supported use of the runtime
+               reaches the code (name what would have to call it), hpc-only if it
+               needs hardware or a fabric a CI runner lacks, or skip:<reason> for
+               anything else, including skip:reconverse-repo when it can only be
+               tested from inside the reconverse repository.
+
+            In coverage/backlog.tsv change only the status column, and only in the
+            targets' rows (match the key column). Change no file outside tests/
+            and that one; in particular nothing under src/ or contrib/: if a target
+            shows a runtime bug, set skip:bug and describe it with a reproducer.
+            Only text source files under tests/ (.C, .ci, .h, Makefile and the
+            like) go into the pull request; build outputs and logs do not. You
+            cannot run git; the workflow commits.
+
+            Finish by writing ${{ runner.temp }}/work/pr-body.md: one section per
+            target with its key, what you did, and for a test, what it checks,
+            check_lines.py's verdict line, and any branch outcomes in the range it
+            reports as never taken.
+
+      - name: reduce the changes to a patch under tests/ and the targets' statuses
+        if: steps.rank.outcome == 'success'
+        id: finish
+        env:
+          START: ${{ steps.rank.outputs.start_sha }}
+          KEYS: ${{ steps.rank.outputs.keys }}
+        # The tooling copy from before the model ran, with the start commit and
+        # the keys from the rank step's outputs, which the model cannot edit.
+        run: |
+          python3 "$RUNNER_TEMP/tools/backlog_job.py" finish --start "$START" --keys "$KEYS" \
+            --work "$RUNNER_TEMP/work" --out "$RUNNER_TEMP/out" --build "$BUILD" >> "$GITHUB_OUTPUT"
+
+      - name: keep the changes
+        if: steps.finish.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: changes
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: tests
+    if: needs.tests.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write       # push the pull request's branch
+      pull-requests: write  # open it
+      issues: write         # create the coverage-backlog label on first use
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.tests.outputs.start_sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ranked
+          path: ${{ runner.temp }}/ranked
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: changes
+          path: ${{ runner.temp }}/changes
+
+      - name: apply the patch and the statuses
+        id: apply
+        env:
+          KEYS: ${{ needs.tests.outputs.keys }}
+        run: |
+          python3 coverage/backlog_job.py publish --ranked "$RUNNER_TEMP/ranked/backlog.ranked.tsv" \
+            --changes "$RUNNER_TEMP/changes" --keys "$KEYS" >> "$GITHUB_OUTPUT"
+
+      - name: open the pull request
+        if: steps.apply.outputs.changed == 'true'
+        # The workflow token: GitHub starts no workflows for a pull request it
+        # opens, so CI runs once a maintainer closes and reopens it (or pushes).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODEL_OUTCOME: ${{ needs.tests.outputs.model }}
+        run: |
+          set -e
+          branch="coverage-backlog/$(date -u +%Y-%m-%d)-$GITHUB_RUN_ID"
+          git config user.name "charm coverage-tests workflow"
+          git config user.email "charm-coverage@users.noreply.github.com"
+          git checkout -b "$branch"
+          git commit --quiet -F - <<EOF
+          Coverage backlog: tests for the next targets
+
+          Written by the coverage-tests workflow, run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+          Co-Authored-By: Claude <noreply@anthropic.com>
+          EOF
+          git push --quiet origin "$branch"
+          gh label create coverage-backlog -R "$GITHUB_REPOSITORY" --color 0e8a16 \
+            --description "Tests from the coverage backlog workflow" 2>/dev/null || true
+          title="Coverage backlog: tests for the next targets"
+          [ "$MODEL_OUTCOME" = success ] || title="$title (model step: $MODEL_OUTCOME)"
+          gh pr create -R "$GITHUB_REPOSITORY" --draft --base recharm --head "$branch" \
+            --label coverage-backlog --title "$title" --body-file "$RUNNER_TEMP/changes/pr-body.md"
+          echo "Opened a draft pull request from $branch. Close and reopen it to start CI." >> "$GITHUB_STEP_SUMMARY"

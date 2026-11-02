@@ -1,0 +1,112 @@
+name: coverage
+
+# Weekly line, function and region coverage of Charm++ and reconverse from
+# clang source-based coverage, measured over the CI tier (TEST_DIRS of
+# reconverse-ci.yaml), every other test the aggregator Makefiles reach, and
+# the examples. Informational only: not a required check, and nothing here
+# gates on a percentage. The recipe and the traps behind the numbers are in
+# coverage/README.md; the artifact holds REPORT.md, the JSON and lcov
+# exports, and an HTML view of the cumulative tier. Scheduled and manual
+# runs also publish the report to https://charmplusplus.org/charm-coverage/
+# (repository charmplusplus/charm-coverage, pushed with the deploy key in
+# the COVERAGE_DEPLOY_KEY secret); pull-request runs do not.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 0'  # Sundays 06:00 UTC
+  # A change to the tooling itself runs it once on the pull request.
+  pull_request:
+    paths:
+      - 'coverage/**'
+      # The backlog's statuses are data, not tooling (coverage-tests.yaml).
+      - '!coverage/backlog.tsv'
+      - '.github/workflows/coverage.yaml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin the OFI provider, as reconverse-ci.yaml does: LCI takes the first
+  # fi_getinfo() match, and on some hosted runners that is a hardware
+  # provider whose fi_enable() fails inside ConverseInit.
+  FI_PROVIDER: tcp
+  # Clang source-based coverage needs a clang-family compiler.
+  CC: clang
+  CXX: clang++
+
+jobs:
+
+  coverage-linux-x86_64:
+    timeout-minutes: 180
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # reconverse is the contrib/reconverse submodule.
+          submodules: true
+      - name: install dependencies
+        # llvm provides llvm-profdata and llvm-cov matching the default clang.
+        run: sudo apt-get update && sudo apt-get install -y cmake libfabric-dev llvm
+      - name: build (instrumented)
+        # 'clang' makes charmc link with clang too; CC/CXX alone only steer
+        # cmake, and the arch file would still give charmc g++.
+        run: ./build charm++ reconverse-linux-x86_64 clang -j4 -g --coverage
+      - name: run tests (all tiers, 1 and 2 processes)
+        # Failures are recorded in the results tables, not fatal here.
+        run: |
+          # lcrun's file PMI backend shares one fixed rendezvous dir per host; a run that dies mid-bootstrap poisons it and the next launch aborts or hangs (charm #3987, uiuc-hpc/lci#202).
+          rm -rf "$HOME/.tmp/lct_pmi_file-"*
+          coverage/run.sh reconverse-linux-x86_64-clang --tier all-tiers --shapes "1 2" --out coverage-out
+      - name: report
+        run: COV_HTML=1 coverage/report.sh reconverse-linux-x86_64-clang coverage-out
+      - name: job summary
+        if: always()
+        run: |
+          if [ -f coverage-out/REPORT.md ]; then
+            awk '/^## Headline/ { on = 1 } /^## / && !/^## Headline/ { on = 0 } on' \
+              coverage-out/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No REPORT.md was written; see the job log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage-out/REPORT.md
+            coverage-out/meta.txt
+            coverage-out/*.tsv
+            coverage-out/*.txt
+            coverage-out/logs/
+            coverage-out/report/*-summary.json
+            coverage-out/report/*.lcov
+            coverage-out/report/*-report.txt
+            coverage-out/report/objects.txt
+            coverage-out/report/ck-convcore.txt
+            coverage-out/report/html/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: publish to charmplusplus/charm-coverage
+        # Only the weekly and manual runs of this repository publish; a
+        # pull request has no access to the secret and would race the
+        # scheduled run for the same site.
+        if: github.event_name != 'pull_request' && github.repository == 'charmplusplus/charm'
+        env:
+          COVERAGE_DEPLOY_KEY: ${{ secrets.COVERAGE_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$COVERAGE_DEPLOY_KEY" > ~/.ssh/charm-coverage && chmod 600 ~/.ssh/charm-coverage
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND='ssh -i ~/.ssh/charm-coverage -o IdentitiesOnly=yes'
+          git clone --quiet --depth 1 git@github.com:charmplusplus/charm-coverage.git site
+          python3 coverage/publish.py --site site --out coverage-out \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          cd site
+          git config user.name "charm coverage workflow"
+          git config user.email "charm-coverage@users.noreply.github.com"
+          git add -A
+          git commit --quiet -m "$(sed -n 's/^date: //p' ../coverage-out/meta.txt), charm $(sed -n 's/^charm: //p' ../coverage-out/meta.txt)"
+          git push --quiet

@@ -77,6 +77,16 @@ class TCharmInitMsg : public CMessage_TCharmInitMsg {
 
 extern bool tcharm_nothreads;
 
+// campi (coroutine AMPI): the ranks are C++20 coroutines run on the scheduler's
+// own thread instead of TCharm threads. libampi's campi.C installs these hooks
+// (before TCharm::procInit runs) when the application registers a coroutine
+// main; tcharm itself never refers to campi symbols.
+extern bool tcharm_campi;
+typedef void (*TCharmCampiStartFn)(TCharm *tc);
+typedef void (*TCharmCampiResumeFn)(void *rank);
+extern TCharmCampiStartFn tcharm_campi_start_fn;
+extern TCharmCampiResumeFn tcharm_campi_resume_fn;
+
 //Thread-local variables:
 CtvExtern(TCharm *,_curTCharm);
 
@@ -103,6 +113,8 @@ class TCharm: public CBase_TCharm
 
 	TCharmInitMsg *initMsg; //Thread initialization data
 	double timeOffset; //Value to add to CkWallTimer to get my clock
+
+	void *campiRank; // campi mode: this element's rank record (campi.C); not pupped
 
 	// Called from ResumeFromSync so TCharm users can do things before start()
 	CkCallback resumeAfterMigrationCallback;
@@ -241,6 +253,10 @@ class TCharm: public CBase_TCharm
 
 	//As above, but start/stop the thread itself, too.
 	CMI_WARN_UNUSED_RESULT TCharm * stop() noexcept { //Blocks; will not return until "start" called.
+		if (tcharm_campi)
+			CkAbort("campi: a blocking AMPI path was reached outside a campi awaitable, "
+			        "from a non-coroutine function or from a routine campi does not yet "
+			        "support (see the lists of awaitable and unsupported routines in campi.h)\n");
 		#if CMK_ERROR_CHECKING
 		if (tid != CthSelf())
 			CkAbort("Called TCharm::stop from outside TCharm thread!\n");
@@ -248,8 +264,11 @@ class TCharm: public CBase_TCharm
 			CkAbort("Cannot make blocking calls using +tcharm_nothreads!\n");
 		#endif
 		// tcharm does not trigger thread listeners on suspend/resume
-		// so it needs to manually start/stop timing
+		// so it needs to manually start/stop timing, and end and begin
+		// the trace's execution of this element (see traceSegmentBegin)
 		this->getCkLocRec()->stopTiming();
+		_TRACE_END_EXECUTE();
+		_TRACE_CLEAR_OBJECT();
 		isStopped=true;
 		DBG("thread suspended");
 
@@ -270,15 +289,35 @@ class TCharm: public CBase_TCharm
 		// tcharm does not trigger thread listeners on suspend/resume
 		// so it needs to manually start/stop timing
 		dis->getCkLocRec()->startTiming();
+		dis->traceSegmentBegin();
 		return dis;
 	}
+
+	public:
+	// A segment of the thread's execution begins: the trace's thread entry,
+	// attributed to this element (CkPerfObjLoads). Ends in stop().
+	void traceSegmentBegin() noexcept {
+		CkLocRec *rec = this->getCkLocRec();
+		_TRACE_SET_OBJECT(rec->getLocMgr()->ckGetGroupID().idx, rec->getID());
+		_TRACE_BEGIN_EXECUTE_DETAILED(-1, ForChareMsg, _threadEP, CkMyPe(), 0, NULL, NULL);
+	}
+	private:
 
  public:
 	void start() noexcept {
 		isStopped=false; // do not migrate while running
 		DBG("thread resuming soon");
+		if (tcharm_campi) { // no thread: wake the rank's coroutine instead
+			tcharm_campi_resume_fn(campiRank);
+			return;
+		}
 		CthAwaken(tid);
 	}
+
+	// campi support (see tcharm_campi above)
+	inline void *getCampiRank() const noexcept { return campiRank; }
+	inline void setCampiRank(void *r) noexcept { campiRank = r; }
+	inline void setStopped(bool s) noexcept { isStopped = s; }
 
 	//Aliases:
 	inline CMI_WARN_UNUSED_RESULT TCharm * suspend() noexcept {

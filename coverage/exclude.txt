@@ -1,0 +1,14 @@
+# Directories coverage/run.sh skips: one per line, the reason after '#'.
+# A directory excludes everything below it. Only directories that fail to
+# build, or fail in every process shape, belong here; a run that fails in one
+# shape only stays in the measured set and shows in the report. Delete a line
+# when its directory works. Each entry was checked on macOS on 2026-10-25
+# (charm 8d7638f51, reconverse a8efcfc23), on a plain build as well as the
+# coverage build.
+
+tests/ampi              # needs ./build AMPI: the charm++ target builds no ampicxx
+examples/ampi           # needs ./build AMPI: no ampicxx
+examples/collide        # needs ./build LIBS (collidecharm.h, libmodulecollidecharm) and AMPI (collidethread)
+tests/charm++/longIdle  # does not build: reconverse has no CcdCallOnConditionOnPE (RECONVERSE_NA in tests/charm++/Makefile)
+tests/charm++/io_read   # SIGSEGV with 1 and with 2 processes
+examples/charm++/zerocopy/entry_method_post_api/unreg/nodegroupTest  # its test always runs 2 processes; unregistered zerocopy across processes aborts with "Network completion failed for peer rank 0"

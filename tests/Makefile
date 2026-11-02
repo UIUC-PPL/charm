@@ -7,6 +7,7 @@ DIRS = \
   util \
   charm++ \
   ampi \
+  campi \
 
 FTDIRS = \
   charm++ \

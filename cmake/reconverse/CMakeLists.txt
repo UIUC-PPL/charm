@@ -72,7 +72,20 @@ endif()
 
 # Set cmake variables for reconverse
 set(_save_BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS})
-set(BUILD_SHARED_LIBS ON CACHE INTERNAL "")
+if(CMK_COMPILER STREQUAL "msvc")
+  # A static library on Windows: an MSVC DLL exports nothing without
+  # __declspec(dllexport) annotations, and its thread-local variables (every
+  # Cpv) cannot be exported from one at all.
+  set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "")
+  # Reconverse is added before Charm++ switches its rules to charmc, so its
+  # archive would otherwise be written by Cygwin's ar; use LIB.EXE, as
+  # charmc does through the same wrapper.
+  set(CMAKE_CXX_CREATE_STATIC_LIBRARY
+      "${CMAKE_SOURCE_DIR}/src/arch/win/unix2nt_ar <TARGET> <OBJECTS>")
+  set(CMAKE_C_CREATE_STATIC_LIBRARY ${CMAKE_CXX_CREATE_STATIC_LIBRARY})
+else()
+  set(BUILD_SHARED_LIBS ON CACHE INTERNAL "")
+endif()
 
 # Reconverse's build directory lives under charm's, not in the source tree, so
 # an out-of-tree reconverse (and the submodule itself) stays clean.
