@@ -8597,9 +8597,12 @@ Migratable threads (AMPI ranks, TCharm threads and threaded entry
 methods whose stacks Isomalloc manages) are restored at the addresses
 they had when the checkpoint was written, so a restart needs address
 space layout randomization off, as a migration between processes does.
-On Linux, run the restart under ``setarch $(uname -m) -R``, placed before
-the program or before the launcher (``lcrun``, ``srun``), which passes it
-on to the processes it starts. The checkpoint directory records
+On Linux, run the restart under ``setarch $(uname -m) -R``, placed in
+front of the program. A launcher that forks the processes itself
+(``lcrun``) passes the setting on, so there it may also go in front of
+the launcher; ``srun`` and ``mpirun`` start the tasks through their own
+daemons, which do not inherit it, so with them it goes inside the launch:
+``srun ... setarch $(uname -m) -R ./pgm +restart dir``. The checkpoint directory records
 Isomalloc's address range in ``Isomalloc.dat``; a restart on a
 different number of processes or PEs reads it and uses the same range,
 and aborts with a message naming both ranges when that range is not

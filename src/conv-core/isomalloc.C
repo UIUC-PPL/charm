@@ -90,11 +90,13 @@ static int _mmap_probe = 0;
 static int CmiIsomallocAslr = 0; /* set in CmiIsomallocInit */
 static int CmiIsomallocAslrUnknown = 0; /* randomize_va_space could not be read */
 
+/* 1: the kernel randomizes this process's address space; 0: it does not;
+   -1: randomize_va_space could not be read and the process does not carry
+   the setarch flag, so the answer is unknown. */
 static int read_randomflag(void)
 {
-  FILE * fp;
-  int random_flag;
-  fp = fopen("/proc/sys/kernel/randomize_va_space", "r");
+  int random_flag = -1;
+  FILE * fp = fopen("/proc/sys/kernel/randomize_va_space", "r");
   if (fp != NULL)
   {
     if (fscanf(fp, "%d", &random_flag) != 1)
@@ -103,18 +105,17 @@ static int read_randomflag(void)
     }
     fclose(fp);
     if (random_flag) random_flag = 1;
+  }
 #if CMK_HAS_ADDR_NO_RANDOMIZE
-    if (random_flag)
-    {
-      int persona = personality(0xffffffff);
-      if (persona & ADDR_NO_RANDOMIZE) random_flag = 0;
-    }
-#endif
-  }
-  else
+  /* setarch -R sets this flag on the process, and the kernel then leaves the
+     layout alone whatever randomize_va_space says; so it also answers when
+     that file could not be read. */
+  if (random_flag != 0)
   {
-    random_flag = -1;
+    int persona = personality(0xffffffff);
+    if (persona & ADDR_NO_RANDOMIZE) random_flag = 0;
   }
+#endif
   return random_flag;
 }
 
@@ -895,8 +896,9 @@ CLINKAGE int CmiIsomallocWriteRegion(const char * path)
        does not fire, since nothing migrates between processes there. */
     CmiError("Isomalloc> Warning: this checkpoint holds migratable threads written with address "
              "space layout randomization on%s; it cannot be restarted. Run the program with "
-             "randomization off (Linux: setarch $(uname -m) -R, before the program or the launcher) "
-             "if it is to be restarted from a checkpoint.\n",
+             "randomization off (Linux: setarch $(uname -m) -R in front of the program; with srun or "
+             "mpirun, which start the tasks themselves, inside the launch: srun ... setarch $(uname -m) "
+             "-R ./pgm) if it is to be restarted from a checkpoint.\n",
              CmiIsomallocAslrUnknown ? " (or /proc/sys/kernel/randomize_va_space could not be read)" : "");
   FILE * f = fopen(path, "w");
   if (f == nullptr)
@@ -1290,7 +1292,8 @@ struct isommap
         CmiAbort("Isomalloc> Cannot restore a migratable thread from a checkpoint while address space "
                  "layout randomization is on%s: its stack holds addresses of code and libraries that the "
                  "loader placed elsewhere in this process. Run the restart with randomization off "
-                 "(Linux: setarch $(uname -m) -R, before the program or the launcher).",
+                 "(Linux: setarch $(uname -m) -R in front of the program; with srun or mpirun, which "
+                 "start the tasks themselves, inside the launch: srun ... setarch $(uname -m) -R ./pgm).",
                  CmiIsomallocAslrUnknown ? " (/proc/sys/kernel/randomize_va_space could not be read, "
                                            "so randomization is assumed on)" : "");
       if (start < isomallocStart || isomallocEnd < allocated_extent)

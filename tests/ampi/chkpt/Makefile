@@ -24,6 +24,17 @@ test: hello
 	$(call run, +p2 ./hello +vp8 +restart log )
 	$(call run, +p8 ./hello +vp8 +restart log )
 	-sync
+	# The restarts above most likely compute the same region on their own, so
+	# they do not show that log/Isomalloc.dat was read. Lower the recorded start
+	# by 32 MB (the checkpointed contexts are still inside the range), restart,
+	# and require the line that says the recorded range was taken.
+	start=$$(awk '/^start/ { print $$2 }' log/Isomalloc.dat) && \
+	  new=$$(printf '0x%x' $$(( start - 32 * 1024 * 1024 ))) && \
+	  sed -i.orig "s/^start .*/start $$new/" log/Isomalloc.dat && cat log/Isomalloc.dat
+	$(call run, +p4 ./hello +vp8 +restart log ) 2>&1 | tee restart-adopted.log
+	grep -q "Isomalloc> Restart: using the checkpoint's address range" restart-adopted.log
+	grep -q "All tests passed" restart-adopted.log
+	-sync
 	rm -rf log
 	$(call run, +p2 ./hello +vp8 )
 	-sync
@@ -33,5 +44,5 @@ ifneq ($(filter-out 0 1,$(TESTRUN_PROCS)),)
 endif
 
 clean:
-	rm -f *.o *.mod moduleinit.C hello *~ conv-host charmrun ampirun
+	rm -f *.o *.mod moduleinit.C hello *~ conv-host charmrun ampirun restart-adopted.log
 	rm -rf log
