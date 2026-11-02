@@ -10,7 +10,7 @@ mainmodule migrate6 {
     entry Main(CkArgMsg *m);
     entry [reductiontarget] void inserted();
     entry void quiescent();
-    entry [reductiontarget] void tally(CkReductionMsg *m);
+    entry void tally(CkReductionMsg *m);
   };
 
   group Inserter {

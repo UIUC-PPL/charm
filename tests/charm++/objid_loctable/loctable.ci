@@ -6,7 +6,7 @@ mainmodule loctable {
 
   mainchare Main {
     entry Main(CkArgMsg *m);
-    entry [reductiontarget] void phaseDone(CkReductionMsg *m);
+    entry void phaseDone(CkReductionMsg *m);
   };
 
   nodegroup Tables {

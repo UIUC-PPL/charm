@@ -224,7 +224,7 @@ public:
   {
     long v[4] = {hi, ack, ticks, moves};
     contribute(sizeof(v), v, CkReduction::sum_long,
-               CkCallback(CkReductionTarget(Main, tally), mainProxy));
+               CkCallback(CkIndex_Main::tally(NULL), mainProxy));
   }
 };
 

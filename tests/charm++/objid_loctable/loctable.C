@@ -205,7 +205,7 @@ public:
     }
     long v[3] = {checked, violations, extra};
     contribute(sizeof(v), v, CkReduction::sum_long,
-               CkCallback(CkReductionTarget(Main, phaseDone), mainProxy));
+               CkCallback(CkIndex_Main::phaseDone(NULL), mainProxy));
   }
 };
 
