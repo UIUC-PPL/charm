@@ -137,6 +137,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: name the key (a hash prefix, to compare with the key meant to be stored)
+        if: steps.rank.outcome == 'success'
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          echo "ANTHROPIC_API_KEY: ${#KEY} characters, sha256 prefix $(printf '%s' "$KEY" | sha256sum | cut -c1-12)"
+
       - name: build (instrumented)
         if: steps.rank.outcome == 'success'
         run: ./build charm++ reconverse-linux-x86_64 clang -j4 -g --coverage
