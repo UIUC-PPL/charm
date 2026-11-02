@@ -101,6 +101,10 @@ processArgs() {
 
       --procs|-procs)
         num_procs="$1"
+        if ! [[ "$num_procs" =~ ^[1-9][0-9]*$ ]]; then
+          echo "$progname error: --procs needs a positive integer, not \"$num_procs\""
+          exit 1
+        fi
         shift
         ;;
 
@@ -144,10 +148,6 @@ if [[ "$reconverse" = "1" ]]; then
   fi
   if ! [[ "$num_ranks" =~ ^[1-9][0-9]*$ ]]; then
     echo "$progname error: the number of ranks must be a positive integer, not \"$num_ranks\""
-    exit 1
-  fi
-  if ! [[ "$num_procs" =~ ^[0-9]+$ ]]; then
-    echo "$progname error: --procs needs a positive integer, not \"$num_procs\""
     exit 1
   fi
   # charmrun finds a program named without a path in the current directory;
@@ -211,10 +211,18 @@ if [[ "$reconverse" = "1" ]]; then
   # because slurmd starts the tasks.) AMPIRUN_VA_RANDOMIZATION=1 leaves
   # randomization on, like classic charmrun's ++va-randomization. macOS is
   # left alone: it has no setarch, and randomization cannot be turned off
-  # there from a script.
+  # there from a script. Where the personality call is refused (Docker's
+  # default seccomp profile does not allow ADDR_NO_RANDOMIZE), setarch exits
+  # 1 without running the command; a probe finds that out once, and the run
+  # goes ahead with randomization on, as classic charmrun did when its call
+  # failed.
   if [[ "$(uname -s)" = "Linux" && "${AMPIRUN_VA_RANDOMIZATION:-}" != "1" ]] \
      && command -v setarch > /dev/null 2>&1; then
-    cmd=(setarch "$(uname -m)" -R "${cmd[@]}")
+    if setarch "$(uname -m)" -R true > /dev/null 2>&1; then
+      cmd=(setarch "$(uname -m)" -R "${cmd[@]}")
+    else
+      echo "$progname: setarch -R is not permitted here; running with address space randomization on" 1>&2
+    fi
   fi
   runCmd "${cmd[@]}"
   exit $?

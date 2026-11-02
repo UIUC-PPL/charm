@@ -249,22 +249,30 @@ inside the launch, after the launcher's own arguments:
 
 .. code-block:: bash
 
-   $ srun -n 4 setarch x86_64 -R ./pgm +pe 16 +vp64
+   $ srun -n 4 setarch $(uname -m) -R ./pgm +pe 16 +vp64
 
 The ``setarch -R`` prefix turns off address space randomization. A rank
 that migrates to another process, or is restored from a checkpoint by a
 new process, resumes on a stack that holds return addresses into the
 program and into the runtime library. These addresses are valid only if
 the code is loaded at the same address in every process, which requires
-randomization to be off. On Linux, ``ampirun`` and the ``testrun``
-script used by ``make test`` add the prefix themselves; set
+randomization to be off. The processes must also have the same stack
+size limit (``ulimit -s``): a limit above about 128 MB, or an unlimited
+one, changes where Linux loads the program and its libraries even with
+randomization off. Restore a checkpoint under the same limit it was
+written with. On Linux, ``ampirun`` and the ``testrun`` script used by
+``make test`` add the prefix themselves; set
 ``AMPIRUN_VA_RANDOMIZATION=1`` or ``TESTRUN_VA_RANDOMIZATION=1`` to
-leave randomization on. Under ``srun`` the prefix must be inside the
+leave randomization on. Where the system refuses the setting (a
+container under Docker's default seccomp profile), both say so once and
+run with randomization on. Under ``srun`` the prefix must be inside the
 launch because the Slurm daemon on each compute node starts the tasks,
-and they do not inherit settings of the ``srun`` process. On macOS
-randomization cannot be turned off this way, so there a rank cannot
-migrate to another process or be restored from a checkpoint; migration
-between the PEs of one process works.
+and they do not inherit settings of the ``srun`` process. macOS has no
+``setarch``; randomization can be turned off only by the launcher, at
+the moment it spawns the process (classic ``charmrun`` did), which
+``ampirun`` and ``testrun`` do not do, so with them a rank cannot
+migrate to another process or be restored from a checkpoint on macOS;
+migration between the PEs of one process works.
 
 Other options
 ~~~~~~~~~~~~~

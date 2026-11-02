@@ -67,10 +67,18 @@ then
   # personality() and its ++va-randomization option; here
   # TESTRUN_VA_RANDOMIZATION=1 leaves randomization on. macOS is left alone:
   # it has no setarch, and randomization cannot be turned off from a script.
+  # Where the personality call is refused (Docker's default seccomp profile
+  # does not allow ADDR_NO_RANDOMIZE), setarch exits 1 without running the
+  # command; a probe finds that out once, and the run then goes ahead with
+  # randomization on, as classic charmrun did when its call failed.
   norand=()
   if [[ "$(uname -s)" = "Linux" && "$TESTRUN_VA_RANDOMIZATION" != "1" ]] \
      && command -v setarch > /dev/null 2>&1; then
-    norand=(setarch "$(uname -m)" -R)
+    if setarch "$(uname -m)" -R true > /dev/null 2>&1; then
+      norand=(setarch "$(uname -m)" -R)
+    else
+      echo "testrun(reconverse): setarch -R is not permitted here; running with address space randomization on" >&2
+    fi
   fi
   if [[ -n "$TESTRUN_LAUNCHER" ]]; then
     read -r -a launcher <<< "$TESTRUN_LAUNCHER"
