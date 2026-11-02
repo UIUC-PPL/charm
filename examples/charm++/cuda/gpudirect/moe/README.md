@@ -538,7 +538,9 @@ one node (`hapiDevPoolCheckRegistrable`).
 ## Measured 2026-11-01: real routing, two A40 nodes, eight GPUs
 
 Everything above routes a hashed Zipf. This section replays recorded routing
-(`-E`, `--trace`; `ref/README.md` has the tools), bf16 throughout, lookahead
+(`-E`, `--trace`; `ref/README.md` has the tools; the traces are release
+`traces-2026-11-01` of <https://github.com/adityapb/charm-moe-traces>, 473 MB
+packed, fetched by its `fetch_traces.sh`), bf16 throughout, lookahead
 on, with the attention sublayer (`-w`, `--attn`) so a step is a transformer
 block's, and every system on the same tokens. Three sources, from the mildest
 to the strongest skew:

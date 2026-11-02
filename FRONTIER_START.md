@@ -93,9 +93,12 @@ repros).
    (`make CHARM_DIR=<tree>`): host-only, but run inside an allocation like everything else (`+p4`).
 6. **Traces.** The three routings are 3.3 GB of `.trace` files, ignored by git, in Delta's
    `/u/bhosale/charm-reconverse/examples/charm++/cuda/gpudirect/moe/traces/` (72 layer files and
-   `mixtral_tokens.npy`). Copy the three the README uses (`smartmoe_L02`, `mixtral_L12`, `olmoe_L12`, 22 to
-   25 MB each) or all of them, by Globus (the Delta and OLCF DTN endpoints) or scp through the DTNs, into
-   `apps/moe/traces/`. Regenerating them instead needs the checkpoints (Mixtral-8x7B 87 GB and OLMoE-1B-7B
+   `mixtral_tokens.npy`), and published, zstd-packed to 473 MB, as release `traces-2026-11-01` of
+   <https://github.com/adityapb/charm-moe-traces> (private; a token with repo scope downloads it). On
+   Frontier: `GH_TOKEN=<token> ./fetch_traces.sh apps/moe/traces` with the script from that repository
+   (it checks the sums), then `zstd -dc <set>_traces.tar.zst | tar -xf - -C apps/moe/traces` for each of
+   the three sets; its README has the format and the generating commands. The README's rows use
+   `smartmoe_L02`, `mixtral_L12` and `olmoe_L12`. Regenerating them instead needs the checkpoints (Mixtral-8x7B 87 GB and OLMoE-1B-7B
    13 GB, in Delta's `/scratch/mzu/bhosale/hf`) and SmartMoE-AE's `moe_trace` tables (`smartmoe_src` in
    the rescued scratchpads below); `traces/*_stats.txt` are the per-layer skews that chose the layers.
 7. **Baselines**, for the matrix only. `ref/moe_ref.py` (the PyTorch reference, the example's twin) runs
@@ -200,7 +203,7 @@ kernel-bound fix of 2026-11-02 still owes (the README's "A kernel bound, found a
   `mat8.sh`, `bands_table.py`, `fm8*.sh`, `alloc_*.sh`, `perf*.sh`, `trace1.sh`, `build_fastmoe.sh`,
   `fastmoe_src/`, `smartmoe_src/`). Delta's scratch is purged; copy what is needed to Frontier.
 - `examples/charm++/cuda/gpudirect/moe/ranklogs/` in the Delta clone: the per-rank logs of every arm in
-  the README; `traces/` beside it (above).
+  the README; `traces/` beside it (above, and on GitHub as a release).
 - The checkpoint cache `/scratch/mzu/bhosale/hf` (100 GB; ungated downloads, so re-downloadable).
 - The agent's memory, `/u/bhosale/.claude/projects/-u-bhosale-charm-reconverse/memory/` (facts, rules,
   the measured history). Claude Code keys it by the clone's path, so on Frontier copy it to
