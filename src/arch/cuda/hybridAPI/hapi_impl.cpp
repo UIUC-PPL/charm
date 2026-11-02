@@ -4280,7 +4280,11 @@ static void hapiMapping(char** argv) {
     int pool_chunk_mb = 0, pool_reserve_mb = 0;
     const bool have_chunk = CmiGetArgIntDesc(argv, "+gpupoolchunk", &pool_chunk_mb,
         "vmm backend: chunk size in MB (default 256); one IPC handle and one RDMA "
-        "registration per chunk");
+        "registration per chunk. A buffer sent off-node must lie in one chunk, "
+        "and a chunk of 2048 MB or more registers without error and then "
+        "accepts no remote write at all (libfabric cxi 2.3.1), so on more than "
+        "one node the size, rounded up to the allocation granularity (2 MB), "
+        "must stay below 2048");
     const bool have_reserve = CmiGetArgIntDesc(argv, "+gpupoolreserve", &pool_reserve_mb,
         "vmm backend: virtual address range reserved per device in MB (default: "
         "twice the device's memory)");
@@ -6234,9 +6238,15 @@ void hapiDevPoolReapLocked() {
 // (2026-09-18), read then as a per-process total; a vmm heap registering 6 GB
 // per process in 256 MB chunks ran clean (job 22217872), so the total applies
 // to buddy arenas only (`totalToo`) and a vmm chunk is checked on its own
-// size. Refuse here, with the reason, instead of dying in the transport. One
-// node takes any size. CK_GPU_ARENA_MAX_MB and CK_GPU_ARENA_TOTAL_MAX_MB move
-// the two ceilings when a provider allows more.
+// size. A vmm chunk (cuMemCreate memory) of exactly the arena ceiling is the
+// one more case: 2048 MB chunks registered without error on every rank and
+// every remote write into them then failed with ADDR_OUT_OF_RANGE at the first
+// step, while 1536, 1792 and 2046 MB chunks on the same nodes carried every
+// transfer exactly (job 23388275, 2026-10-31): the ceiling is 2^31 bytes
+// exactly, so for a vmm chunk it is exclusive.
+// Refuse here, with the reason, instead of dying in the transport. One node
+// takes any size. CK_GPU_ARENA_MAX_MB and CK_GPU_ARENA_TOTAL_MAX_MB move the
+// two ceilings when a provider allows more.
 size_t hapiDevPoolHeldLocked() {
   size_t held = 0;
   for (auto& ar : hapi_devpool_arenas) held += (size_t)(ar.end - ar.start);
@@ -6254,17 +6264,20 @@ void hapiDevPoolCheckRegistrable(size_t bytes, size_t nArenas, size_t held, bool
     const char* e = getenv("CK_GPU_ARENA_TOTAL_MAX_MB");
     return (size_t)(e ? atol(e) : 4096) << 20;
   }();
-  if (bytes <= arenaMax && held + bytes <= totalMax) return;
+  const bool vmm = CsvAccess(gpu_manager).device_pool_backend == 1;
+  if ((vmm ? bytes < arenaMax : bytes <= arenaMax) && held + bytes <= totalMax) return;
   CmiAbort("HAPI> [%d] device pool: refusing to open %s %zu of %zu MB: this process "
            "would hold %zu MB of pool arenas. With %d physical nodes every arena is "
            "registered with the fabric whole, and registrations past %zu MB per arena "
-           "or %zu MB per process fail every rank in the transport (lci poll_comp Err 5). "
+           "(a vmm chunk: of %zu MB or more) or %zu MB per process fail every rank in "
+           "the transport (lci poll_comp Err 5, ADDR_OUT_OF_RANGE on every write). "
            "%sReduce the per-GPU problem size, or size +gpupoolsize so the working set "
-           "fits at startup; CK_GPU_ARENA_MAX_MB / CK_GPU_ARENA_TOTAL_MAX_MB move the "
-           "ceilings.",
-           CmiMyPe(), CsvAccess(gpu_manager).device_pool_backend == 1 ? "chunk" : "arena",
+           "fits at startup (+gpupoolchunk below the ceiling but above the largest "
+           "buffer sent off-node); CK_GPU_ARENA_MAX_MB / CK_GPU_ARENA_TOTAL_MAX_MB move "
+           "the ceilings.",
+           CmiMyPe(), vmm ? "chunk" : "arena",
            nArenas + 1, bytes >> 20, (held + bytes) >> 20,
-           CmiNumPhysicalNodes(), arenaMax >> 20, totalMax >> 20,
+           CmiNumPhysicalNodes(), arenaMax >> 20, arenaMax >> 20, totalMax >> 20,
            held > 0 ? "The balancer plans only within the arenas the pool already has, "
                       "so this growth is an application or runtime allocation. "
                     : "");
@@ -6856,7 +6869,8 @@ bool hapiDevPoolSegmentOf(const void* ptr, size_t cnt, void** base, size_t* exte
       warned = true;
       CmiPrintf("HAPI> [%d] device pool (vmm): a %zu-byte buffer at %p spans %zu chunks of "
                 "%zu MB; the fabric cannot register a run of chunks, so this transfer will "
-                "fail -- raise +gpupoolchunk above the largest buffer sent off-node\n",
+                "fail -- raise +gpupoolchunk above the largest buffer sent off-node "
+                "(and below 2048 MB)\n",
                 CmiMyPe(), cnt, ptr, (size_t)((end - lo + chunk - 1) / chunk), chunk >> 20);
     }
     hi = ar->start + hapi_pool::RangeHeap::roundUp(end - ar->start, chunk);
