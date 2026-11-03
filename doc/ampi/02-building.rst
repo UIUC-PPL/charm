@@ -224,6 +224,56 @@ the same way as for charmrun:
 
    $ ./ampirun -np 16 ./pgm +balancer RefineLB
 
+ampirun on reconverse builds
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Charm++ built on the reconverse runtime has no ``charmrun``; ``ampirun``
+runs the program directly, and ``--host`` is not supported. Without
+further options the program runs as one process with one PE per rank:
+
+.. code-block:: bash
+
+   $ ./ampirun -np 16 ./pgm
+
+The ``--procs`` option runs several processes on the local host through
+LCI's ``lcrun`` launcher. This command runs four processes with four PEs
+each (``lcrun -n 4 ./pgm +pe 16``):
+
+.. code-block:: bash
+
+   $ ./ampirun -np 16 --procs 4 ./pgm
+
+Under a batch system, use the site launcher and give the program its
+total number of PEs with ``+pe``, putting ``setarch $(uname -m) -R``
+inside the launch, after the launcher's own arguments:
+
+.. code-block:: bash
+
+   $ srun -n 4 setarch $(uname -m) -R ./pgm +pe 16 +vp64
+
+The ``setarch -R`` prefix turns off address space randomization. A rank
+that migrates to another process, or is restored from a checkpoint by a
+new process, resumes on a stack that holds return addresses into the
+program and into the runtime library. These addresses are valid only if
+the code is loaded at the same address in every process, which requires
+randomization to be off. The processes must also have the same stack
+size limit (``ulimit -s``): a limit above about 128 MB, or an unlimited
+one, changes where Linux loads the program and its libraries even with
+randomization off. Restore a checkpoint under the same limit it was
+written with. On Linux, ``ampirun`` and the ``testrun`` script used by
+``make test`` add the prefix themselves; set
+``AMPIRUN_VA_RANDOMIZATION=1`` or ``TESTRUN_VA_RANDOMIZATION=1`` to
+leave randomization on. Where the system refuses the setting (a
+container under Docker's default seccomp profile), both say so once and
+run with randomization on. Under ``srun`` the prefix must be inside the
+launch because the Slurm daemon on each compute node starts the tasks,
+and they do not inherit settings of the ``srun`` process. macOS has no
+``setarch``; randomization can be turned off only by the launcher, at
+the moment it spawns the process (classic ``charmrun`` did), which
+``ampirun`` and ``testrun`` do not do, so with them a rank cannot
+migrate to another process or be restored from a checkpoint on macOS;
+migration between the PEs of one process works.
+
 Other options
 ~~~~~~~~~~~~~
 
