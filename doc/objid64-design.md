@@ -951,6 +951,18 @@ a problem only many-array libraries have. The runtime points the user at it:
 3. Drop the `-DCMK_OBJID_COLLECTION_BITS=29` line from buildcmake's --ampi-only
    block once 1 + 2 are in; the special build is then unnecessary.
 
+What PR #4118 found (2026-11-03): options passed at the AMPI creation sites
+(createNewChildAmpiSync, ampiInit) are ignored. Every AMPI array is created with
+bindTo() on the TCharm array, and CkCreateArray takes the id layout from the
+location manager the array is bound to, not from the bound array's own
+CkArrayOptions; bounds are likewise read only when a location manager is
+constructed. The layout is therefore chosen once, by `setWideCollection()` on the
+TCharm array in TCHARM_Build_threads (tcharm.C), whose bounds are already its
+element count, and every AMPI array bound to it (ampiParent, MPI_COMM_WORLD's
+array, each later communicator's array) inherits that layout. The bound arrays
+are indexed by world rank, not communicator rank, so the world-size bound covers
+every communicator and items 1 and 2 need no per-communicator size.
+
 Scheduling is Kale's, alongside the AMPI regression work; items 1 and 2 are
 independent of each other in the sense that 1 is correct and useful on its own,
 while 2 needs PR 1d. This session does not edit src/libs/ck-libs/ampi or buildcmake.

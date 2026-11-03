@@ -2366,6 +2366,9 @@ int compareAmpiSplitKey(const void *a_, const void *b_) {
 // Caller needs to eventually call newAmpi.doneInserting()
 CProxy_ampi ampi::createNewChildAmpiSync() noexcept {
   CkArrayOptions opts;
+  // Bound to the TCharm array: the location manager, its bounds (the world
+  // size; elements are indexed by world rank) and the wide-collection id
+  // layout all come from TCHARM_Build_threads, so none are set here.
   opts.bindTo(parentProxy);
   opts.setSectionAutoDelegate(false);
   opts.setNumInitial(0);
@@ -3959,10 +3962,12 @@ int ampi::intercomm_scatter(int root, const void *sendbuf, int sendcount, MPI_Da
   if (root == MPI_ROOT) {
     int remote_size = getRemoteIndices().size();
 
+    // Block i starts i*sendcount*extent bytes in (MPI 3.1 5.6); the type's
+    // size is less than its extent for a non-contiguous type.
     CkDDT_DataType* dttype = getDDT()->getType(sendtype) ;
-    int itemsize = dttype->getSize(sendcount) ;
+    int itemextent = dttype->getExtent() * sendcount;
     for(int i = 0; i < remote_size; i++) {
-        send(MPI_SCATTER_TAG, getRank(), ((char*)sendbuf)+(itemsize*i),
+        send(MPI_SCATTER_TAG, getRank(), ((char*)sendbuf)+(itemextent*i),
              sendcount, sendtype, i, intercomm);
     }
   }
@@ -3983,11 +3988,11 @@ int ampi::intercomm_iscatter(int root, const void *sendbuf, int sendcount, MPI_D
     int remote_size = getRemoteIndices().size();
 
     CkDDT_DataType* dttype = getDDT()->getType(sendtype) ;
-    int itemsize = dttype->getSize(sendcount) ;
+    int itemextent = dttype->getExtent() * sendcount; // see intercomm_scatter
     // use an ATAReq to non-block the caller and get a request ptr
     ATAReq *newreq = new ATAReq(remote_size);
     for(int i = 0; i < remote_size; i++) {
-      newreq->reqs[i] = send(MPI_SCATTER_TAG, getRank(), ((char*)sendbuf)+(itemsize*i),
+      newreq->reqs[i] = send(MPI_SCATTER_TAG, getRank(), ((char*)sendbuf)+(itemextent*i),
                              sendcount, sendtype, i, intercomm, I_SEND);
     }
     *request = postReq(newreq);
@@ -4009,9 +4014,9 @@ int ampi::intercomm_scatterv(int root, const void* sendbuf, const int* sendcount
     int remote_size = getRemoteIndices().size();
 
     CkDDT_DataType* dttype = getDDT()->getType(sendtype);
-    int itemsize = dttype->getSize();
+    int itemextent = dttype->getExtent(); // displs count elements, each one extent apart
     for (int i = 0; i < remote_size; i++) {
-        send(MPI_SCATTER_TAG, getRank(), ((char*)sendbuf)+(itemsize*displs[i]),
+        send(MPI_SCATTER_TAG, getRank(), ((char*)sendbuf)+(itemextent*displs[i]),
              sendcounts[i], sendtype, i, intercomm);
     }
   }
@@ -4032,11 +4037,11 @@ int ampi::intercomm_iscatterv(int root, const void* sendbuf, const int* sendcoun
     int remote_size = getRemoteIndices().size();
 
     CkDDT_DataType* dttype = getDDT()->getType(sendtype);
-    int itemsize = dttype->getSize();
+    int itemextent = dttype->getExtent(); // displs count elements, each one extent apart
     // use an ATAReq to non-block the caller and get a request ptr
     ATAReq *newreq = new ATAReq(remote_size);
     for (int i = 0; i < remote_size; i++) {
-      newreq->reqs[i] = send(MPI_SCATTER_TAG, getRank(), ((char*)sendbuf)+(itemsize*displs[i]),
+      newreq->reqs[i] = send(MPI_SCATTER_TAG, getRank(), ((char*)sendbuf)+(itemextent*displs[i]),
                              sendcounts[i], sendtype, i, intercomm, I_SEND);
     }
     *request = postReq(newreq);
@@ -6081,8 +6086,8 @@ CMI_WARN_UNUSED_RESULT ampiParent* AmpiRequest::blockUntilComplete(ampiParent* p
 // An ATAReq receives nothing itself; its blocks do. Mark the ATAReq and every
 // block (ATAReq::setBlocked) and count the incomplete blocks, each of which
 // counts down numBlockedReqs when it completes. The default endBlocking
-// unmarks them all the same way. Used by ATAReq::wait, by MPI_Waitall and by
-// campi's request_awaiter.
+// unmarks them all the same way. Used by MPI_Waitall and by campi's
+// request_awaiter; ATAReq::wait calls waitall on the blocks directly.
 int ATAReq::beginBlocking(ampiParent* parent, bool& viaColl) noexcept {
   viaColl = false;
   AmpiRequestList& reqList = parent->getReqs();
@@ -9412,7 +9417,7 @@ AMPI_API_IMPL(int, MPI_Neighbor_alltoall, const void* sendbuf, int sendcount, MP
   std::vector<int>& neighbors = ptr->getNeighbors();
   ptr->sortNeighborsByLocality(neighbors);
   int num_neighbors = neighbors.size();
-  int itemsize = getDDT()->getSize(sendtype) * sendcount;
+  int itemextent = getDDT()->getExtent(sendtype) * sendcount; // block i at i*sendcount*extent (MPI 3.1 7.7)
   int extent = getDDT()->getExtent(recvtype) * recvcount;
 
   std::vector<MPI_Request> reqs(num_neighbors*2);
@@ -9422,7 +9427,7 @@ AMPI_API_IMPL(int, MPI_Neighbor_alltoall, const void* sendbuf, int sendcount, MP
   }
 
   for (int i=0; i<num_neighbors; i++) {
-    reqs[num_neighbors+i] = ptr->send(MPI_NBOR_TAG, rank_in_comm, (void*)((char*)sendbuf+(itemsize*i)),
+    reqs[num_neighbors+i] = ptr->send(MPI_NBOR_TAG, rank_in_comm, (void*)((char*)sendbuf+(itemextent*i)),
                                       sendcount, sendtype, neighbors[i], comm, I_SEND);
   }
 
@@ -9468,7 +9473,7 @@ AMPI_API_IMPL(int, MPI_Ineighbor_alltoall, const void* sendbuf, int sendcount, M
   std::vector<int>& neighbors = ptr->getNeighbors();
   ptr->sortNeighborsByLocality(neighbors);
   int num_neighbors = neighbors.size();
-  int itemsize = getDDT()->getSize(sendtype) * sendcount;
+  int itemextent = getDDT()->getExtent(sendtype) * sendcount; // block i at i*sendcount*extent (MPI 3.1 7.7)
   int extent = getDDT()->getExtent(recvtype) * recvcount;
 
   // use an ATAReq to non-block the caller and get a request ptr
@@ -9479,7 +9484,7 @@ AMPI_API_IMPL(int, MPI_Ineighbor_alltoall, const void* sendbuf, int sendcount, M
   }
 
   for (int i=0; i<num_neighbors; i++) {
-    newreq->reqs[num_neighbors+i] = ptr->send(MPI_NBOR_TAG, rank_in_comm, ((char*)sendbuf)+(i*itemsize),
+    newreq->reqs[num_neighbors+i] = ptr->send(MPI_NBOR_TAG, rank_in_comm, ((char*)sendbuf)+(i*itemextent),
                                               sendcount, sendtype, neighbors[i], comm, I_SEND);
   }
   *request = ptr->postReq(newreq);
@@ -9519,7 +9524,7 @@ AMPI_API_IMPL(int, MPI_Neighbor_alltoallv, const void* sendbuf, const int *sendc
   std::vector<int>& neighbors = ptr->getNeighbors();
   ptr->sortNeighborsByLocality(neighbors);
   int num_neighbors = neighbors.size();
-  int itemsize = getDDT()->getSize(sendtype);
+  int itemextent = getDDT()->getExtent(sendtype); // sdispls count elements, each one extent apart
   int extent = getDDT()->getExtent(recvtype);
 
   std::vector<MPI_Request> reqs(num_neighbors*2);
@@ -9529,7 +9534,7 @@ AMPI_API_IMPL(int, MPI_Neighbor_alltoallv, const void* sendbuf, const int *sendc
   }
 
   for (int i=0; i<num_neighbors; i++) {
-    reqs[num_neighbors+i] = ptr->send(MPI_NBOR_TAG, rank_in_comm, (void*)((char*)sendbuf+(itemsize*sdispls[i])),
+    reqs[num_neighbors+i] = ptr->send(MPI_NBOR_TAG, rank_in_comm, (void*)((char*)sendbuf+(itemextent*sdispls[i])),
                                       sendcounts[i], sendtype, neighbors[i], comm, I_SEND);
   }
 
@@ -9576,7 +9581,7 @@ AMPI_API_IMPL(int, MPI_Ineighbor_alltoallv, const void* sendbuf, const int *send
   std::vector<int>& neighbors = ptr->getNeighbors();
   ptr->sortNeighborsByLocality(neighbors);
   int num_neighbors = neighbors.size();
-  int itemsize = getDDT()->getSize(sendtype);
+  int itemextent = getDDT()->getExtent(sendtype); // sdispls count elements, each one extent apart
   int extent = getDDT()->getExtent(recvtype);
 
   // use an ATAReq to non-block the caller and get a request ptr
@@ -9587,7 +9592,7 @@ AMPI_API_IMPL(int, MPI_Ineighbor_alltoallv, const void* sendbuf, const int *send
   }
 
   for (int i=0; i<num_neighbors; i++) {
-    newreq->reqs[num_neighbors+i] = ptr->send(MPI_NBOR_TAG, rank_in_comm, (char*)sendbuf+(itemsize*sdispls[i]),
+    newreq->reqs[num_neighbors+i] = ptr->send(MPI_NBOR_TAG, rank_in_comm, (char*)sendbuf+(itemextent*sdispls[i]),
                                               sendcounts[i], sendtype, neighbors[i], comm, I_SEND);
   }
   *request = ptr->postReq(newreq);

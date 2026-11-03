@@ -5,6 +5,7 @@ DIRS = \
   ibarrier \
   cas \
   onesided \
+  coll_extent \
   stacksize \
   migration \
   datatype \
@@ -21,7 +22,8 @@ DIRS = \
   groupfree \
   bsend \
   wildcard \
-#  intercomm_coll \ # causes hangs in SMP mode
+  commdup \
+  intercomm_coll \
 
 ifeq (1,$(CMK_CAN_LINK_FORTRAN))
   DIRS += fallreduce
