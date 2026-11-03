@@ -198,6 +198,20 @@ jobs:
       - uses: cygwin/cygwin-install-action@v4
         with:
           packages: cmake make gcc-core
+      # A Cygwin package update can remove a DLL that an installed program
+      # still loads, and the program then fails to start without naming it
+      # (libxml2 2.15.4-1, November 2026, removed the cygxml2-2.dll that cmake
+      # loads through libarchive). So check that the tools start, and name the
+      # missing DLLs in the error annotation, which the checks page shows
+      # without opening the log.
+      - name: check that the Cygwin tools start
+        run: |
+          for tool in cmake make cpp; do
+            $tool --version > /dev/null && continue
+            missing=$(cygcheck "$(command -v $tool)" 2>&1 | sed -n 's/.*could not find //p' | sort -u | tr '\n' ' ') || true
+            echo "::error::Cygwin's $tool does not start; DLLs it cannot find: ${missing:-none reported}"
+            exit 1
+          done
       # cl, link and ml64 (reconverse's fcontext sources are MASM).
       - uses: ilammy/msvc-dev-cmd@v1
       # Configure on its own, under a watchdog. The first runs of this job

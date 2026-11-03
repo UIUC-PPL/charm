@@ -22,10 +22,26 @@ if [[ $(uname) == "MSYS"* || $(uname) == "MINGW"* ]]; then
   exit 1
 fi
 
-cmake_version_major=$(cmake --version | head -1 | cut -f 3 -d' ' | cut -f 1 -d'.')
-cmake_version_minor=$(cmake --version | head -1 | cut -f 3 -d' ' | cut -f 2 -d'.')
+cmake_version_output=$(cmake --version 2>/dev/null) && rc=$? || rc=$?
+cmake_version_full=$(echo "$cmake_version_output" | head -1 | cut -f 3 -d' ')
 
-cmake_version_full=$(cmake --version | head -1 | cut -f 3 -d' ')
+# A cmake that is found but cannot start prints no version (on Cygwin, when a
+# package update has removed a DLL it loads; Cygwin's loader error is lost
+# when stderr is a pipe), so say that rather than report the version as too
+# old, and on Cygwin name the missing DLLs.
+if [[ ! $cmake_version_full =~ ^[0-9]+\.[0-9]+ ]]; then
+  echo "Error: $(command -v cmake) did not report its version ('cmake --version' exited with status $rc)."
+  if [[ $(uname) == "CYGWIN"* ]]; then
+    cmake_missing_dlls=$(cygcheck "$(command -v cmake)" 2>&1 | sed -n 's/.*could not find //p' | sort -u | tr '\n' ' ')
+    if [[ -n $cmake_missing_dlls ]]; then
+      echo "DLLs it loads that cygcheck cannot find: $cmake_missing_dlls"
+    fi
+  fi
+  exit 1
+fi
+
+cmake_version_major=$(echo "$cmake_version_full" | cut -f 1 -d'.')
+cmake_version_minor=$(echo "$cmake_version_full" | cut -f 2 -d'.')
 
 if [[ $cmake_version_major -lt 3 || ($cmake_version_major -eq 3 && $cmake_version_minor -lt 12) ]]; then
   echo "Error: CMake 3.12 or newer is required to build Charm++ (available: $cmake_version_full)."
