@@ -97,15 +97,19 @@ Writes are single-word compare-and-swap operations, never a lock:
   interleaving (this is `CkLocCache::updateLocation`'s compare, made atomic).
 - record an emigration (`LocTable::recordEmigration`, W2): CAS {self, e} to
   {destination, e+1}; the entry must name the writer, which the CAS loop checks.
-- clear (`LocTable::clear`, W5): store 0 in the value word and in the waiter
-  word; the key stays.
+- clear (`LocTable::clear`, W5): CAS the value word to 0 while it still names
+  the PE the element died on, at the epoch it died with; the key and the waiter
+  word stay (section 3.5).
 - register or take waiters: fetch_or and exchange on the waiter word. A store or
   update that gives the key a location takes the waiter bits and returns them to
   the caller, which sends the wakes (section 3.3).
 
-Keys never move and never change once published. Growth adds a segment: when a
-segment's load passes 7/8, a writer allocates a segment four times as large and
-publishes it as the new head. Readers and writers probe the newest segment
+Keys never move and never change once published, so a key that is in the table
+is found by a plain lock-free probe, and only a miss enters the insert protocol
+below. Growth adds a segment: when a segment's load passes 1/2 (a miss with
+linear probing then costs about 2.5 slots on average, against 32 at 7/8, and
+every lookup of a key in an older segment misses in the head first), a writer
+allocates a segment four times as large and publishes it as the new head. Readers and writers probe the newest segment
 first and stop at the first hit; a writer that finds no copy anywhere inserts
 into the head segment. A key must not end up in two segments: updates and
 waiter bits would then split between the copies, and a wake or an epoch could
@@ -180,7 +184,7 @@ pending table is not needed while requests are addressed to PEs (section 9).
 | emigration (W2) | the source PE, before the migration message is sent | location {destination, epoch+1}: a forwarding entry, kept |
 | immigration (W3) | the destination PE | location {self, epoch from the message} |
 | update from another PE or process (W4) | the PE that receives the update or the reply | location, by epoch compare; hashed kind: index binding |
-| death (W5) | the owning PE, and the home PE that handles the reclaim | value 0 (no location), waiter bits 0; hashed kind: index binding kept, id retired |
+| death (W5) | the owning PE, and the home PE that handles the reclaim | value 0 (no location) while the entry still names the dying PE and its epoch; waiter bits kept; hashed kind: index binding kept, id retired |
 
 Every write is one CAS or one store; the writer sends messages (wake-ups,
 replies) after it, never while holding anything. W2 is written before the
@@ -224,18 +228,46 @@ update from elsewhere, wakes the waiters. Registration and fill cannot miss
 each other: a PE registers after its own read missed, and the filler takes the
 waiter bits after its CAS succeeded; a PE whose registration lands after the
 fill reads the table again before buffering and finds the entry, and then
-sends instead of buffering (`requestLocation` returns true). A wake to a rank
-that has nothing buffered is a no-op. A bit left by such a late registration is
-harmless while the location is known and is reset by W5, so a later miss on the
-same key is "first" again.
+sends instead of buffering (`requestLocation` returns the PE) and removes its
+own bit again, so no bit outlives the fill and a later miss on the same key is
+"first" again. A wake to a rank that has nothing buffered is a no-op.
 
-A retired id (section 2.2) never gets a location, so the PE that rebinds an
-index also takes the waiter bits of the old id's slot and wakes those ranks;
-the woken PE finds no location, recovers the index, looks up the current id
-and re-addresses what it holds (`CkLocMgr::releaseRetired`,
-`CkArray::releaseRetiredMsgs`). The sender-repair rule (section 3.2) skips a
-sender in the delivering PE's own process, since that sender reads the table
-the landing wrote (`CkLocMgr::multiHop`).
+The rule every path must keep: a message a PE holds is either under an id
+whose waiter word has the PE's bit, or under an index with a request out to
+the home. The wake by id is what releases the first kind; the home's reply by
+index releases the second. Four places hand a message from one kind to the
+other or could drop it, and each is written to keep the rule:
+
+- A message to an index this process has an id for is held under the id, never
+  by index (`CkArray::bufferForLocation`); messages held by index before the
+  process learned the id join the id's queue when the next send finds the id.
+  Only an index with no id in the process is held by index, and that send asks
+  the home (`CkLocMgr::requestLocation(idx)`), whose reply by index releases
+  it. The reply releases what is held under the id too.
+- A retired id (section 2.2) never gets a location, so the PE that rebinds an
+  index also takes the waiter bits of the old id's slot and wakes those ranks.
+  The woken PE recovers the index, looks up the current id and re-addresses
+  what it holds (`CkLocMgr::releaseRetired`, `CkArray::releaseRetiredMsgs`).
+  The rebinding PE binds before it writes the new location, so a woken rank
+  can find the new id without a location yet: it then holds the messages under
+  the new id and registers as its waiter, and the write releases them. The
+  rebinding PE itself does the same for what it holds (immigration, restore
+  and resume rebind before they create the element).
+- A wake can find the entry cleared again (the element died between the fill
+  and the wake). The fill took the rank's bit, so the rank registers again
+  while it still holds messages (`CkLocCache::wake`), and the next store, by
+  the re-creation, wakes it.
+- Death (W5) clears the value but leaves the waiter word: ranks that registered
+  while the location was unknown are woken by the next store, and their request
+  to the home, if one went out, is held there until the element exists again.
+
+The sender-repair rule (section 3.2) skips a sender in the delivering PE's own
+process, since that sender reads the table the landing wrote
+(`CkLocMgr::multiHop`). Where a PE reports a move or a location, it passes the
+entry it wrote (`informHome`, the `CMK_GLOBAL_LOCATION_UPDATE` broadcast,
+`requestLocation` by index) rather than re-reading the table, which another PE
+of the process may have changed in between; `requestLocation(id)` returns the
+PE it saw for the same reason.
 
 With more than 64 PEs in a process, bit r covers ranks r, r+64, ...; a wake to
 the group is delivered to each rank in it, and the spare wakes are no-ops.
@@ -289,10 +321,21 @@ so this window is exercised more often; the test in section 7 covers it.
 
 ### 3.5 Death
 
-The owning PE clears the entry: value 0, waiter bits 0, key kept (W5); the home
-does the same when told (`reclaimRemote`). The home keeps the index binding and
-records the dead id as retired (section 2.2). Keys are never reclaimed in the
-first version, which matches the unpruned per-PE `retiredIds` before it.
+The owning PE clears the entry: value 0, key and waiter bits kept (W5); the
+home does the same when told (`reclaimRemote`, which carries the PE and the
+epoch the element died with). Both clears are conditional on the entry still
+naming that PE and epoch, because the entry is the process's: an index can be
+re-created under the same id (packed kind, or hashed with the id reused in the
+process) before a late death notice arrives, and the live entry must stay. The
+remaining gap is a re-creation on the same PE at the same epoch (epoch 0, never
+migrated) with the notice still in flight; closing it needs the creation flag
+of the tombstone design below. The home keeps the index binding and records
+the dead id as retired (section 2.2). Keys are never reclaimed in the first
+version, which matches the unpruned per-PE `retiredIds` before it.
+
+A creation stores epoch 0 unconditionally (W1), also over an entry that still
+holds the epoch of the element's earlier life; the per-PE assert that epochs
+never went backwards is gone with the per-PE cache.
 
 The design's tombstone with a death epoch, which would reject a late update
 from before the death, is not written. A packed-kind element re-created under
@@ -403,7 +446,7 @@ cursor keeps its existing treatment (object-ids.md section 5).
 
 - Table capacity: initial size from `+objid_table_log2` (default 2^16 slots for
   each table), growth by segments of four times the size, started when a
-  segment passes 7/8 full. Memory is 24 bytes per location slot and 40 bytes
+  segment passes 1/2 full. Memory is 24 bytes per location slot and 40 bytes
   per index slot at `CK_ARRAYINDEX_MAXLEN` 3.
 - The index table stores `CK_ARRAYINDEX_MAXLEN` words per index, so an index
   wider than that cannot exist, as before.
@@ -468,4 +511,18 @@ Existing: `tests/charm++/anytime_migration`, `anytime_bcastred`,
 - A shared table of pending index requests (section 2.3): not needed while
   requests are addressed to PEs.
 - Eviction (design document section 7.7): deferred until this version is
-  measured.
+  measured. Entries, index bindings and retired ids are never removed, so a
+  program that creates and deletes many elements or arrays grows the tables
+  for the whole run (a per-PE map grew the same way, once per PE).
+- A late death notice for an element re-created on the same PE at epoch 0
+  (section 3.5): the conditional clear cannot tell the two lives apart; the
+  creation flag of the tombstone design would.
+- Above 64 ranks per process, a rank that drops its own waiter bit after it
+  found the location also drops the bit of the ranks it is folded with (r+64,
+  ...). A folded rank loses its wake only if it registered after a fill and a
+  death of the same id in between; the k-word alternative in section 3.3
+  removes the fold.
+- Under `CMK_GLOBAL_LOCATION_UPDATE`, rank 0 of each process applies the
+  balancer's announced move to the shared table, and no rank does in the
+  source's process, where the emigrating PE records it. That build mode has
+  no CI job; the rule is reasoned from the code, not tested.

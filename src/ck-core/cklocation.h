@@ -443,10 +443,10 @@ public:
   void setManager(CkLocMgr* m) { mgr = m; }
 
   /// This PE holds messages for id and needs its location. Registers this rank as a
-  /// waiter; the first rank of the process to do so sends the request. Returns true
-  /// if the location became known meanwhile, so the caller can send instead of
-  /// buffering.
-  bool requestLocation(CmiUInt8 id);
+  /// waiter; the first rank of the process to do so sends the request. Returns the
+  /// PE if the location became known meanwhile, so the caller sends instead of
+  /// buffering; else -1.
+  int requestLocation(CmiUInt8 id);
 
   // Entry methods for updating location tables across processes
   void requestLocation(CmiUInt8 id, int peToTell);
@@ -476,7 +476,12 @@ public:
 
   // Insertion and removal
   void insert(CmiUInt8 id, int epoch = 0);
-  void erase(CmiUInt8 id) { ck::objid::locTable().clear(key(id)); }
+  /// Forget the location; with ifPe >= 0 only while the entry still names ifPe (and
+  /// ifEpoch, if given). True if cleared.
+  bool erase(CmiUInt8 id, int ifPe = -1, int ifEpoch = -1)
+  {
+    return ck::objid::locTable().clear(key(id), ifPe, ifEpoch);
+  }
 
   void addListener(Listener l) { listeners.push_back(l); }
   void notifyListeners(CmiUInt8 id, int pe) const
@@ -871,8 +876,10 @@ public:
   ElemMap toBeResumeFromSynced;
 
   // Advisories:
-  /// This index now lives on the given processor-- update local records
-  void informHome(const CkArrayIndex& idx, int nowOnPe);
+  /// Tell the home that idx lives where e says (unless the home is this PE or e.pe).
+  /// The caller passes the entry it wrote; the table is not re-read, because another
+  /// PE of this process may have changed it since.
+  void informHome(const CkArrayIndex& idx, const CkLocEntry& e);
 
   /// This message took several hops to reach us-- fix it
   void multiHop(CkArrayMessage* m);
@@ -906,12 +913,16 @@ public:
   void immigrateGPU(CmiUInt8 id, int size, char* data);
   // Destination's ack: the staged payload has been read and can be released.
 #endif
-  /// Ask for the location of id (see CkLocCache::requestLocation); true if it is
-  /// known now and the caller should send rather than buffer.
-  bool requestLocation(CmiUInt8 id);
-  /// Messages this PE holds under an id this process has retired go to the index's
-  /// current id, if that has a location. Called on a wake for an id with none.
-  void releaseRetired(CmiUInt8 oldId);
+  /// Ask for the location of id (see CkLocCache::requestLocation); the PE if it is
+  /// known now and the caller should send rather than buffer, else -1.
+  int requestLocation(CmiUInt8 id);
+  /// Messages this PE holds under an id this process has retired are re-addressed
+  /// to the index's current id: sent if that has a location, else held under the
+  /// new id with this rank registered as its waiter. False if oldId is not retired.
+  bool releaseRetired(CmiUInt8 oldId);
+  /// Does any array of this manager hold messages under id?
+  bool hasBufferedMsgs(CmiUInt8 id) const;
+  /// Ask the home for the location of an index this process has no id for.
   void requestLocation(const CkArrayIndex& idx);
   bool requestLocation(const CkArrayIndex& idx, int peToTell);
   void updateLocation(const CkArrayIndex& idx, const CkLocEntry& e);
@@ -920,7 +931,7 @@ public:
   /// element is about to live on pe, before the move is acted on.
   void updateLocationFromLB(CmiUInt8 id, int pe);
 #endif
-  void reclaimRemote(const CkArrayIndex& idx, int deletedOnPe);
+  void reclaimRemote(const CkArrayIndex& idx, int deletedOnPe, int epoch);
   void noteDead(const CkArrayIndex& idx, CmiUInt8 id);
 
   // Tranche allocator (design section 3.1). The allocator is this group's branch on

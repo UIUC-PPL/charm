@@ -79,7 +79,10 @@ public:
       case 2: what = "every key at the final epoch; grown-table inserts"; break;
       case 3: what = "grown table: every key found, growth happened"; wantExtra = N; break;
       case 4: what = "waiters: one first registrant per key per process"; wantExtra = (long)nKeys * N; break;
-      case 5: what = "fill takes one waiter bit per PE"; wantExtra = (long)nKeys * P; break;
+      case 5:  // bit r stands for ranks r, r+64, ...: at most 64 bits per key
+        what = "fill takes one waiter bit per PE";
+        wantExtra = (long)nKeys * N * (ranks < 64 ? ranks : 64);
+        break;
       case 6: what = "index table: one unbound bind per key per process"; wantExtra = (long)nKeys * N; break;
       case 7: what = "index rebinding reports the old id"; wantExtra = (long)nKeys * N; break;
       case 8: what = "index lookups give the new id"; break;
@@ -88,7 +91,6 @@ public:
              what, checked, violations, extra, wantExtra);
     if (violations != 0) CkAbort("objid_loctable: violations\n");
     if (wantExtra >= 0 && extra != wantExtra) CkAbort("objid_loctable: count mismatch\n");
-    if (ranks > 64 && (phase == 5)) CkPrintf("(more than 64 ranks: bit counts fold)\n");
     delete msg;
     if (++phase > PHASES)
     {

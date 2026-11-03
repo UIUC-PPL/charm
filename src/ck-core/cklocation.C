@@ -2753,7 +2753,7 @@ void CkLocCache::pup(PUP::er& p)
   // branch shipped the home's remote entries, encoded against the old PE count.)
 }
 
-bool CkLocCache::requestLocation(CmiUInt8 id)
+int CkLocCache::requestLocation(CmiUInt8 id)
 {
   ck::objid::LocTable& t = ck::objid::locTable();
   const CmiUInt8 k = key(id);
@@ -2761,11 +2761,18 @@ bool CkLocCache::requestLocation(CmiUInt8 id)
   // registration is seen by the re-read; one that lands after takes the bit and
   // wakes this PE. Either way the message is not stranded (section 3.3).
   const bool first = t.registerWaiter(k, CkMyRank());
-  if (t.pe(k) != -1) return true;
+  const int pe = t.pe(k);
+  if (pe != -1)
+  {
+    // The bit would otherwise stay after the fill and make the next miss on this
+    // id think a request is already out.
+    t.unregisterWaiter(k, CkMyRank());
+    return pe;
+  }
   if (!first)
   {
     if (ck::objid::_objidDiag) t.counters().requestsSkipped++;
-    return false;  // another PE of this process has asked; its reply wakes every waiter
+    return -1;  // another PE of this process has asked; its reply wakes every waiter
   }
   const int home = homePe(id);
   // The home's table is this table when the home is in this process: it has no
@@ -2775,7 +2782,7 @@ bool CkLocCache::requestLocation(CmiUInt8 id)
     if (ck::objid::_objidDiag) t.counters().requestsSent++;
     thisProxy[home].requestLocation(id, CkMyPe());
   }
-  return false;
+  return -1;
 }
 
 void CkLocCache::requestLocation(CmiUInt8 id, const int peToTell)
@@ -2812,9 +2819,20 @@ void CkLocCache::wake(CmiUInt8 id)
 {
   const int pe = getPe(id);
   if (pe != -1)
+  {
     notifyListeners(id, pe);
-  else if (mgr)
-    mgr->releaseRetired(id);  // a retired id, or the location was cleared again
+    return;
+  }
+  if (mgr == nullptr) return;
+  if (mgr->releaseRetired(id)) return;  // a retired id: re-addressed
+  // The location was cleared again (the element died) before this wake ran, and the
+  // fill took this rank's bit. Stay a waiter while messages are held, so the next
+  // store wakes this rank; the array does not request again while it holds them.
+  if (mgr->hasBufferedMsgs(id))
+  {
+    const int now = requestLocation(id);
+    if (now != -1) notifyListeners(id, now);
+  }
 }
 
 void CkLocCache::notifyRetired(CmiUInt8 id)
@@ -2849,11 +2867,11 @@ int CkLocCache::recordEmigration(CmiUInt8 id, int pe)
 
 void CkLocCache::insert(CmiUInt8 id, int epoch)
 {
-  // The writer holds the element: the store is unconditional, as the per-PE cache's
-  // was. (Today's assert that epoch does not go backwards is kept for checking builds.)
+  // The writer holds the element: the store is unconditional (W1, W3). The epoch
+  // may be lower than the entry's: a re-created element starts at 0 while the table
+  // may still hold the epoch of its earlier life (section 3.5).
   ck::objid::LocTable& t = ck::objid::locTable();
   const CmiUInt8 k = key(id);
-  CkAssert(epoch >= t.epoch(k));
   const CmiUInt8 waiters = t.store(k, CkMyPe(), epoch);
   notifyListeners(id, CkMyPe());
   wakeRanks(waiters, id);
@@ -3068,18 +3086,10 @@ void CkLocMgr::deleteManager(CkArrayID id, CkArray* mgr)
     delete this;
 }
 
-// Tell this element's home processor it now lives "there"
-void CkLocMgr::informHome(const CkArrayIndex& idx, int nowOnPe)
+void CkLocMgr::informHome(const CkArrayIndex& idx, const CkLocEntry& e)
 {
-  int home = homePe(idx);
-  // TODO: If home == CkMyPe() should we call update locally?
-  if (home != CkMyPe() && home != nowOnPe)
-  {
-    // TODO: This may not need to be an idx update. Pretty sure the home will always
-    // know the idx to id mapping.
-    CmiUInt8 id = lookupID(idx);
-    thisProxy[home].updateLocation(idx, cache->getLocationEntry(id));
-  }
+  const int home = homePe(idx);
+  if (home != CkMyPe() && home != e.pe) thisProxy[home].updateLocation(idx, e);
 }
 
 CkLocRec* CkLocMgr::createLocal(const CkArrayIndex& idx, bool forMigration,
@@ -3091,12 +3101,13 @@ CkLocRec* CkLocMgr::createLocal(const CkArrayIndex& idx, bool forMigration,
   CkLocRec* rec = new CkLocRec(this, forMigration, ignoreArrival, idx, id);
   insertRec(rec, id);
   cache->insert(id, epoch);
-  updateLocation(idx, cache->getLocationEntry(id));
+  CkLocEntry e;
+  e.id = id;
+  e.pe = CkMyPe();
+  e.epoch = epoch;
+  updateLocation(idx, e);
 
-  if (notifyHome)
-  {
-    informHome(idx, CkMyPe());
-  }
+  if (notifyHome) informHome(idx, e);
   return rec;
 }
 
@@ -3198,28 +3209,19 @@ bool CkLocMgr::addElementToRec(CkLocRec* rec, CkArray* mgr, CkMigratable* elt,
   return true;
 }
 
-bool CkLocMgr::requestLocation(CmiUInt8 id)
+int CkLocMgr::requestLocation(CmiUInt8 id)
 {
   return cache->requestLocation(id);
 }
 
 void CkLocMgr::requestLocation(const CkArrayIndex& idx)
 {
-  CmiUInt8 id;
-  if (lookupID(idx, id))
-  {
-    // Known already (written by another PE of this process): release what was
-    // buffered by index as well as by id.
-    if (requestLocation(id)) notifyListeners(idx, id, cache->getPe(id));
-  }
-  else
-  {
-    int home = homePe(idx);
-    if (home != CkMyPe())
-    {
-      thisProxy[home].requestLocation(idx, CkMyPe());
-    }
-  }
+  // The caller found no id for idx in this process and holds the message by index;
+  // the home's reply (updateLocation by index) releases it. An index with an id is
+  // held under the id instead (CkArray::bufferForLocation), where the waiter bits
+  // apply.
+  const int home = homePe(idx);
+  if (home != CkMyPe()) thisProxy[home].requestLocation(idx, CkMyPe());
 }
 
 bool CkLocMgr::requestLocation(const CkArrayIndex& idx, const int peToTell)
@@ -3227,11 +3229,15 @@ bool CkLocMgr::requestLocation(const CkArrayIndex& idx, const int peToTell)
   CkAssert(peToTell != CkMyPe());
 
   CmiUInt8 id;
-  if (lookupID(idx, id) && cache->getPe(id) != -1)
+  if (lookupID(idx, id))
   {
-    // We know the id and where it lives: answer now.
-    thisProxy[peToTell].updateLocation(idx, cache->getLocationEntry(id));
-    return true;
+    const CkLocEntry e = cache->getLocationEntry(id);  // read once: it can change
+    if (e.pe != -1)
+    {
+      // We know the id and where it lives: answer now.
+      thisProxy[peToTell].updateLocation(idx, e);
+      return true;
+    }
   }
   // Either the index has no id yet (hashed kind: the element was never created), or
   // the id is known but its location is not (packed kind, whose ids exist before
@@ -3263,6 +3269,13 @@ bool CkLocMgr::recoverIndex(CmiUInt8 id, CkArrayIndex& idx) const
 #if CMK_LBDB_ON && CMK_GLOBAL_LOCATION_UPDATE
 void CkLocMgr::updateLocationFromLB(CmiUInt8 id, int pe)
 {
+  // The table is the process's: one rank writes it, and the write wakes the other
+  // ranks' waiters. In the source's process the emigrating PE records the move
+  // itself (recordEmigration), and an earlier write here would make its entry name
+  // the destination already.
+  if (CkMyRank() != 0) return;
+  const int cur = cache->getPe(id);
+  if (cur != -1 && CkNodeOf(cur) == CkMyNode()) return;
   CkLocEntry e;
   e.id = id;
   e.pe = pe;
@@ -3323,6 +3336,7 @@ void CkLocMgr::reclaim(CkLocRec* rec)
     if (itr->second->lookup(rec->getID()))
       return;
   }
+  const int epoch = cache->getEpoch(rec->getID());  // before removeFromTable clears it
   removeFromTable(rec->getID());
 
   DEBC((AA "Destroying record for element %s\n" AB, idx2str(rec->getIndex())));
@@ -3336,7 +3350,7 @@ void CkLocMgr::reclaim(CkLocRec* rec)
       if (!CkInRestarting())  // all array elements are removed anyway
 #endif
         if (!duringDestruction)
-          thisProxy[home].reclaimRemote(rec->getIndex(), CkMyPe());
+          thisProxy[home].reclaimRemote(rec->getIndex(), CkMyPe(), epoch);
   }
   delete rec;
 }
@@ -3358,19 +3372,37 @@ void CkLocMgr::retireId(CmiUInt8 oldId, const CkArrayIndex& idx)
   releaseRetired(oldId);
 }
 
-void CkLocMgr::releaseRetired(CmiUInt8 oldId)
+bool CkLocMgr::releaseRetired(CmiUInt8 oldId)
 {
   CkArrayIndex idx;
   CmiUInt8 cur;
-  if (!recoverIndex(oldId, idx) || !lookupID(idx, cur) || cur == oldId) return;
-  const int pe = cache->getPe(cur);
-  if (pe == -1) return;  // the new element's location arrives later and wakes us
-  for (auto& m : managers) m.second->releaseRetiredMsgs(oldId, cur, pe);
+  if (!recoverIndex(oldId, idx) || !lookupID(idx, cur) || cur == oldId) return false;
+  int pe = cache->getPe(cur);
+  if (pe != -1)
+  {
+    for (auto& m : managers) m.second->releaseRetiredMsgs(oldId, cur, pe);
+    return true;
+  }
+  // The new id has no location yet (its writer rebinds before it writes, section
+  // 3.5). Hold the messages under the new id and wait on it; the fill wakes this
+  // rank (or finds the location now).
+  for (auto& m : managers) m.second->releaseRetiredMsgs(oldId, cur, -1);
+  if (!hasBufferedMsgs(cur)) return true;
+  pe = cache->requestLocation(cur);
+  if (pe != -1) cache->notifyListeners(cur, pe);
+  return true;
+}
+
+bool CkLocMgr::hasBufferedMsgs(CmiUInt8 id) const
+{
+  for (const auto& m : managers)
+    if (m.second->hasBufferedMsgs(id)) return true;
+  return false;
 }
 
 // TODO: Rename to something more basic. This is just clearing entries from the
 // cache. Will be called by reclaim remote, but maybe other things as well.
-void CkLocMgr::reclaimRemote(const CkArrayIndex& idx, int deletedOnPe)
+void CkLocMgr::reclaimRemote(const CkArrayIndex& idx, int deletedOnPe, int epoch)
 {
   DEBC((AA "Our element %s died on PE %d\n" AB, idx2str(idx), deletedOnPe));
 
@@ -3378,11 +3410,12 @@ void CkLocMgr::reclaimRemote(const CkArrayIndex& idx, int deletedOnPe)
   if (!lookupID(idx, id))
     CkAbort("Cannot find ID for the given index\n");
 
-  // Delete the ID from location caching. Do not delete the idx to id mapping because
-  // that remains constant and we don't want messages to end up stranded because they
-  // can't figure out their index.
+  // Forget the location, but only while the entry still describes the element that
+  // died: the index may have been re-created under the same id since (packed kind,
+  // or hashed with the id reused in this process), and the entry is the process's.
+  // The idx -> id binding stays so messages can recover their index.
   noteDead(idx, id);
-  cache->erase(id);
+  cache->erase(id, deletedOnPe, epoch);
 }
 
 void CkLocMgr::removeFromTable(const CmiUInt8 id)
@@ -3395,8 +3428,7 @@ void CkLocMgr::removeFromTable(const CmiUInt8 id)
   hash.erase(id);
   // Don't erase this during migration because the entry will be updated to reflect
   // the new location by calling recordEmigration
-  if (!duringMigration)
-    cache->erase(id);
+  if (!duringMigration) cache->erase(id, CkMyPe());
 #if CMK_ERROR_CHECKING
   // Make sure it's really gone
   if (NULL != elementNrec(id))
@@ -3706,18 +3738,21 @@ void CkLocMgr::emigrate(CkLocRec* rec, int toPe)
   }
   duringMigration = false;
 
-  informHome(idx, toPe);
+  CkLocEntry moved;
+  moved.id = id;
+  moved.pe = toPe;
+  moved.epoch = newEpoch;
+  informHome(idx, moved);
 
 #if CMK_GLOBAL_LOCATION_UPDATE
-  // Every PE already recorded this move before it was acted on (UpdateLocation,
-  // from the balancer's decision), with an epoch counted from its own cache. This
-  // broadcast carries the element's true epoch (the entry recordEmigration just
-  // advanced), so a bystander whose count fell short cannot have the entry
-  // overwritten by an older reply still in flight. The home was told above and
-  // ignores the duplicate by epoch. Cost: one group broadcast per migration, in
-  // this build mode only.
+  // Other processes recorded this move before it was acted on (UpdateLocation, from
+  // the balancer's decision), with an epoch counted from their own entry. This
+  // broadcast carries the element's true epoch, so a process whose count fell short
+  // cannot have the entry overwritten by an older reply still in flight. The home
+  // was told above and ignores the duplicate by epoch. Cost: one group broadcast
+  // per migration, in this build mode only.
   DEBM((AA "Global location update. idx %s assigned to %d \n" AB, idx2str(idx), toPe));
-  thisProxy.updateLocation(idx, cache->getLocationEntry(id));
+  thisProxy.updateLocation(idx, moved);
 #endif
 
   CK_MAGICNUMBER_CHECK

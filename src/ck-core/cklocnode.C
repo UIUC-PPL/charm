@@ -104,17 +104,17 @@ void LocTable::grow(Segment* from)
   counts.growths.fetch_add(1, std::memory_order_relaxed);
 }
 
-// The search for the key and the insert on a miss happen while this writer is
-// counted active in the head segment, and a segment is sealed before it is
-// superseded (grow). Either this writer saw the seal and starts over in the newer
-// segment, or the grower saw this writer and publishes only after it is done: no
-// insert into an older segment can be in progress or still to come while a writer
-// searches the newer one, so a key gets one slot in one segment. Without this, a
-// writer whose search missed and whose insert landed in the old segment after
-// the head moved left two copies, and updates and waiter bits went to one or the
-// other (found by objid_loctable on oversubscribed CI runners).
+// A key present in the table is found lock-free: slots never move. Only a miss
+// enters the insert protocol: the search is repeated and the insert done while this
+// writer is counted active in the head segment, and a segment is sealed before it
+// is superseded (grow). Either this writer sees the seal and starts over in the
+// newer segment, or the grower sees this writer and publishes only after it is
+// done. So no insert into an older segment is in progress or still to come while a
+// writer searches the newer one, and a key gets one slot in one segment
+// (doc/internals/process-location-cache.md, section 2.1).
 LocTable::Slot* LocTable::findOrInsert(uint64_t key)
 {
+  if (Slot* s = find(key)) return s;
   for (;;)
   {
     Segment* seg = head.load(std::memory_order_acquire);
@@ -128,8 +128,10 @@ LocTable::Slot* LocTable::findOrInsert(uint64_t key)
     Slot* found = find(key);
     if (found == nullptr)
     {
-      // Keep the load under 7/8 so probes stay short.
-      if ((seg->used.load(std::memory_order_relaxed) + 1) * 8 > (seg->mask + 1) * 7)
+      // Keep the load under 1/2: a miss with linear probing then costs about 2.5
+      // slots on average (32 at 7/8), and every lookup of a key in an older segment
+      // misses in the head segment first.
+      if ((seg->used.load(std::memory_order_relaxed) + 1) * 2 > seg->mask + 1)
       {
         seg->active.fetch_sub(1, std::memory_order_release);
         grow(seg);
@@ -221,15 +223,26 @@ int LocTable::recordEmigration(uint64_t key, int fromPe, int toPe)
   }
 }
 
-void LocTable::clear(uint64_t key)
+bool LocTable::clear(uint64_t key, int ifPe, int ifEpoch)
 {
   Slot* s = find(key);
-  if (s == nullptr) return;
-  s->value.store(0, std::memory_order_release);
-  // Bits left by ranks that registered after a fill (harmless while the location
-  // was known) would make the next miss think a request is already out. A rank
-  // that misses after this registers afresh and is the first again.
-  s->waiters.store(0, std::memory_order_release);
+  if (s == nullptr) return false;
+  if (ifPe < 0)
+  {
+    s->value.store(0, std::memory_order_release);
+    return true;
+  }
+  uint64_t cur = s->value.load(std::memory_order_acquire);
+  for (;;)
+  {
+    Value c;
+    c.raw = cur;
+    if (!c.hasLocation() || c.pe() != ifPe || (ifEpoch >= 0 && c.epoch() != ifEpoch))
+      return false;
+    if (s->value.compare_exchange_weak(cur, 0, std::memory_order_acq_rel,
+                                       std::memory_order_acquire))
+      return true;
+  }
 }
 
 bool LocTable::registerWaiter(uint64_t key, int rank)
@@ -238,6 +251,12 @@ bool LocTable::registerWaiter(uint64_t key, int rank)
   const uint64_t bit = 1ull << (rank & 63);
   const uint64_t before = s->waiters.fetch_or(bit, std::memory_order_acq_rel);
   return before == 0;
+}
+
+void LocTable::unregisterWaiter(uint64_t key, int rank)
+{
+  Slot* s = find(key);
+  if (s) s->waiters.fetch_and(~(1ull << (rank & 63)), std::memory_order_acq_rel);
 }
 
 uint64_t LocTable::takeWaiters(uint64_t key)
@@ -392,8 +411,19 @@ uint64_t IndexTable::bind(uint64_t collection, const CkArrayIndex& idx, uint64_t
   uint64_t key[KEY_WORDS];
   makeKey(collection, idx, key);
   const uint64_t h = hashKey(key);
-  // Search and insert while counted active in the head segment: see
-  // LocTable::findOrInsert.
+  // A binding already in the table is found lock-free; a miss searches and inserts
+  // while counted active in the head segment: see LocTable::findOrInsert.
+  if (std::atomic<uint64_t>* idw = find(key, h, true))
+  {
+    uint64_t cur = idw->load(std::memory_order_acquire);
+    for (;;)
+    {
+      if (cur == id) return id;
+      if (idw->compare_exchange_weak(cur, id, std::memory_order_acq_rel,
+                                     std::memory_order_acquire))
+        return cur;
+    }
+  }
   for (;;)
   {
     Segment* seg = head.load(std::memory_order_acquire);
@@ -416,7 +446,7 @@ uint64_t IndexTable::bind(uint64_t collection, const CkArrayIndex& idx, uint64_t
           return cur;
       }
     }
-    if ((seg->used.load(std::memory_order_relaxed) + 1) * 8 > (seg->mask + 1) * 7)
+    if ((seg->used.load(std::memory_order_relaxed) + 1) * 2 > seg->mask + 1)
     {
       seg->active.fetch_sub(1, std::memory_order_release);
       grow(seg);

@@ -7,7 +7,8 @@
 // no bounds, so its index is not packed into element ids (the hashed kind: ids come
 // from the process's tranche and every PE learns index -> id -> location through
 // the location tables); with -b the bounds 4^6 pack into 12 bits (the packed kind).
-// Elements are inserted dynamically, from every PE. Three modes:
+// Elements are inserted dynamically, from every PE, each on the inserting PE (so
+// element 0 is on PE 0 and the stream mode's sender is in its process). Three modes:
 //
 //   default   ring traffic as in unbounded_migration, and every migPeriod steps an
 //             element calls migrateMe to the next PE (crosses processes under lcrun)
@@ -119,7 +120,7 @@ public:
       CkAbort("objid_migrate6: delivery count mismatch\n");
     // Stream mode moves only between the PEs of one process; nothing can move when
     // each process has one PE. A balancer is free to move nothing.
-    const bool canMove = mode == MODE_STREAM ? CkNodeSize(0) > 1 : CkNumPes() > 1;
+    const bool canMove = mode == MODE_STREAM ? CkNodeSize(CkNodeOf(0)) > 1 : CkNumPes() > 1;
     if (got[3] == 0 && canMove && mode != MODE_ATSYNC)
       CkAbort("objid_migrate6: nothing migrated\n");
     CkPrintf("All done\n");
@@ -136,7 +137,7 @@ public:
   Inserter()
   {
     for (int i = 0; i < nElems; ++i)
-      if (i % CkNumPes() == CkMyPe()) arrProxy(indexOf(i)).insert(i);
+      if (i % CkNumPes() == CkMyPe()) arrProxy(indexOf(i)).insert(i, CkMyPe());
     contribute(CkCallback(CkReductionTarget(Main, inserted), mainProxy));
   }
 };

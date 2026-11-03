@@ -81,13 +81,18 @@ public:
   uint64_t update(uint64_t key, int pe, int epoch, bool arriving, bool* written = nullptr);
   /// W2: {fromPe, e} -> {toPe, e+1}; returns the new epoch. The entry must name fromPe.
   int recordEmigration(uint64_t key, int fromPe, int toPe);
-  /// Forget the location (death, or the record leaving this PE) and its waiter
-  /// bits; the key stays.
-  void clear(uint64_t key);
+  /// Forget the location (death, or the record leaving this PE); the key and the
+  /// waiter bits stay: a rank that registered while the location was unknown is
+  /// woken by the next store. With ifPe >= 0 the entry is cleared only while it
+  /// names ifPe (and, with ifEpoch >= 0, that epoch): a death notice that arrives
+  /// after a re-creation leaves the live entry alone. True if cleared.
+  bool clear(uint64_t key, int ifPe = -1, int ifEpoch = -1);
 
   /// Set rank's bit in the key's waiter word; true if the word was 0 before, which
   /// makes this rank the one that sends the request. Inserts the key if absent.
   bool registerWaiter(uint64_t key, int rank);
+  /// Drop rank's bit: the rank registered and then found the location itself.
+  void unregisterWaiter(uint64_t key, int rank);
   uint64_t takeWaiters(uint64_t key);
 
   Counters& counters() { return counts; }
@@ -194,7 +199,7 @@ IndexTable& indexTable();
  * Ids of the hashed kind that no longer name a live element -> their index: an id
  * a process rebound to a newer one, and, at the home, every dead element's id.
  * Read on the miss path only (CkLocMgr::recoverIndex), never on a send, so a
- * mutex is acceptable here. Never pruned, as the per-PE map was not.
+ * mutex is acceptable here. Never pruned.
  */
 class RetiredIds
 {

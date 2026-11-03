@@ -2166,10 +2166,14 @@ void CkArray::handleUnknownByID(CkArrayMessage* msg, CmiUInt8 id, CkDeliver_t ty
 
   // Otherwise hold it here until the location manager resolves the id. The request
   // can find the location already written by another PE of this process.
-  if (bufferedIDMsgs.find(id) == bufferedIDMsgs.end() && locMgr->requestLocation(id))
+  if (bufferedIDMsgs.find(id) == bufferedIDMsgs.end())
   {
-    sendToPe(msg, locMgr->whichPe(id), type, opts);
-    return;
+    const int pe = locMgr->requestLocation(id);
+    if (pe != -1)
+    {
+      sendToPe(msg, pe, type, opts);
+      return;
+    }
   }
   bufferedIDMsgs[id].push_back(msg);
 }
@@ -2216,38 +2220,53 @@ void CkArray::handleUnknown(CkArrayMessage* msg, const CkArrayIndex& idx,
   }
 }
 
-// Buffer the message to be sent when we know the location, and send a request for the
-// location if we haven't send one yet for this index.
+// Buffer the message to be sent when we know the location, and ask for the location
+// if no request is out yet. A message whose index this process has an id for is held
+// under that id, where the process's waiter bits release it; only an index without
+// an id is held by index, released by the home's reply by index.
 void CkArray::bufferForLocation(CkArrayMessage* msg, const CkArrayIndex& idx)
 {
   CmiUInt8 id = msg->array_element_id();
-  if (UsrToEnv(msg)->getRecipientID() != 0)
+  // An id another process addressed may be one this process has rebound since
+  // (hashed kind), and an index without an id may have one here: hold the message
+  // under the index's current id.
+  CmiUInt8 current;
+  const bool hasId = locMgr->lookupID(idx, current);
+  if (hasId && current != id)
   {
-    // An id another process addressed may be one this process has rebound since
-    // (hashed kind): hold the message under the index's current id.
-    CmiUInt8 current;
-    if (locMgr->lookupID(idx, current) && current != id)
+    UsrToEnv(msg)->setRecipientID(makeID(current));
+    id = current;
+  }
+  if (!hasId && UsrToEnv(msg)->getRecipientID() == 0)
+  {
+    bufferedIndexMsgs[idx].push_back(msg);
+    if (bufferedIndexMsgs[idx].size() == 1) locMgr->requestLocation(idx);
+    return;
+  }
+
+  // Messages held by index before this process learned its id join the id's queue.
+  const bool fresh = bufferedIDMsgs.find(id) == bufferedIDMsgs.end();
+  auto byIndex = bufferedIndexMsgs.find(idx);
+  if (byIndex != bufferedIndexMsgs.end())
+  {
+    for (CkArrayMessage* m : byIndex->second)
     {
-      UsrToEnv(msg)->setRecipientID(makeID(current));
-      id = current;
+      UsrToEnv(m)->setRecipientID(makeID(id));
+      bufferedIDMsgs[id].push_back(m);
     }
-    CkAssert(bufferedIndexMsgs.find(idx) == bufferedIndexMsgs.end());
-    if (bufferedIDMsgs.find(id) == bufferedIDMsgs.end() && locMgr->requestLocation(id))
+    bufferedIndexMsgs.erase(byIndex);
+  }
+  if (fresh)
+  {
+    const int pe = locMgr->requestLocation(id);
+    if (pe != -1)
     {
-      sendToPe(msg, locMgr->whichPe(id), CkDeliver_queue);
+      if (bufferedIDMsgs.find(id) != bufferedIDMsgs.end()) sendBufferedMsgs(id, pe);
+      sendToPe(msg, pe, CkDeliver_queue);
       return;
     }
-    bufferedIDMsgs[id].push_back(msg);
   }
-  else
-  {
-    CkAssert(bufferedIDMsgs.find(id) == bufferedIDMsgs.end());
-    if (bufferedIndexMsgs.find(idx) == bufferedIndexMsgs.end())
-    {
-      locMgr->requestLocation(idx);
-    }
-    bufferedIndexMsgs[idx].push_back(msg);
-  }
+  bufferedIDMsgs[id].push_back(msg);
 }
 
 // Demand creation has 4 possible outcomes:
@@ -2379,9 +2398,12 @@ void CkArray::releaseRetiredMsgs(CmiUInt8 oldId, CmiUInt8 newId, int pe)
   {
     CkAssert(msg->array_element_id() == oldId);
     UsrToEnv(msg)->setRecipientID(makeID(newId));
-    sendToPe(msg, pe, CkDeliver_queue);
+    if (pe == -1)
+      bufferedIDMsgs[newId].push_back(msg);
+    else
+      sendToPe(msg, pe, CkDeliver_queue);
   }
-  bufferedIDMsgs.erase(it);
+  bufferedIDMsgs.erase(oldId);
 }
 
 void CkArray::sendBufferedMsgs(const CkArrayIndex& idx, CmiUInt8 id, int pe)
