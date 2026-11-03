@@ -140,11 +140,16 @@ static int collectLoadedObject(struct dl_phdr_info * info, size_t, void * data)
 {
   auto objects = (std::vector<LoadedObject> *)data;
   const std::string name = info->dlpi_name ? info->dlpi_name : "";
-  /* The vdso (linux-vdso.so.1, linux-gate.so.1) is left out: its functions
-     neither block nor call back, so no suspended thread's stack points into
-     it, and it is the first entry the loader lists, so a mismatch report
-     would name it instead of the object that matters. */
+  /* The vdso is left out: its functions neither block nor call back, so no
+     suspended thread's stack points into it, and it is the entry right after
+     the program, so a mismatch report would name it instead of the object
+     that matters. Newer glibc lists it as linux-vdso.so.1 or linux-gate.so.1;
+     glibc 2.17 (CentOS and RHEL 7) lists it with an empty name, the same as
+     the program's own entry. The program is always the first entry visited,
+     so a later unnamed entry is the vdso and is skipped. */
   if (name.compare(0, 10, "linux-vdso") == 0 || name.compare(0, 10, "linux-gate") == 0)
+    return 0;
+  if (name.empty() && !objects->empty())
     return 0;
   objects->push_back({name, (unsigned long long)info->dlpi_addr});
   return 0;
@@ -181,22 +186,32 @@ static void pupLoadedObjects(PUP::er & p)
     p | base;
     if (!p.isUnpacking())
       continue;
+    /* Compared with the first local entry of that name only: a second entry
+       of the same name, if a loader ever lists one, must not fail the thread
+       against the entry it does not match. An object this process has not
+       loaded is not compared. */
     for (const LoadedObject & o : loadedObjects)
     {
-      if (o.name != name || o.base == base)
+      if (o.name != name)
         continue;
-      const char * shown = name.empty() ? "the program" : name.c_str();
-      CmiAbort("Isomalloc> Cannot resume a migratable thread in this process: "
-               "%s is loaded at 0x%llx here but was at 0x%llx in the process "
-               "that packed the thread, whose stack holds addresses into the "
-               "program's code. Every process of a job whose threads migrate "
-               "between processes or restart from a checkpoint must load the "
-               "program at the same addresses: run with address space layout "
-               "randomization off (Linux: setarch $(uname -m) -R before the "
-               "program or the launcher). macOS always randomizes, so there "
-               "threads must not migrate between processes and a restart from "
-               "a checkpoint is not possible.",
-               shown, o.base, base);
+      if (o.base != base)
+      {
+        const char * shown = name.empty() ? "the program" : name.c_str();
+        CmiAbort("Isomalloc> Cannot resume a migratable thread in this process: "
+                 "%s is loaded at 0x%llx here but was at 0x%llx in the process "
+                 "that packed the thread, whose stack holds addresses into the "
+                 "program's code. Every process of a job whose threads migrate "
+                 "between processes or restart from a checkpoint must load the "
+                 "program at the same addresses: run with address space layout "
+                 "randomization off (Linux: setarch $(uname -m) -R in front of "
+                 "the program; with srun or mpirun, which start the tasks "
+                 "themselves, inside the launch: srun ... setarch $(uname -m) "
+                 "-R ./pgm). ampirun and testrun cannot turn randomization off "
+                 "on macOS, so there threads must not migrate between processes "
+                 "and a restart from a checkpoint is not possible.",
+                 shown, o.base, base);
+      }
+      break;
     }
   }
 }
