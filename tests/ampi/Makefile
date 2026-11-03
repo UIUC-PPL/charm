@@ -21,6 +21,7 @@ DIRS = \
   groupfree \
   bsend \
   wildcard \
+  commdup \
 #  intercomm_coll \ # causes hangs in SMP mode
 
 ifeq (1,$(CMK_CAN_LINK_FORTRAN))
