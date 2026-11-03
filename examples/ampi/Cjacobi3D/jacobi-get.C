@@ -159,9 +159,9 @@ int main(int ac, char** av)
     AMPI_Iget(0, DIMY*DIMZ, MPI_DOUBLE, cp->xp, 0, DIMY*DIMZ, MPI_DOUBLE, win, &reqxp);
     AMPI_Iget(0, DIMY*DIMZ, MPI_DOUBLE, cp->xm, (DIMX-1)*DIMY*DIMZ, DIMY*DIMZ, MPI_DOUBLE, win, &reqxm);
     AMPI_Iget(0, DIMX*DIMZ, MPI_DOUBLE, cp->yp, 0, DIMZ, linevec, win, &reqyp);
-    AMPI_Iget(0, DIMX*DIMZ, MPI_DOUBLE, cp->yp, (DIMY-1), DIMZ, linevec, win, &reqym);
+    AMPI_Iget(0, DIMX*DIMZ, MPI_DOUBLE, cp->ym, (DIMY-1), DIMZ, linevec, win, &reqym);
     AMPI_Iget(0, DIMX*DIMY, MPI_DOUBLE, cp->zp, 0, DIMX*DIMY, planevec, win, &reqzp);
-    AMPI_Iget(0, DIMX*DIMY, MPI_DOUBLE, cp->zp, 0, DIMX*DIMY, planevec, win, &reqzm);
+    AMPI_Iget(0, DIMX*DIMY, MPI_DOUBLE, cp->zm, 0, DIMX*DIMY, planevec, win, &reqzm);
 
     AMPI_Iget_wait(&reqxp, &stsxp, win);
     AMPI_Iget_wait(&reqxm, &stsxm, win);
