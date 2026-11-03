@@ -1,10 +1,28 @@
+// Sums an lcov trace file over two parts of the tree:
+//   ck    files under src/ck-core/ (the Charm++ core)
+//   conv  files under contrib/reconverse/src/ (the reconverse runtime)
+// coverage/report.sh feeds it the lcov export of the cumulative tier.
+// Header copies in the build's include/ directory are not counted.
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
+struct Totals {
+    long files, LF, LH, FNF, FNH;
+};
+
+static void print(const char *name, const struct Totals *t) {
+    printf("Summary %s (%ld files):\n", name, t->files);
+    printf("\tlines......: %.1f%% (%ld of %ld lines)\n",
+           t->LF ? 100.0 * t->LH / t->LF : 0.0, t->LH, t->LF);
+    printf("\tfunctions..: %.1f%% (%ld of %ld functions)\n",
+           t->FNF ? 100.0 * t->FNH / t->FNF : 0.0, t->FNH, t->FNF);
+}
+
 int main(int argc, char **argv) {
     if(argc != 2) {
-        fprintf(stderr, "Usage:\n\tck-convcore [lcov trace file]\n");
+        fprintf(stderr, "Usage:\n\tck-convcore-summary [lcov trace file]\n");
         exit(1);
     }
 
@@ -14,64 +32,38 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    int inCK = 0, inCONV = 0, finishedCK = 0, finishedCONV = 0;
-    int FNFck = 0, FNHck = 0, LHck = 0, LFck = 0;
-    int FNFconv = 0, FNHconv = 0, LHconv = 0, LFconv = 0;
+    struct Totals ck = {0, 0, 0, 0, 0}, conv = {0, 0, 0, 0, 0};
+    struct Totals *cur = NULL;
     char *lineptr = NULL;
     size_t n = 0;
     while(getline(&lineptr, &n, tracefile) != -1) {
-        if(inCK) {
-            if(lineptr[0] == 'F' && lineptr[1] == 'N' && lineptr[2] == 'F')
-                FNFck = atoi(lineptr + 4);
-            else if(lineptr[0] == 'F' && lineptr[1] == 'N' && lineptr[2] == 'H')
-                FNHck = atoi(lineptr + 4);
-            else if(lineptr[0] == 'L' && lineptr[1] == 'F')
-                LFck = atoi(lineptr + 3);
-            else if(lineptr[0] == 'L' && lineptr[1] == 'H') {
-                LHck = atoi(lineptr + 3);
-                inCK = 0;
-                finishedCK = 1;
-                if(finishedCK && finishedCONV)
-                    break;
-            }
-        } else if(inCONV) {
-            if(lineptr[0] == 'F' && lineptr[1] == 'N' && lineptr[2] == 'F')
-                FNFconv = atoi(lineptr + 4);
-            else if(lineptr[0] == 'F' && lineptr[1] == 'N' && lineptr[2] == 'H')
-                FNHconv = atoi(lineptr + 4);
-            else if(lineptr[0] == 'L' && lineptr[1] == 'F')
-                LFconv = atoi(lineptr + 3);
-            else if(lineptr[0] == 'L' && lineptr[1] == 'H') {
-                LHconv = atoi(lineptr + 3);
-                inCONV = 0;
-                finishedCONV = 1;
-                if(finishedCK && finishedCONV)
-                    break;
-            }
-        } else if(lineptr[0] == 'S' && lineptr[1] == 'F') {
-            if(strstr(lineptr, "tmp/ck.C") != NULL)
-                inCK = 1;
-            else if(strstr(lineptr, "tmp/convcore.c") != NULL)
-                inCONV = 1;
-	    else if(strstr(lineptr, "tmp/convcore.C") != NULL)
-                inCONV = 1;
-
+        if(strncmp(lineptr, "SF:", 3) == 0) {
+            if(strstr(lineptr, "/src/ck-core/") != NULL)
+                cur = &ck;
+            else if(strstr(lineptr, "/contrib/reconverse/src/") != NULL)
+                cur = &conv;
+            else
+                cur = NULL;
+            if(cur)
+                cur->files++;
+        } else if(cur == NULL) {
+            continue;
+        } else if(strncmp(lineptr, "FNF:", 4) == 0) {
+            cur->FNF += atol(lineptr + 4);
+        } else if(strncmp(lineptr, "FNH:", 4) == 0) {
+            cur->FNH += atol(lineptr + 4);
+        } else if(strncmp(lineptr, "LF:", 3) == 0) {
+            cur->LF += atol(lineptr + 3);
+        } else if(strncmp(lineptr, "LH:", 3) == 0) {
+            cur->LH += atol(lineptr + 3);
+        } else if(strncmp(lineptr, "end_of_record", 13) == 0) {
+            cur = NULL;
         }
-
-        free(lineptr);
-        lineptr = NULL;
-        n = 0;
     }
-
     free(lineptr);
-    lineptr = NULL;
-    n = 0;
+    fclose(tracefile);
 
-    printf("Summary ck.C in %s:\n", argv[1]);
-    printf("\tlines......: %.1f%% (%d of %d lines)\n", ((double)(100 * LHck) / LFck), LHck, LFck);
-    printf("\tfunctions..: %.1f%% (%d of %d functions)\n", ((double)(100 * FNHck) / FNFck), FNHck, FNFck);
-
-    printf("Summary convcore.C in %s:\n", argv[1]);
-    printf("\tlines......: %.1f%% (%d of %d lines)\n", ((double)(100 * LHconv) / LFconv), LHconv, LFconv);
-    printf("\tfunctions..: %.1f%% (%d of %d functions)\n", ((double)(100 * FNHconv) / FNFconv), FNHconv, FNFconv);
+    print("ck (src/ck-core)", &ck);
+    print("conv (contrib/reconverse/src)", &conv);
+    return 0;
 }

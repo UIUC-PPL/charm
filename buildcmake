@@ -94,6 +94,7 @@ opt_arch=$(echo "$actual_triplet" | cut -f 3 -d -) # opt_arch might be empty for
 opt_build_shared=0
 opt_ccs=0
 opt_charmdebug=0
+opt_coverage=0
 opt_controlpoint=0
 opt_cuda=0
 opt_amd=0
@@ -371,6 +372,10 @@ function processArgs() {
         ;;
       --enable-ccs)
         opt_ccs=1
+        ;;
+      --coverage)
+        # clang source-based coverage; see coverage/README.md
+        opt_coverage=1
         ;;
       --enable-reconverse)
         opt_reconverse=1
@@ -654,6 +659,17 @@ if [[ $opt_network == "mpi" && $my_os == "win" ]]; then
   exit 1
 fi
 
+# Windows: MSVC, driven from Cygwin through the unix2nt_cc wrapper, which maps
+# Unix compiler options onto cl, link and ml64. A Windows build is a single
+# process with no network, so reconverse gets neither LCI nor LCW.
+if [[ $my_os == "win" && ( -z $opt_CC || $opt_CC == "msvc" ) ]]; then
+  opt_CC="$my_srcdir/src/arch/win/unix2nt_cc"
+  opt_CXX="$opt_CC"
+  opt_FC=
+  opt_reconverse_fetch_lci=0
+  opt_cmake_extra_args+=(-DRECONVERSE_TRY_ENABLE_COMM_LCI2=OFF -DRECONVERSE_TRY_ENABLE_COMM_LCW=OFF)
+fi
+
 [[ $opt_production -eq 0 ]] && opt_production='Debug' || opt_production='Release'
 
 if [[ $VERBOSE -eq 1 ]]; then
@@ -710,6 +726,7 @@ CC=$opt_CC CXX=$opt_CXX FC=$opt_FC cmake "$my_srcdir" \
   -DBUILD_SHARED="$opt_build_shared" \
   -DCCS="$opt_ccs" \
   -DCHARMDEBUG="$opt_charmdebug" \
+  -DCMK_COVERAGE="$opt_coverage" \
   -DCONTROLPOINT="$opt_controlpoint" \
   -DBUILD_CUDA="$opt_cuda" \
   -DBUILD_HIP="$opt_amd" \

@@ -1,6 +1,0 @@
-TN: smp
-TD: netlrts-linux-x86_64-smp SMP
-TN: multicore
-TD: multicore-linux-x86_64 multicore
-TN: netlrts
-TD: netlrts-linux-x86_64 non-smp

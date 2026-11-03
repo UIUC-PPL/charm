@@ -1088,6 +1088,10 @@ static void ampiProcInit() noexcept {
   CtvInitialize(bool,ampiFinalized);
   CtvInitialize(void*,stackBottom);
 
+  // campi registers its handlers here, on every PE, so that handler indices
+  // agree across PEs whether or not a PE hosts a rank.
+  campi_proc_init();
+
   /* AMPI_Migrate_to_pe requires enabling Charm++ anytime migration, so
    * we leave support for it off by default. Users must run with this command
    * line option in order to enable calling it. */
@@ -1176,9 +1180,8 @@ void AMPI_threadstart(void *data)
   AMPI_Exit(ret);
 }
 
-/* TCharm Semaphore ID's for AMPI startup */
-#define AMPI_TCHARM_SEMAID 0x00A34100 /* __AMPI__ */
-#define AMPI_BARRIER_SEMAID 0x00A34200 /* __AMPI__ */
+/* TCharm Semaphore ID's for AMPI startup: AMPI_TCHARM_SEMAID and
+   AMPI_BARRIER_SEMAID are defined in ampiimpl.h (shared with campi.C). */
 
 // Create MPI_COMM_SELF from MPI_COMM_WORLD
 static void createCommSelf() noexcept {
@@ -1205,7 +1208,7 @@ CkpvExtern(ArrayObjMap, array_objs);
 // We remove objects from array_objs whose performance we don't really care about
 // (TCharm, ampiParent, MPI_COMM_SELF) in order to keep it smaller and faster
 // for those we do care about (MPI_COMM_WORLD and other communicators).
-static void removeUnimportantArrayObjsfromPeCache() noexcept {
+void removeUnimportantArrayObjsfromPeCache() noexcept {
   ampiParent* pptr = getAmpiParent();
   ArrayObjMap& arrayObjs = CkpvAccess(array_objs);
   arrayObjs.erase(pptr->getThread()->ckGetID().getID());
@@ -1217,6 +1220,49 @@ static void removeUnimportantArrayObjsfromPeCache() noexcept {
      and an element that is not here has nothing in this PE's cache to prune. */
   ampi* self = getAmpiInstance(MPI_COMM_SELF);
   if (self != NULL) arrayObjs.erase(self->ckGetID().getID());
+}
+
+/*
+   The non-blocking steps of ampiInit, shared with campi::Init (campi.C),
+   which runs them with awaits in place of the blocking waits below.
+ */
+// Element 0 only: create the ampiPeMgr group and return the array options
+// for the ampiParent and MPI_COMM_WORLD ampi arrays.
+CkArrayOptions ampiInitRootArrayOptions(CkArrayID *threads, int *nchunks) noexcept
+{
+  STARTUP_DEBUG("ampiInit> creating ampiPeMgr group")
+  ampiPeMgrProxy = CProxy_ampiPeMgr::ckNew();
+
+  STARTUP_DEBUG("ampiInit> creating arrays")
+
+  // FIXME: Need to serialize global communicator allocation in one place.
+  //Allocate the next communicator
+  //Create and attach the ampiParent array
+  CkArrayOptions opts=TCHARM_Attach_start(threads,nchunks);
+  opts.setSectionAutoDelegate(false);
+  opts.setStaticInsertion(true);
+  opts.setAnytimeMigration(CkpvAccess(isMigrateWithCollsEnabled));
+  return opts;
+}
+
+// Every rank, once its MPI_COMM_WORLD ampi object exists: mark init done and
+// contribute to the allInitDone reduction (which sets ampiInitCallDone).
+ampiParent *ampiInitWorldLocal(ampi *ptr, int nchunks) noexcept
+{
+  CtvAccess(ampiInitDone)=true;
+  CtvAccess(ampiFinalized)=false;
+  STARTUP_DEBUG("ampiInit> complete")
+
+  ampiParent* pptr = getAmpiParent();
+  CkpvAccess(bikvs).universe_size = nchunks;
+  ptr->setCommName("MPI_COMM_WORLD");
+
+  pptr->ampiInitCallDone = 0;
+
+  CProxy_ampi cbproxy = ptr->getProxy();
+  CkCallback cb(CkReductionTarget(ampi, allInitDone), cbproxy[0]);
+  ptr->contribute(cb);
+  return pptr;
 }
 
 /*
@@ -1235,19 +1281,8 @@ static ampi *ampiInit(char **argv) noexcept
   CProxy_ampiParent parent;
   if (TCHARM_Element()==0) //the rank of a tcharm object
   { /* I'm responsible for building the arrays: */
-    STARTUP_DEBUG("ampiInit> creating ampiPeMgr group")
-    ampiPeMgrProxy = CProxy_ampiPeMgr::ckNew();
-
-    STARTUP_DEBUG("ampiInit> creating arrays")
-
-    // FIXME: Need to serialize global communicator allocation in one place.
-    //Allocate the next communicator
-    //Create and attach the ampiParent array
     CkArrayID threads;
-    opts=TCHARM_Attach_start(&threads,&_nchunks);
-    opts.setSectionAutoDelegate(false);
-    opts.setStaticInsertion(true);
-    opts.setAnytimeMigration(CkpvAccess(isMigrateWithCollsEnabled));
+    opts=ampiInitRootArrayOptions(&threads,&_nchunks);
 
     ck::future<CkArrayID> newAmpiFuture;
     CkCallback cb(newAmpiFuture.handle());
@@ -1276,19 +1311,7 @@ static ampi *ampiInit(char **argv) noexcept
 
   // Find our ampi object:
   ampi *ptr=(ampi *)TCharm::get()->semaGet(AMPI_TCHARM_SEMAID);
-  CtvAccess(ampiInitDone)=true;
-  CtvAccess(ampiFinalized)=false;
-  STARTUP_DEBUG("ampiInit> complete")
-
-  ampiParent* pptr = getAmpiParent();
-  CkpvAccess(bikvs).universe_size = _nchunks;
-  ptr->setCommName("MPI_COMM_WORLD");
-
-  pptr->ampiInitCallDone = 0;
-
-  CProxy_ampi cbproxy = ptr->getProxy();
-  CkCallback cb(CkReductionTarget(ampi, allInitDone), cbproxy[0]);
-  ptr->contribute(cb);
+  ampiParent* pptr = ampiInitWorldLocal(ptr, _nchunks);
 
   while (pptr->ampiInitCallDone != 1) {
     pptr = pptr->block();
@@ -1487,7 +1510,13 @@ void ampiParent::pup(PUP::er &p) noexcept {
 void ampiParent::prepareCtv() noexcept {
   thread=threads[thisIndex].ckLocal();
   if (thread==NULL) CkAbort("AMPIParent cannot find its thread!\n");
-  CtvAccessOther(thread->getThread(),ampiPtr) = this;
+  if (tcharm_campi) {
+    // No thread: every rank on this PE shares the scheduler thread's Ctvs,
+    // so record the parent in the rank record; campi installs it at resume.
+    campi_parent_attached(thread, this);
+  } else {
+    CtvAccessOther(thread->getThread(),ampiPtr) = this;
+  }
   STARTUP_DEBUG("ampiParent> found TCharm")
 }
 
@@ -2298,6 +2327,14 @@ class ampiSplitKey {
 /* "type" may indicate whether call is for a cartesian topology etc. */
 void ampi::split(int color,int key,MPI_Comm *dest, AmpiCommType type) noexcept
 {
+  splitPost(color, key, type);
+  ampi * dis = block(); //Resumed by ampi::registrationFinish
+  dis->splitFinish(dest);
+}
+
+// The two halves of split around its suspension (campi awaits in between)
+void ampi::splitPost(int color,int key, AmpiCommType type) noexcept
+{
   MPI_Comm nextComm = parent->getNextComm();
   ampiSplitKey splitKey(nextComm,color,key,myRank,type);
   int rootIdx=myComm->getIndexForRank(0);
@@ -2309,10 +2346,11 @@ void ampi::split(int color,int key,MPI_Comm *dest, AmpiCommType type) noexcept
     CkCallback cb(CkIndex_ampi::splitPhase1(0),CkArrayIndex1D(rootIdx),myComm->getProxy());
     contribute(sizeof(splitKey),&splitKey,CkReduction::concat,cb);
   }
+}
 
-  ampi * dis = block(); //Resumed by ampi::registrationFinish
-  nextComm = dis->parent->getNextComm()-1;
-  *dest=nextComm;
+void ampi::splitFinish(MPI_Comm *dest) noexcept
+{
+  *dest = parent->getNextComm()-1;
 }
 
 CLINKAGE
@@ -2689,7 +2727,12 @@ void ampi::intercommMergeGroupArrived(MPI_Comm nextIntraComm) noexcept {
 void ampi::topoDup(int topoType, int rank, MPI_Comm comm, MPI_Comm *newComm) noexcept
 {
   split(0, rank, newComm, parent->getCommStruct(comm).getType());
+  topoDupFinish(topoType, comm, newComm);
+}
 
+// The part of topoDup after the split (shared with campi::Comm_dup)
+void ampi::topoDupFinish(int topoType, MPI_Comm comm, MPI_Comm *newComm) noexcept
+{
   if (topoType != MPI_UNDEFINED) {
     ampiParent *disParent = getAmpiParent();
     ampiTopology *topo = disParent->getCommStruct(comm).getTopology();
@@ -2706,6 +2749,10 @@ CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::block() noexcept {
   return disParent;
 }
 CMI_WARN_UNUSED_RESULT ampiParent* ampiParent::yield() noexcept {
+  // campi: no thread to reschedule. The test and probe routines that yield
+  // after a miss are awaitables there (campi.h), which suspend the rank's
+  // coroutine after the call returns.
+  if (tcharm_campi) return this;
   TCharm * disThread = thread->schedule();
   ampiParent* disParent = getAmpiParent();
   disParent->thread = disThread;
@@ -4488,11 +4535,12 @@ void FTN_NAME(MPI_EXIT,mpi_exit)(int *exitCode)
   AMPI_Exit(*exitCode);
 }
 
-AMPI_API_IMPL(int, MPI_Finalize, void)
+// MPI_Finalize except the final AMPI_Exit (shared with campi::Finalize).
+// A separate function so that the object created on the stack by the AMPI_API
+// call is destroyed before the call to AMPI_Exit(), which never returns.
+int ampiFinalizeBody() noexcept
 {
-  { // This brace is necessary here to make sure the object created on the stack
-    // by the AMPI_API call gets destroyed before the call to AMPI_Exit(), since
-    // AMPI_Exit() never returns.
+  {
   AMPI_API("AMPI_Finalize", "");
 
   ampiParent* parent = getAmpiParent();
@@ -4512,6 +4560,14 @@ AMPI_API_IMPL(int, MPI_Finalize, void)
 #endif
 
   }
+  return MPI_SUCCESS;
+}
+
+AMPI_API_IMPL(int, MPI_Finalize, void)
+{
+  int ret = ampiFinalizeBody();
+  if (ret != MPI_SUCCESS)
+    return ret;
 
   AMPI_Exit(0); // Never returns
   return MPI_SUCCESS;
@@ -6031,6 +6087,39 @@ void SsendReq::start(MPI_Request reqIdx) noexcept {
   ptr->send(tag, ptr->getRank(), buf, count, type, src /*really, the destination*/, comm, I_SSEND, reqIdx);
 }
 
+CMI_WARN_UNUSED_RESULT ampiParent* AmpiRequest::blockUntilComplete(ampiParent* parent) noexcept {
+  bool viaColl = false;
+  int n = beginBlocking(parent, viaColl);
+  parent->numBlockedReqs = n;
+  parent = viaColl ? parent->blockOnColl() : parent->blockOnRecv();
+  endBlocking(parent);
+  return parent;
+}
+
+// ATAReq::wait waits on its internal requests (ampiParent::waitall): mark and
+// count the incomplete ones, each of which counts down on completion.
+int ATAReq::beginBlocking(ampiParent* parent, bool& viaColl) noexcept {
+  viaColl = false;
+  AmpiRequestList& reqList = parent->getReqs();
+  int n = 0;
+  for (MPI_Request ri : reqs) {
+    if (ri == MPI_REQUEST_NULL) continue;
+    AmpiRequest* x = reqList[ri];
+    if (!x->test(MPI_STATUS_IGNORE)) {
+      x->setBlocked(true);
+      n++;
+    }
+  }
+  return n;
+}
+
+void ATAReq::endBlocking(ampiParent* parent) noexcept {
+  AmpiRequestList& reqList = parent->getReqs();
+  for (MPI_Request ri : reqs) {
+    if (ri != MPI_REQUEST_NULL) reqList[ri]->setBlocked(false);
+  }
+}
+
 CMI_WARN_UNUSED_RESULT ampiParent* IReq::wait(ampiParent* parent, MPI_Status *sts) noexcept {
 
   if (cancelled) {
@@ -6040,10 +6129,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* IReq::wait(ampiParent* parent, MPI_Status *st
   }
 
   if (!complete) {
-    parent->numBlockedReqs = 1;
-    setBlocked(true);
-    parent = parent->blockOnRecv(); // parent is updated in case an ampi thread is migrated while waiting for a message
-    setBlocked(false);
+    parent = blockUntilComplete(parent); // parent is updated in case an ampi thread is migrated while waiting for a message
   }
 
   AMPI_DEBUG("IReq::wait has resumed\n");
@@ -6062,10 +6148,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* IReq::wait(ampiParent* parent, MPI_Status *st
 
 CMI_WARN_UNUSED_RESULT ampiParent* RednReq::wait(ampiParent* parent, MPI_Status *sts) noexcept {
   if (!complete) {
-    parent->numBlockedReqs = 1;
-    setBlocked(true);
-    parent = parent->blockOnColl();
-    setBlocked(false);
+    parent = blockUntilComplete(parent);
   }
   AMPI_DEBUG("RednReq::wait has resumed\n");
   if (sts != MPI_STATUS_IGNORE) {
@@ -6077,10 +6160,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* RednReq::wait(ampiParent* parent, MPI_Status 
 
 CMI_WARN_UNUSED_RESULT ampiParent* GatherReq::wait(ampiParent* parent, MPI_Status *sts) noexcept {
   if (!complete) {
-    parent->numBlockedReqs = 1;
-    setBlocked(true);
-    parent = parent->blockOnColl();
-    setBlocked(false);
+    parent = blockUntilComplete(parent);
   }
   AMPI_DEBUG("GatherReq::wait has resumed\n");
   if (sts != MPI_STATUS_IGNORE) {
@@ -6092,10 +6172,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* GatherReq::wait(ampiParent* parent, MPI_Statu
 
 CMI_WARN_UNUSED_RESULT ampiParent* GathervReq::wait(ampiParent* parent, MPI_Status *sts) noexcept {
   if (!complete) {
-    parent->numBlockedReqs = 1;
-    setBlocked(true);
-    parent = parent->blockOnColl();
-    setBlocked(false);
+    parent = blockUntilComplete(parent);
   }
   AMPI_DEBUG("GathervReq::wait has resumed\n");
   if (sts != MPI_STATUS_IGNORE) {
@@ -6107,10 +6184,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* GathervReq::wait(ampiParent* parent, MPI_Stat
 
 CMI_WARN_UNUSED_RESULT ampiParent* SendReq::wait(ampiParent* parent, MPI_Status *sts) noexcept {
   if (!complete) {
-    parent->numBlockedReqs = 1;
-    setBlocked(true);
-    parent = parent->blockOnRecv();
-    setBlocked(false);
+    parent = blockUntilComplete(parent);
   }
   AMPI_DEBUG("SendReq::wait has resumed\n");
   if (sts != MPI_STATUS_IGNORE) {
@@ -6122,10 +6196,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* SendReq::wait(ampiParent* parent, MPI_Status 
 
 CMI_WARN_UNUSED_RESULT ampiParent* SsendReq::wait(ampiParent* parent, MPI_Status *sts) noexcept {
   if (!complete) {
-    parent->numBlockedReqs = 1;
-    setBlocked(true);
-    parent = parent->blockOnRecv();
-    setBlocked(false);
+    parent = blockUntilComplete(parent);
   }
   AMPI_DEBUG("SsendReq::wait has resumed\n");
   if (sts != MPI_STATUS_IGNORE) {
@@ -6155,10 +6226,7 @@ CMI_WARN_UNUSED_RESULT ampiParent* ScanReq::wait(ampiParent* parent, MPI_Status 
   if (!complete) {
     // Rounds complete in ampi::progressScan, called from message arrival;
     // it resumes this thread after the last one.
-    parent->numBlockedReqs = 1;
-    setBlocked(true);
-    parent = parent->blockOnRecv();
-    setBlocked(false);
+    parent = blockUntilComplete(parent);
   }
   if (sts != MPI_STATUS_IGNORE) {
     sts->MPI_COMM = comm;
