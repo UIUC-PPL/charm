@@ -4,6 +4,7 @@ DIRS = \
   megampi \
   ibarrier \
   cas \
+  onesided \
   stacksize \
   migration \
   datatype \
@@ -11,6 +12,7 @@ DIRS = \
   collmatch \
   migrate_colls \
   scan \
+  waitall_ata \
   privatization \
   jacobi3d \
   exit \
@@ -58,6 +60,7 @@ RECONVERSE_NA += \
   megampi \
   privatization \
   scan \
+  waitall_ata \
 
 endif
 endif
