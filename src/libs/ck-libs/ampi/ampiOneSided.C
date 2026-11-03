@@ -17,7 +17,10 @@ extern int AMPI_RDMA_THRESHOLD;
 
 win_obj::win_obj() noexcept {
   baseAddr = NULL;
+  winSize = 0;
+  disp_unit = 0;
   comm = MPI_COMM_NULL;
+  owner = -1;
   initflag = false;
 }
 
@@ -41,24 +44,45 @@ win_obj::~win_obj() noexcept {
   free();
 }
 
-// Note that this is supposed to be used for migration.
-// We should not hava a remote methos which has to pack the win data --- Inefficient
+// Packed with the rank's ampi object when the rank migrates or is
+// checkpointed. The window's memory is the user's buffer, which lives in the
+// rank's Isomalloc stack or heap and moves with the rank at the same address
+// (as every AmpiRequest's buffer pointer does), so only the bookkeeping is
+// packed and the base pointer keeps its value. That holds only while the
+// buffer is in Isomalloc memory: without the Isomalloc memory module
+// (-memory default), malloc'd memory stays behind, so unpacking a live window
+// there is refused. Messages for the
+// window that are in flight at AMPI_Migrate (a lock request, a Put under a
+// lock) reach the rank at its new location; a lock held or waited for at that
+// point travels with the window.
 void win_obj::pup(PUP::er &p) noexcept {
-#if 0
+  p((char *)&baseAddr, sizeof(void *));
+  p|initflag;
+  if (p.isUnpacking() && initflag && !CmiMemoryIs(CMI_MEMORY_IS_ISOMALLOC)) {
+    CkAbort("AMPI> an MPI_Win cannot move with its rank without the Isomalloc heap: "
+            "its memory would stay at the old location. Link with -memory isomalloc, "
+            "or free the window before AMPI_Migrate and create it again afterwards.");
+  }
   p|winSize;
   p|disp_unit;
   p|comm;
-  p|initflag;
-
+  p|owner;
   p|winName;
   p|attributes;
 
-  int size = 0;
-  if(baseAddr) size = winSize;
-  p|size;
-  if(p.isUnpacking()) baseAddr = new char[size+1];
-  p(baseAddr, size);
-#endif
+  int queued = lockQueue.length();
+  p|queued;
+  for (int i = 0; i < queued; i++) {
+    if (p.isUnpacking()) {
+      int requestRank, lock_type;
+      p|requestRank;
+      p|lock_type;
+      lockQueue.enq(new lockQueueEntry(requestRank, lock_type));
+    } else {
+      p|lockQueue[i]->requestRank;
+      p|lockQueue[i]->lock_type;
+    }
+  }
 }
 
 int win_obj::create(const char *name, void *base, MPI_Aint size, int disp_unit, MPI_Comm comm) noexcept {

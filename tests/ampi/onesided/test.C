@@ -6,8 +6,10 @@
 // target is local (the winLocal* paths and the ckLocal() fast paths) and
 // with +p2 some targets are on the other PE (the winRemote* entry methods).
 //
-// Usage: onesided [all|units|procnull|noncontig]
+// Usage: onesided [all|units|procnull|noncontig|migrate]
 //        onesided abort <put|get|acc|fop|getacc|cas>
+// migrate: every rank keeps a window open across AMPI_Migrate (run with a
+// balancer, +balancer RotateLB, so that ranks move) and uses it again after.
 // The abort mode makes rank 0 access one element past the end of rank 1's
 // disp_unit 4 window. AMPI must abort with "outside the MPI_Win"; if the
 // call returns, the test reports the failure through MPI_Abort.
@@ -251,6 +253,64 @@ static void testAbort(Ctx& c, const char* op)
   MPI_Win_free(&win);
 }
 
+// A window, with its name and its lock state, survives the rank's migration:
+// the bookkeeping is packed with the rank and the buffer keeps its address.
+// Ranks move only at AMPI_Migrate, so the epochs are placed around it.
+static void testMigrate(Ctx& c)
+{
+  const int rank = c.rank, target = c.target, source = c.source;
+  const char* name = "migrate";
+  const int N = 16;
+  int wbuf[N];
+  for (int i = 0; i < N; i++) wbuf[i] = rank * 100 + i;
+  MPI_Win win;
+  MPI_Win_create(wbuf, sizeof(wbuf), sizeof(int), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+  MPI_Win_set_name(win, "onesided-migrate");
+
+  // Epoch 1 before the migration: a Put into the target's window.
+  int put1 = 1000 + rank;
+  MPI_Win_fence(0, win);
+  MPI_Put(&put1, 1, MPI_INT, target, 2, 1, MPI_INT, win);
+  MPI_Win_fence(0, win);
+  check(wbuf[2] == 1000 + source, name, "window[2] before migration", wbuf[2], 1000 + source);
+
+  // Hold the lock on the target's window across the migration: an exclusive
+  // lock is state of the target's win_obj (owner, queue) that must travel.
+  MPI_Win_lock(MPI_LOCK_EXCLUSIVE, target, 0, win);
+  int put2 = 3000 + rank;
+  MPI_Put(&put2, 1, MPI_INT, target, 3, 1, MPI_INT, win);
+
+  AMPI_Migrate(AMPI_INFO_LB_SYNC);
+
+  MPI_Win_unlock(target, win);
+  MPI_Barrier(MPI_COMM_WORLD);
+  check(wbuf[3] == 3000 + source, name, "window[3] put under a lock across migration", wbuf[3], 3000 + source);
+
+  // Epoch 2 after the migration: Get, Accumulate and Fetch_and_op again.
+  int get[2] = {-1, -1}, acc = rank + 1, fopin = 7, fopres = -1;
+  MPI_Win_fence(0, win);
+  MPI_Get(get, 2, MPI_INT, target, 5, 2, MPI_INT, win);
+  MPI_Accumulate(&acc, 1, MPI_INT, target, 8, 1, MPI_INT, MPI_SUM, win);
+  MPI_Fetch_and_op(&fopin, &fopres, MPI_INT, target, 9, MPI_SUM, win);
+  MPI_Win_fence(0, win);
+  check(get[0] == target * 100 + 5, name, "get[0] after migration", get[0], target * 100 + 5);
+  check(get[1] == target * 100 + 6, name, "get[1] after migration", get[1], target * 100 + 6);
+  check(fopres == target * 100 + 9, name, "fetch_and_op result after migration", fopres, target * 100 + 9);
+  check(wbuf[8] == rank * 100 + 8 + source + 1, name, "window[8] after migration", wbuf[8], rank * 100 + 8 + source + 1);
+  check(wbuf[9] == rank * 100 + 9 + 7, name, "window[9] after migration", wbuf[9], rank * 100 + 9 + 7);
+
+  char gotname[MPI_MAX_OBJECT_NAME + 1];
+  int len = 0;
+  MPI_Win_get_name(win, gotname, &len);
+  check(strcmp(gotname, "onesided-migrate") == 0, name, "window name after migration", len, 16);
+
+  // Migrate once more, then free: the index into the rank's window list is
+  // part of what was packed.
+  AMPI_Migrate(AMPI_INFO_LB_SYNC);
+  MPI_Win_free(&win);
+  check(win == MPI_WIN_NULL, name, "win after free", win, MPI_WIN_NULL);
+}
+
 int main(int argc, char** argv)
 {
   MPI_Init(&argc, &argv);
@@ -283,6 +343,7 @@ int main(int argc, char** argv)
     testNoncontig(c, sizeof(DI));
     testNoncontig(c, 1);
   }
+  if (!strcmp(mode, "migrate")) testMigrate(c);
 
   int total = 0;
   MPI_Allreduce(&c.errors, &total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);

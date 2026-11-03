@@ -28,6 +28,15 @@ void chunk_pup(pup_er p, void *d)
   pup_int(p, &cp->xidx);
   pup_int(p, &cp->yidx);
   pup_int(p, &cp->zidx);
+  /* The neighbor ranks, which the Igets after a migration address. The sb*
+     pointers are not packed: they are set by AMPI_Iget_data within an
+     iteration and are invalid outside it. */
+  pup_int(p, &cp->xp);
+  pup_int(p, &cp->xm);
+  pup_int(p, &cp->yp);
+  pup_int(p, &cp->ym);
+  pup_int(p, &cp->zp);
+  pup_int(p, &cp->zm);
   if(pup_isDeleting(p))
     delete cp;
 }

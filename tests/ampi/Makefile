@@ -60,6 +60,7 @@ ifneq ($(filter-out 0 1,$(TESTRUN_PROCS)),)
 RECONVERSE_NA += \
   migration \
   megampi \
+  onesided \
   privatization \
   scan \
   waitall_ata \
