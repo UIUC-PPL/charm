@@ -486,7 +486,10 @@ requested data arrives and runtime system takes care to allocate space,
 do appropriate unpacking based on data type, and return.
 ``AMPI_Iget_free`` lets the runtime system free the resources being used
 for this get request including the data buffer. Finally,
-``AMPI_Iget_data`` is the routine used to access the data.
+``AMPI_Iget_data`` is the routine used to access the data: it stores the
+address of the received data in ``*(void **)data``, so its first argument
+is the address of a pointer variable, not a buffer; the data stays valid
+until ``AMPI_Iget_free``.
 
 .. code-block:: c++
 
