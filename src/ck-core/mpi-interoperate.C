@@ -12,12 +12,6 @@ static bool _libExitStarted = false;
 extern std::atomic<int> ckExitComplete;
 extern std::atomic<int> _cleanUp;
 
-#if CMK_CONVERSE_MPI
-extern MPI_Comm charmComm;
-#else
-typedef int MPI_Comm;
-#endif
-
 extern void LrtsDrainResources(); /* used when exit */
 
 extern bool _ringexit;		    // for charm exit
@@ -139,24 +133,13 @@ void CharmInit(int argc, char** argv) {
   CharmFinishInit();
 }
 
-// CharmLibInit is specifically for MPI interop, where MPI applications want
-// to call Charm as a library. It does full initialization and starts the
-// scheduler. If Charm is built on MPI, multiple Charm instances can be created
-// using different communicators.
-void CharmLibInit(MPI_Comm userComm, int argc, char **argv) {
-
-  // Reconverse has no communicator to hand Charm++, so userComm would be
-  // silently ignored; only the user-driven form (CharmInit) works.
-  if(!userDrivenMode) {
-    CmiAbort("MPI interop is not supported on reconverse yet; did you mean to use CharmInit?");
-  }
-
-#if CMK_CONVERSE_MPI
-  if(!userDrivenMode) {
-    MPI_Comm_dup(userComm, &charmComm);
-  }
-#endif
-
+// MPI interop entry point behind the inline CharmLibInit in
+// mpi-interoperate.h, which has already checked that the communicator is
+// MPI_COMM_WORLD (up to congruence). Charm++ runs on every process of the job
+// and CharmLibExit returns, so the program can keep using MPI afterwards.
+// No MPI call is made here; libck does not depend on MPI.
+void CharmLibInitWorld(int argc, char **argv) {
+  CmiInteropReturnOnExit = 1;
   CharmLibInterOperate = true;
   _registerConverseInitHooks();
   ConverseInit(argc, argv, (CmiStartFn)_initCharm, 1, 0);
@@ -164,10 +147,9 @@ void CharmLibInit(MPI_Comm userComm, int argc, char **argv) {
 }
 
 // CharmLibExit is called for both forms of interop when the application is
-// done with Charm. It does all necessary cleanup for Charm++ and returns
-// control to the user afterwards. In the case of userDrivenMode, this would
-// also include calling MPI_Finalize. In regular MPI interop, MPI_Finalize
-// is not called.
+// done with Charm. After CharmLibInit (MPI interop) it tears the runtime down
+// and returns, leaving MPI to the caller. After CharmInit (user-driven) the
+// process exits inside it.
 #undef CkExit
 #define CkExit CKEXIT_0 // CKEXIT_0 and other CkExit macros defined in charm.h
 void CharmLibExit() {
@@ -181,5 +163,7 @@ void CharmLibExit() {
   } else { 
     CsdScheduler(-1);
     CmiNodeAllBarrier();
+    if (CmiInteropReturnOnExit)
+      ConverseInteropFinalize();
   }
 }
