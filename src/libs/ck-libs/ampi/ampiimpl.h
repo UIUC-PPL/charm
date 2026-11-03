@@ -1360,8 +1360,9 @@ class AmpiRequest {
     if (type != MPI_DATATYPE_NULL) ddt->freeType(type);
   }
 
-  /// Set whether the request is currently blocked on
-  void setBlocked(bool b) noexcept { blocked = b; }
+  /// Set whether the request is currently blocked on. A blocked request
+  /// decrements ampiParent::numBlockedReqs when it completes (ampi::handleBlockedReq).
+  virtual void setBlocked(bool b) noexcept { blocked = b; }
   bool isBlocked() const noexcept { return blocked; }
 
   /// Returns the type of request:
@@ -1725,9 +1726,12 @@ class ATAReq final : public AmpiRequest {
   ATAReq() =default;
   ~ATAReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
+  /// An ATAReq receives no messages itself; its blocks do. Marking it blocked
+  /// marks each of its blocks, so that each block's completion decrements
+  /// numBlockedReqs; beginBlocking counts the incomplete blocks.
+  void setBlocked(bool b) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
   int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override;
-  void endBlocking(ampiParent* parent) noexcept override;
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override { return true; }
   void receive(ampi *ptr, CkReductionMsg *msg) noexcept override {}
   int getCount() const noexcept { return reqs.size(); }
@@ -1964,17 +1968,32 @@ inline void pupFromBuf(const void *data,T &t) noexcept {
      that order without making point-to-point messages wait behind scan
      messages, which always travel through the scheduler while PE-local
      point-to-point sends are delivered inline.
+   - Blocks of the (i)alltoall, (i)neighbor and (i)scatter families (tags
+     MPI_ATA_TAG, MPI_NBOR_TAG, MPI_SCATTER_TAG; sent by ampi::send like
+     point-to-point messages): one sequence per peer rank of their own, index
+     ampiBlockSeqIdx(rank). Two such collectives outstanding on a
+     communicator send under the same tag to the same peer, so their blocks
+     must be matched in send order (issue #4097). They do not share the
+     point-to-point sequence, so that a user message never waits in oorder
+     behind a collective block, or the reverse.
    - Other collective tags are not sequenced (seq 0). */
 inline bool ampiIsScanTag(int tag) noexcept {
   return tag == MPI_SCAN_TAG || tag == MPI_EXSCAN_TAG;
 }
-inline int ampiScanSeqIdx(int rank) noexcept { return COLL_SEQ_IDX - 1 - rank; }
+inline bool ampiIsBlockTag(int tag) noexcept {
+  return tag == MPI_ATA_TAG || tag == MPI_NBOR_TAG || tag == MPI_SCATTER_TAG;
+}
+// Scan and block sequences interleave below COLL_SEQ_IDX: -2, -4, ... for
+// scans of ranks 0, 1, ..., and -3, -5, ... for blocks.
+inline int ampiScanSeqIdx(int rank) noexcept { return COLL_SEQ_IDX - 1 - 2*rank; }
+inline int ampiBlockSeqIdx(int rank) noexcept { return COLL_SEQ_IDX - 2 - 2*rank; }
 inline bool ampiTagIsSequenced(int tag) noexcept {
-  return tag <= MPI_BCAST_TAG || ampiIsScanTag(tag);
+  return tag <= MPI_BCAST_TAG || ampiIsScanTag(tag) || ampiIsBlockTag(tag);
 }
 /// rank is the peer: the destination when sending, the source when receiving.
 inline int ampiSeqIdx(int tag, int rank) noexcept {
   if (ampiIsScanTag(tag)) return ampiScanSeqIdx(rank);
+  if (ampiIsBlockTag(tag)) return ampiBlockSeqIdx(rank);
   if (tag >= MPI_BCAST_TAG && tag <= MPI_ATA_TAG) return COLL_SEQ_IDX;
   return rank;
 }
@@ -2888,8 +2907,6 @@ class ampi final : public CBase_ampi {
   bool inorder(AmpiMsg *msg) noexcept;
   void inorderBcast(AmpiMsg *msg, bool deleteMsg) noexcept;
   void inorderRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept;
-  inline void localInorder(char* buf, int size, int seqIdx, CMK_REFNUM_TYPE seq, int tag,
-                           int srcRank, IReq* ireq) noexcept;
 
   void init() noexcept;
   void findParentAfterMigration() noexcept;

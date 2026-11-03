@@ -12,6 +12,7 @@ DIRS = \
   collmatch \
   migrate_colls \
   scan \
+  waitall_ata \
   privatization \
   jacobi3d \
   exit \
@@ -60,6 +61,7 @@ RECONVERSE_NA += \
   onesided \
   privatization \
   scan \
+  waitall_ata \
 
 endif
 endif
