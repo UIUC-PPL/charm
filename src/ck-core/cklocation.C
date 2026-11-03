@@ -2093,7 +2093,7 @@ represented array elements.
 */
 CkLocRec::CkLocRec(CkLocMgr* mgr, bool fromMigration, bool ignoreArrival,
                    const CkArrayIndex& idx_, CmiUInt8 id_)
-    : myLocMgr(mgr), idx(idx_), id(id_), deletedMarker(NULL), running(false)
+    : myLocMgr(mgr), idx(idx_), id(id_), life(0), deletedMarker(NULL), running(false)
 {
 #if CMK_LBDB_ON
   DEBL((AA "Registering element %s with load balancer\n" AB, idx2str(idx)));
@@ -3089,22 +3089,35 @@ void CkLocMgr::deleteManager(CkArrayID id, CkArray* mgr)
 void CkLocMgr::informHome(const CkArrayIndex& idx, const CkLocEntry& e)
 {
   const int home = homePe(idx);
-  if (home != CkMyPe() && home != e.pe) thisProxy[home].updateLocation(idx, e);
+  if (home == CkMyPe())
+    homeNoteLocation(idx, e);  // a move away from the home: recorded here, no message
+  else if (home != e.pe)
+    thisProxy[home].updateLocation(idx, e);
 }
 
+// Life tags (section 3.5): unique per creation in the run, so the home can tell a
+// re-created element's messages from a dead life's. Process number above a
+// process-wide count; CkMyNode() is below 2^24.
+static std::atomic<CmiUInt8> lifeCounter{0};
+static CmiUInt8 newLife() { return ((CmiUInt8)CkMyNode() << 40) | ++lifeCounter; }
+
 CkLocRec* CkLocMgr::createLocal(const CkArrayIndex& idx, bool forMigration,
-                                bool ignoreArrival, bool notifyHome, int epoch)
+                                bool ignoreArrival, bool notifyHome, int epoch,
+                                CmiUInt8 life)
 {
   DEBC((AA "Adding new record for element %s\n" AB, idx2str(idx)));
   CmiUInt8 id = lookupID(idx);
+  if (life == 0) life = newLife();  // a creation; a landing brings the element's tag
 
   CkLocRec* rec = new CkLocRec(this, forMigration, ignoreArrival, idx, id);
+  rec->setLife(life);
   insertRec(rec, id);
   cache->insert(id, epoch);
   CkLocEntry e;
   e.id = id;
   e.pe = CkMyPe();
   e.epoch = epoch;
+  e.life = life;
   updateLocation(idx, e);
 
   if (notifyHome) informHome(idx, e);
@@ -3296,6 +3309,9 @@ void CkLocMgr::updateLocationFromLB(CmiUInt8 id, int pe)
 void CkLocMgr::updateLocation(const CkArrayIndex& idx, const CkLocEntry& e)
 {
   CkAssert(e.pe != -1);
+  // At the home the life tag tells the lives of a re-created element apart
+  // (section 3.5): an update of a life known dead is dropped here.
+  if (e.life != 0 && homePe(idx) == CkMyPe() && !homeNoteLocation(idx, e)) return;
   // Set the mapping from idx to id, noting an older id this process had bound to it
   CmiUInt8 retired = 0;
   const bool hasRetired = insertID(idx, e.id, &retired);
@@ -3344,13 +3360,22 @@ void CkLocMgr::reclaim(CkLocRec* rec)
   {  // This is a local element dying a natural death
     int home = homePe(rec->getIndex());
     if (home == CkMyPe())
+    {
       noteDead(rec->getIndex(), rec->getID());
+      CkLocEntry died;
+      died.id = rec->getID();
+      died.pe = CkMyPe();
+      died.epoch = epoch;
+      died.life = rec->getLife();
+      homeNoteDeath(rec->getIndex(), died);
+    }
     else
 #if CMK_MEM_CHECKPOINT
       if (!CkInRestarting())  // all array elements are removed anyway
 #endif
         if (!duringDestruction)
-          thisProxy[home].reclaimRemote(rec->getIndex(), CkMyPe(), epoch);
+          thisProxy[home].reclaimRemote(rec->getIndex(), rec->getID(), CkMyPe(), epoch,
+                                        rec->getLife());
   }
   delete rec;
 }
@@ -3360,6 +3385,67 @@ void CkLocMgr::reclaim(CkLocRec* rec)
 void CkLocMgr::noteDead(const CkArrayIndex& idx, CmiUInt8 id)
 {
   if (!compressor) ck::objid::retiredIds().note(makeID(id).getID(), idx);
+}
+
+// The home and the lives of a re-created element (section 3.5). The table entry
+// carries no life, so the home keeps, per id, the latest location it saw for each
+// life not known dead, and the set of dead lives. A late death notice clears only
+// what that life wrote; a stale update of a dead life is dropped and clears what
+// it wrote; when the entry is empty and another life is known, it is installed.
+
+bool CkLocMgr::homeNoteLocation(const CkArrayIndex& idx, const CkLocEntry& e)
+{
+  if (deadLives.count(e.life))
+  {
+    // Stale. The entry it describes may still stand if the home missed this update
+    // before the death notice came; the notice could not clear what it did not know.
+    cache->erase(e.id, e.pe, e.epoch);
+    homeReinstall(idx, e.id);
+    return false;
+  }
+  std::vector<CkLocEntry>& lives = homeLives[e.id];
+  for (CkLocEntry& l : lives)
+    if (l.life == e.life)
+    {
+      if (e.epoch > l.epoch) l = e;
+      return true;
+    }
+  lives.push_back(e);
+  return true;
+}
+
+void CkLocMgr::homeNoteDeath(const CkArrayIndex& idx, const CkLocEntry& died)
+{
+  if (died.life != 0) deadLives.insert(died.life);
+  // Clear the entry while it names where the life died, or any location the home
+  // recorded for it: a later life's entry (same id, epoch 0 again) stays. The one
+  // case left is a later life created on the same PE at the same epoch (section 9).
+  cache->erase(died.id, died.pe, died.epoch);
+  auto it = homeLives.find(died.id);
+  if (it != homeLives.end())
+  {
+    std::vector<CkLocEntry>& lives = it->second;
+    for (size_t i = 0; i < lives.size(); ++i)
+      if (lives[i].life == died.life)
+      {
+        cache->erase(died.id, lives[i].pe, lives[i].epoch);
+        lives.erase(lives.begin() + i);
+        break;
+      }
+    if (lives.empty()) homeLives.erase(it);
+  }
+  homeReinstall(idx, died.id);
+}
+
+void CkLocMgr::homeReinstall(const CkArrayIndex& idx, CmiUInt8 id)
+{
+  auto it = homeLives.find(id);
+  if (it == homeLives.end() || cache->getPe(id) != -1) return;
+  // The element lives on in a life whose update was rejected while a dead life's
+  // entry stood (an epoch of 0 against a higher one). Install it: the update's
+  // whole path, so held messages and requests move. With several candidates, all
+  // but one are dead and their notices are on the way; each clears its own.
+  updateLocation(idx, it->second.front());
 }
 
 void CkLocMgr::retireId(CmiUInt8 oldId, const CkArrayIndex& idx)
@@ -3402,20 +3488,22 @@ bool CkLocMgr::hasBufferedMsgs(CmiUInt8 id) const
 
 // TODO: Rename to something more basic. This is just clearing entries from the
 // cache. Will be called by reclaim remote, but maybe other things as well.
-void CkLocMgr::reclaimRemote(const CkArrayIndex& idx, int deletedOnPe, int epoch)
+void CkLocMgr::reclaimRemote(const CkArrayIndex& idx, CmiUInt8 id, int deletedOnPe,
+                             int epoch, CmiUInt8 life)
 {
   DEBC((AA "Our element %s died on PE %d\n" AB, idx2str(idx), deletedOnPe));
 
-  CmiUInt8 id;
-  if (!lookupID(idx, id))
-    CkAbort("Cannot find ID for the given index\n");
-
-  // Forget the location, but only while the entry still describes the element that
-  // died: the index may have been re-created under the same id since (packed kind,
-  // or hashed with the id reused in this process), and the entry is the process's.
-  // The idx -> id binding stays so messages can recover their index.
+  // Forget the location of the life that died. The notice names the id that died:
+  // the index may have been re-created since, under the same id (packed kind, or
+  // hashed with the id reused in this process) or a new one, and the entry is the
+  // process's. The idx -> id binding stays so messages can recover their index.
   noteDead(idx, id);
-  cache->erase(id, deletedOnPe, epoch);
+  CkLocEntry died;
+  died.id = id;
+  died.pe = deletedOnPe;
+  died.epoch = epoch;
+  died.life = life;
+  homeNoteDeath(idx, died);
 }
 
 void CkLocMgr::removeFromTable(const CmiUInt8 id)
@@ -3623,6 +3711,7 @@ void CkLocMgr::emigrate(CkLocRec* rec, int toPe)
 
   CkArrayIndex idx = rec->getIndex();
   CmiUInt8 id = rec->getID();
+  const CmiUInt8 life = rec->getLife();  // rec is gone by the time the home is told
 
 #if CMK_OUT_OF_CORE
   /* Load in any elements that are out-of-core */
@@ -3687,7 +3776,7 @@ void CkLocMgr::emigrate(CkLocRec* rec, int toPe)
                                                     false,
 #endif
                                                     bufSize, managers.size(),
-                                                    newEpoch, gpuBufSize > 0);
+                                                    newEpoch, life, gpuBufSize > 0);
 
   {
     PUP::toMem p(msg->packData, gpuMsg, PUP::er::IS_MIGRATION);
@@ -3742,6 +3831,7 @@ void CkLocMgr::emigrate(CkLocRec* rec, int toPe)
   moved.id = id;
   moved.pe = toPe;
   moved.epoch = newEpoch;
+  moved.life = life;
   informHome(idx, moved);
 
 #if CMK_GLOBAL_LOCATION_UPDATE
@@ -3820,8 +3910,8 @@ void CkLocMgr::immigrateWithDevice(CkArrayElementMigrateMessage* msg)
   insertID(idx, msg->id);
 
   // Create a record for this element
-  CkLocRec* rec =
-      createLocal(idx, true, msg->ignoreArrival, false /* home told on departure */, msg->epoch);
+  CkLocRec* rec = createLocal(idx, true, msg->ignoreArrival,
+                              false /* home told on departure */, msg->epoch, msg->life);
 
   CmiAssert(CpvAccess(newZCPupGets).empty());  // Ensure that vector is empty
   // Create the new elements as we unpack the message

@@ -26,7 +26,8 @@ module CkLocation {
 #endif
     entry [expedited] void requestLocation(const CkArrayIndex& idx, int peToTell);
     entry [expedited] void updateLocation(const CkArrayIndex& idx, const CkLocEntry& e);
-    entry void reclaimRemote(const CkArrayIndex& idx, int deletedOnPe, int epoch);
+    entry void reclaimRemote(const CkArrayIndex& idx, CmiUInt8 id, int deletedOnPe, int epoch,
+                             CmiUInt8 life);
     // Tranche allocator for hashed-kind element ids (PE 0 is the allocator).
     entry [expedited] void requestTranche(int node, int wantLog2);
     entry [expedited] void grantTranche(CmiUInt8 base, CmiUInt8 len);

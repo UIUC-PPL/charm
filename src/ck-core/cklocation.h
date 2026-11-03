@@ -78,6 +78,11 @@ struct CkLocEntry {
   CmiUInt8 id = 0;
   int pe = -1;
   int epoch = -1;
+  // Which life of the element this describes: a tag minted at creation, unique in
+  // the run, carried by the migration message, the home updates and the death
+  // notice; 0 when unknown (an entry read back from the table). Compared for
+  // equality only, at the home (doc/internals/process-location-cache.md 3.5).
+  CmiUInt8 life = 0;
 
   const static CkLocEntry nullEntry;
 };
@@ -95,7 +100,7 @@ class CkArrayElementMigrateMessage : public CMessage_CkArrayElementMigrateMessag
 {
 public:
   CkArrayElementMigrateMessage(CkArrayIndex idx_, CmiUInt8 id_, bool ignoreArrival_,
-                               int length_, int nManagers_, int epoch_,
+                               int length_, int nManagers_, int epoch_, CmiUInt8 life_,
                                bool hasGPUMsg_ = false)
       : idx(idx_),
         id(id_),
@@ -103,6 +108,7 @@ public:
         length(length_),
         nManagers(nManagers_),
         epoch(epoch_),
+        life(life_),
         hasGPUMsg(hasGPUMsg_)
   {
   }
@@ -113,6 +119,7 @@ public:
   int length;          // Size in bytes of the packed data
   int nManagers;       // Number of associated array managers
   int epoch;
+  CmiUInt8 life;       // the element's life tag (CkLocEntry::life)
   // Whether a device payload travels alongside this message, on its own
   // device-zerocopy send. The two arrive independently and in either order;
   // whichever gets there first is buffered until the other lands.
@@ -540,6 +547,19 @@ private:
   // request, so the request had to be buffered.
   LocationRequestBuffer bufferedLocationRequests;
 
+  // At the home only (section 3.5): for each element homed here, its lives not
+  // known dead with the latest location the home saw for each, keyed by id; and
+  // the life tags whose death the home has processed.
+  std::unordered_map<CmiUInt8, std::vector<CkLocEntry>> homeLives;
+  std::unordered_set<CmiUInt8> deadLives;
+  // Record e at the home. False if e.life is known dead: the update is stale, and
+  // an entry it wrote earlier is cleared.
+  bool homeNoteLocation(const CkArrayIndex& idx, const CkLocEntry& e);
+  // The home learns that the life `died` ended where `died` says.
+  void homeNoteDeath(const CkArrayIndex& idx, const CkLocEntry& died);
+  // The entry is empty but another life of the element is known: install it.
+  void homeReinstall(const CkArrayIndex& idx, CmiUInt8 id);
+
   // Immigration messages which are waiting for all array managers to be ready
   std::list<CkArrayElementMigrateMessage*> pendingImmigrate;
 
@@ -860,7 +880,7 @@ public:
 
   // Create a new local record at this array index.
   CkLocRec* createLocal(const CkArrayIndex& idx, bool forMigration, bool ignoreArrival,
-                        bool notifyHome, int epoch = 0);
+                        bool notifyHome, int epoch = 0, CmiUInt8 life = 0);
 
   /// Done inserting elements for now
   void doneInserting(void);
@@ -931,7 +951,9 @@ public:
   /// element is about to live on pe, before the move is acted on.
   void updateLocationFromLB(CmiUInt8 id, int pe);
 #endif
-  void reclaimRemote(const CkArrayIndex& idx, int deletedOnPe, int epoch);
+  // The element (idx, id) died on deletedOnPe at that epoch, in life `life`.
+  void reclaimRemote(const CkArrayIndex& idx, CmiUInt8 id, int deletedOnPe, int epoch,
+                     CmiUInt8 life);
   void noteDead(const CkArrayIndex& idx, CmiUInt8 id);
 
   // Tranche allocator (design section 3.1). The allocator is this group's branch on

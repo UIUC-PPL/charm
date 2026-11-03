@@ -184,7 +184,7 @@ pending table is not needed while requests are addressed to PEs (section 9).
 | emigration (W2) | the source PE, before the migration message is sent | location {destination, epoch+1}: a forwarding entry, kept |
 | immigration (W3) | the destination PE | location {self, epoch from the message} |
 | update from another PE or process (W4) | the PE that receives the update or the reply | location, by epoch compare; hashed kind: index binding |
-| death (W5) | the owning PE, and the home PE that handles the reclaim | value 0 (no location) while the entry still names the dying PE and its epoch; waiter bits kept; hashed kind: index binding kept, id retired |
+| death (W5) | the owning PE, and the home PE that handles the reclaim | value 0 (no location) while the entry names the dying PE and epoch or, at the home, a location the home recorded for the dying life (section 3.5); waiter bits kept; hashed kind: index binding kept, id retired |
 
 Every write is one CAS or one store; the writer sends messages (wake-ups,
 replies) after it, never while holding anything. W2 is written before the
@@ -301,16 +301,24 @@ parking of such messages, commit 54ff0156c on rate-aware-gpu-lb). The design
 has the destination process mark the entry as arriving when it learns of the
 move (from the balancer's decision, or from the migration message's first
 fragment on branches that stream payloads): value {destination PE, epoch+1,
-state = arriving}. The first version does not write this state, because on
-recharm nothing learns of a move before the migration message lands: the
-balancer's global update is compiled out and payloads are not split. The state
-bit is reserved in the value word, and the device-payload split of Aditya's
-branch is where the first writer belongs. A PE of that process that reads an arriving entry parks the
-message in its own buffered queue and registers as a waiter; the landing (W3)
-clears the state and wakes the waiters. No message leaves the process while the
-element is on its way in. The source process's forwarding entry (W2) is written
-at the same time, so a message that still reaches the source is forwarded once,
-to the destination, and parked there.
+state = arriving}. The first version does not write this state. Across
+processes nothing learns of a move before the migration message lands (the
+balancer's global update is compiled out and payloads are not split), and the
+bounce is the one described above. Within one process the destination does
+learn of it, from the source's W2: a message that reaches the destination PE
+before the landing finds its own PE in the shared entry and requeues itself
+there (`CkArray::sendToPe` to this PE with queue delivery; with inline delivery
+it is buffered under the id and the landing flushes it). The requeue repeats
+until the scheduler reaches the migration message, which is in the same queue;
+the TLA+ check of this version (PR #4123) shows the loop and that it ends. The
+state bit is reserved in the value word, and the device-payload split of
+Aditya's branch is where the first writer belongs. A PE of that process that
+reads an arriving entry parks the message in its own buffered queue and
+registers as a waiter; the landing (W3) clears the state and wakes the waiters.
+No message leaves the process while the element is on its way in. The source
+process's forwarding entry (W2) is written at the same time, so a message that
+still reaches the source is forwarded once, to the destination, and parked
+there.
 
 Order across a move is not preserved, today or in PR 3: a message the sender
 issues after it learns the new PE can reach the element before an older message
@@ -322,29 +330,60 @@ so this window is exercised more often; the test in section 7 covers it.
 ### 3.5 Death
 
 The owning PE clears the entry: value 0, key and waiter bits kept (W5); the
-home does the same when told (`reclaimRemote`, which carries the PE and the
-epoch the element died with). Both clears are conditional on the entry still
-naming that PE and epoch, because the entry is the process's: an index can be
+home does the same when told (`reclaimRemote`, which carries the id, the PE and
+the epoch the element died with, and its life tag). The entry is the process's, and an index can be
 re-created under the same id (packed kind, or hashed with the id reused in the
-process) before a late death notice arrives, and the live entry must stay. The
-remaining gap is a re-creation on the same PE at the same epoch (epoch 0, never
-migrated) with the notice still in flight; closing it needs the creation flag
-of the tombstone design below. The home keeps the index binding and records
-the dead id as retired (section 2.2). Keys are never reclaimed in the first
-version, which matches the unpruned per-PE `retiredIds` before it.
+process) before the old life's messages have all arrived, so the home has to
+tell the lives of one id apart. Each creation mints a life tag
+(`CkLocEntry::life`: the process number above a process-wide count, unique in
+the run), kept in the element's `CkLocRec`, carried by the migration message,
+by every home update (`informHome`) and by the death notice. The table does not
+store it. The home keeps, per id, the latest location it saw for each life not
+known dead (`CkLocMgr::homeLives`) and the set of dead tags (`deadLives`);
+nothing changes at the other PEs.
+
+At the home:
+
+- An update of a life known dead is dropped, after clearing the entry while it
+  still names that update's location: the home may have missed the update when
+  the notice came, and the notice could not clear what it did not know of.
+  Every other update is recorded for its life and applied to the table by the
+  epoch compare (W4), as before.
+- A death notice adds the life to the dead set, forgets its record, and clears
+  the entry while it names where the life died or any location the home had
+  recorded for that life. A later life's entry under the same id survives the
+  notice, unless that life was created on the same PE at the same epoch and the
+  home has nothing recorded for it yet (section 9).
+- When a notice or a dropped update leaves the entry empty and another life is
+  recorded, that life is installed through the update path (`homeReinstall`),
+  which also releases the location requests and the messages held at the home.
+
+The record is needed because epochs restart at 0 with each life, so the epoch
+compare cannot order two lives. Without it, a death notice that reaches the
+home after the new life's creation update finds that update already rejected
+by the dead life's higher epoch, clears the entry, and the new life stays
+unknown at the home until it migrates: a message held under its id, or a
+request held at the home, waits forever. The TLA+ check of this version (PR
+#4123) found this order with three processes; the per-PE code had the same
+gap. With the new life created in the home's process the order is harmless
+(W1 stores unconditionally), and in the dead PE's process the forwarding entry
+there delivers.
 
 A creation stores epoch 0 unconditionally (W1), also over an entry that still
 holds the epoch of the element's earlier life; the per-PE assert that epochs
-never went backwards is gone with the per-PE cache.
+never went backwards is gone with the per-PE cache. The home keeps the index
+binding and records the dead id as retired (section 2.2). Keys, index
+bindings, retired ids and dead life tags are never reclaimed in the first
+version, which matches the unpruned per-PE `retiredIds` before it.
 
-The design's tombstone with a death epoch, which would reject a late update
-from before the death, is not written. A packed-kind element re-created under
-the same id starts again at epoch 0, so an epoch-carrying tombstone would also
-reject the re-creation's own updates at the home and at every process that saw
-the death; telling them apart needs a creation flag on the home update, which
-is left for a later version (section 9). The race it would close, an update
-from before the death reviving a dead entry, exists in the per-PE code as well
-and is healed by the repair rule like any stale entry.
+The design's tombstone with a death epoch is not written: the life record
+rejects updates from before a death without the problem an epoch-carrying
+tombstone has with a re-creation at epoch 0. A stale update of a dead life
+whose notice has not reached the home yet is still applied by the epoch
+compare, like any stale entry, and the notice undoes it. The repair rule
+(section 3.2) heals a stale entry elsewhere only when the right entry has the
+higher epoch, which two lives at epoch 0 do not give it, so the home relies on
+the notice and the record, not on the repair.
 
 ### 3.6 Device zero-copy sends to an element that moved
 
@@ -439,15 +478,19 @@ is no second code path.
 Nothing in the shared tables is checkpointed. Elements register with their homes
 when restored (`CkLocMgr::restore` and `resume`), which rebuilds every location
 entry and every index binding on the new process count, as the per-PE caches
-are rebuilt today (`CkLocCache::pup` is empty for this reason). The tranche
-cursor keeps its existing treatment (object-ids.md section 5).
+are rebuilt today (`CkLocCache::pup` is empty for this reason). The home's
+record of lives and dead tags (section 3.5) is not checkpointed either: restored
+elements mint new tags, and no message from before the restart is in flight. The
+tranche cursor keeps its existing treatment (object-ids.md section 5).
 
 ## 6. Limits and diagnostics
 
 - Table capacity: initial size from `+objid_table_log2` (default 2^16 slots for
   each table), growth by segments of four times the size, started when a
   segment passes 1/2 full. Memory is 24 bytes per location slot and 40 bytes
-  per index slot at `CK_ARRAYINDEX_MAXLEN` 3.
+  per index slot at `CK_ARRAYINDEX_MAXLEN` 3, plus, at the home, a map node and
+  a small vector per element homed there (about 120 bytes) and 8 bytes per
+  death (section 3.5).
 - The index table stores `CK_ARRAYINDEX_MAXLEN` words per index, so an index
   wider than that cannot exist, as before.
 - `+objid_diag` (new) counts table events and prints one line per process at
@@ -485,13 +528,19 @@ Existing: `tests/charm++/anytime_migration`, `anytime_bcastred`,
 - `objid_insert` phase 7 now distinguishes a fresh PE whose process never
   addressed the index (three or more processes: a new id) from one whose
   process did (the old id is reused).
+- `tests/charm++/objid_recreate`: the home's handling of an element re-created
+  under the same id (section 3.5). Every PE drives the home-side handlers of a
+  packed-kind array's `CkLocMgr` directly, for the indices it is the home of, in
+  the six orders of creation updates, move updates and death notices that the
+  network can produce, and checks that the live life is the one located
+  afterwards. No element exists and nothing is sent.
 
 ## 8. Where in the source
 
 | what | where |
 |---|---|
 | location table, index table, retired ids, `+objid_diag` report | `src/ck-core/cklocnode.h`, `cklocnode.C` (namespace `ck::objid`: `LocTable`, `IndexTable`, `RetiredIds`) |
-| `CkLocCache` (messages, listeners, wakes) and `CkLocMgr` (bindings through the tables, `retireId`, `releaseRetired`, W2 before the send) | `src/ck-core/cklocation.h`, `cklocation.C`, `cklocation.ci` |
+| `CkLocCache` (messages, listeners, wakes) and `CkLocMgr` (bindings through the tables, `retireId`, `releaseRetired`, W2 before the send, life tags and the home's record of lives: `homeNoteLocation`, `homeNoteDeath`, `homeReinstall`) | `src/ck-core/cklocation.h`, `cklocation.C`, `cklocation.ci`, `cklocrec.h` |
 | request-or-send on a miss, re-addressing under a rebound id, buffered-message flush | `src/ck-core/ckarray.C` (`handleUnknownByID`, `bufferForLocation`, `sendBufferedMsgs`, `releaseRetiredMsgs`) |
 | `+objid_table_log2`, `+objid_diag` | `src/ck-core/init.C` |
 | compressor overflow message | `src/ck-core/ckarrayindex.h` |
@@ -499,10 +548,12 @@ Existing: `tests/charm++/anytime_migration`, `anytime_bcastred`,
 
 ## 9. What the first version leaves out
 
-- The arriving state (section 3.4): nothing on recharm learns of a move before
-  the migration message lands; the bit is reserved.
-- Epoch-carrying tombstones (section 3.5): a re-created packed-kind element
-  restarts at epoch 0, so they need a creation flag on the home update first.
+- The arriving state (section 3.4): no process other than the source's learns
+  of a move before the migration message lands; the bit is reserved. Within the
+  source process a message that reaches the destination early requeues itself
+  there until the landing.
+- Pruning the home's dead-life set (section 3.5): a tag is needed only while a
+  message of that life can still be in flight, which nothing bounds.
 - Messages addressed to processes (the design's `CkLocNode` nodegroup, section
   4): requests go to the home PE and replies to the requesting PE, one per
   process; `informHome` goes to the home PE. The traffic saving is one request
@@ -514,9 +565,23 @@ Existing: `tests/charm++/anytime_migration`, `anytime_bcastred`,
   measured. Entries, index bindings and retired ids are never removed, so a
   program that creates and deletes many elements or arrays grows the tables
   for the whole run (a per-PE map grew the same way, once per PE).
-- A late death notice for an element re-created on the same PE at epoch 0
-  (section 3.5): the conditional clear cannot tell the two lives apart; the
-  creation flag of the tombstone design would.
+- Two windows in the home's process when a message of a dead life reaches the
+  home before that life's death notice and the new life lives in the home's
+  process (section 3.5). A late death notice for a life re-created on the same
+  PE at epoch 0: the clear cannot tell the two lives apart, and the entry is
+  empty until the new life's creation update arrives. A late move update of the
+  dead life with a higher epoch: it replaces the new life's own entry until the
+  notice clears it and the record reinstalls the new life (with per-PE caches
+  it touched only the home's copy). In either window a migration of the new
+  life aborts in `LocTable::recordEmigration`, and sends from the process go to
+  the home or to the dead PE. The second ordering came from the independent
+  TLA+ model of PR #4123. Ordering a dead life's messages before its notice
+  would close both; the home cannot.
+- Hashed kind, new life under a new id: a stale home update of the dead life
+  that arrives before that life's death notice rebinds the index at the home to
+  the dead id (`insertID` in `updateLocation`) until the live life's next update
+  rebinds it; once the notice has arrived the life record drops such updates
+  before the binding is touched. Not modeled (the model has no index table).
 - Above 64 ranks per process, a rank that drops its own waiter bit after it
   found the location also drops the bit of the ranks it is folded with (r+64,
   ...). A folded rank loses its wake only if it registered after a fill and a
