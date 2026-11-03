@@ -9761,14 +9761,11 @@ Codes and libraries written in Charm++ and MPI can also be used in an
 interoperable manner. The MPI program is compiled and linked with the
 MPI compiler wrapper (``charmc -c++ mpicxx`` and ``-ld++ mpicxx``), and
 Charm++ runs on every MPI rank of the job, with Charm++ process *i* on
-``MPI_COMM_WORLD`` rank *i*. The Charm++ libraries do not use MPI, but
-LCI must be built with its MPI bootstrap backend so that Charm++ can start
-inside a process whose MPI is already initialized: add
-``--with-cmake-args="-DLCT_PMI_BACKEND_ENABLE_MPI=ON"`` to ``./build``,
-with the same MPI the application uses (for Open MPI, also pass
-``-DOMPI_SKIP_MPICXX`` to ``./build``). Without it, ``srun --mpi=pmi2``
-fails at startup, since a second PMI client in the process gets no job
-size. An example program to demonstrate the interoperation is available in
+``MPI_COMM_WORLD`` rank *i*. Charm++ does not need to be built with
+MPI: ``CharmLibInit`` starts Charm++'s network layer (LCI) through LCI's
+own TCP bootstrap, with MPI rank 0 as the rendezvous point, so the
+launcher's PMI service is left to MPI. Setting ``LCT_PMI_BACKEND``
+selects a different LCI bootstrap backend instead. An example program to demonstrate the interoperation is available in
 ``examples/charm++/mpi-coexist``. In the following text, we will refer to
 this example program for the ease of understanding.
 

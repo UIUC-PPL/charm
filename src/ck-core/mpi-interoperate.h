@@ -21,6 +21,9 @@ extern "C" {
 #endif
 
 void CharmLibInitWorld(int argc, char **argv);
+int CharmInteropPickRendezvous(char *host, int hostlen);
+void CharmLibInitWorldTcp(int rank, int size, int local_rank, int local_size,
+                          const char *host, int port, int argc, char **argv);
 
 void CharmBeginInit(int argc, char** argv);
 void CharmFinishInit();
@@ -56,7 +59,27 @@ static inline void CharmLibInit(MPI_Comm userComm, int argc, char **argv) {
     fflush(stderr);
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
-  CharmLibInitWorld(argc, argv);
+  // Bootstrap LCI over LCT's tcp backend, rendezvous at rank 0, so the
+  // launcher's PMI is left to MPI.
+  char host[256] = {0};
+  int port = -1;
+  if (rank == 0) port = CharmInteropPickRendezvous(host, sizeof(host));
+  MPI_Bcast(&port, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Bcast(host, sizeof(host), MPI_CHAR, 0, MPI_COMM_WORLD);
+  if (port < 0) {
+    if (rank == 0)
+      fprintf(stderr, "CharmLibInit: no TCP port for the LCI bootstrap\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  MPI_Comm local;
+  int local_rank = 0, local_size = 1;
+  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, rank,
+                      MPI_INFO_NULL, &local);
+  MPI_Comm_rank(local, &local_rank);
+  MPI_Comm_size(local, &local_size);
+  MPI_Comm_free(&local);
+  CharmLibInitWorldTcp(rank, size, local_rank, local_size, host, port, argc,
+                       argv);
   if (CmiMyNode() != rank || CmiNumNodes() != size) {
     fprintf(stderr,
             "CharmLibInit: Charm++ process %d of %d is MPI_COMM_WORLD rank %d "
