@@ -4,6 +4,7 @@ DIRS = \
   megampi \
   ibarrier \
   cas \
+  onesided \
   stacksize \
   migration \
   datatype \

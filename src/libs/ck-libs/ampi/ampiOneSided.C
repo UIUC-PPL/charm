@@ -64,7 +64,7 @@ void win_obj::pup(PUP::er &p) noexcept {
 int win_obj::create(const char *name, void *base, MPI_Aint size, int disp_unit, MPI_Comm comm) noexcept {
   if (name) setName(name);
   baseAddr = base;
-  winSize = size*disp_unit;
+  winSize = size; // MPI_Win_create's size is in bytes
   this->disp_unit = disp_unit;
   this->comm = comm;
   // assume : memory pointed by base has been allocated
@@ -78,54 +78,36 @@ int win_obj::free() noexcept {
   return WIN_SUCCESS;
 }
 
-// This is a local function.
-// AMPI_Win_put will act as a wrapper: pack the input parameters, copy the
-//   remote data to local, and call this function of the involved WIN object
-int win_obj::put(void *orgaddr, int orgcnt, int orgunit, MPI_Aint targdisp,
-                 int targcnt, int targunit) noexcept {
-  if(!initflag) {
-    CkAbort("Put to non-existing MPI_Win\n");
-    return WIN_ERROR;
+// MPI-3.1 section 11.2.1: the target of an RMA call starts at byte offset
+// disp_unit*target_disp of the window, and every byte it touches must lie in
+// [0, size). checkTargetBytes takes the touched bytes as [lo, hi) relative to
+// that offset; checkTarget computes them for targcnt elements of tddt.
+void win_obj::checkTargetBytes(const char *opname, MPI_Aint targdisp, MPI_Aint lo,
+                               MPI_Aint hi) const noexcept {
+  if (!initflag) {
+    CkAbort("AMPI> %s on a freed or non-existent MPI_Win\n", opname);
   }
-  int totalsize = targdisp+targcnt*targunit;
-  if(totalsize > (winSize)){
-    CkAbort("Put size exceeds MPI_Win size\n");
-    return WIN_ERROR;
+  MPI_Aint offset = (MPI_Aint)disp_unit * targdisp;
+  if (hi > lo && (offset + lo < 0 || offset + hi > winSize)) {
+    CkAbort("AMPI> %s: target bytes [%ld, %ld) are outside the MPI_Win of %ld bytes "
+            "(target_disp %ld, disp_unit %d)\n", opname, (long)(offset + lo), (long)(offset + hi),
+            (long)winSize, (long)targdisp, disp_unit);
   }
-
-  return WIN_SUCCESS;
 }
 
-int win_obj::get(void *orgaddr, int orgcnt, int orgunit, MPI_Aint targdisp,
-                 int targcnt, int targunit) noexcept {
-  if(!initflag) {
-    CkAbort("Get from non-existing MPI_Win\n");
-    return WIN_ERROR;
+void win_obj::checkTarget(const char *opname, MPI_Aint targdisp, int targcnt,
+                          const CkDDT_DataType *tddt) const noexcept {
+  if (targcnt <= 0) {
+    checkTargetBytes(opname, targdisp, 0, 0); // nothing touched; window must exist
+    return;
   }
-  int totalsize = targdisp+targcnt*targunit;
-  if(totalsize > (winSize)){
-    CkAbort("Get size exceeds MPI_Win size\n");
-    return WIN_ERROR;
-  }
-  // Call the RMA operation here!!!
-
-  return WIN_SUCCESS;
-}
-
-int win_obj::iget(int orgcnt, int orgunit, MPI_Aint targdisp,
-                  int targcnt, int targunit) noexcept {
-  if(!initflag) {
-    CkAbort("Get from non-existing MPI_Win\n");
-    return WIN_ERROR;
-  }
-
-  if((targdisp+targcnt*targunit) > (winSize)){
-    CkAbort("Get size exceeds MPI_Win size\n");
-    return WIN_ERROR;
-  }
-  // Call the RMA operation here!!!
-
-  return WIN_SUCCESS;
+  // Element k occupies [k*extent + trueLB, k*extent + trueLB + trueExtent);
+  // the first and the last element bound the range (extent may be negative).
+  MPI_Aint firstLo = tddt->getTrueLB();
+  MPI_Aint lastLo = firstLo + (MPI_Aint)(targcnt - 1) * tddt->getExtent();
+  MPI_Aint lo = std::min(firstLo, lastLo);
+  MPI_Aint hi = std::max(firstLo, lastLo) + tddt->getTrueExtent();
+  checkTargetBytes(opname, targdisp, lo, hi);
 }
 
 int win_obj::accumulate(void *orgaddr, int count, MPI_Aint targdisp, MPI_Datatype targtype,
@@ -256,10 +238,7 @@ void ampi::winRemotePut(int orgtotalsize, char* sorgaddr, int orgcnt, MPI_Dataty
                         MPI_Aint targdisp, int targcnt, MPI_Datatype targtype, int winIndex) noexcept {
   win_obj *winobj = winObjects[winIndex];
   CkDDT_DataType *tddt = getDDT()->getType(targtype);
-  int targunit = tddt->getSize();
-  int orgunit = getDDT()->getSize(orgtype);
-
-  winobj->put(sorgaddr, orgcnt, orgunit, targdisp, targcnt, targunit);
+  winobj->checkTarget("MPI_Put", targdisp, targcnt, tddt);
   char* targaddr = ((char*)(winobj->baseAddr)) + winobj->disp_unit*targdisp;
   int targsize = getDDT()->getType(targtype)->getSize(targcnt);
   tddt->serialize(targaddr, (char*)sorgaddr, targcnt, targsize, UNPACK);
@@ -281,9 +260,15 @@ int ampi::winGet(void *orgaddr, int orgcnt, MPI_Datatype orgtype, int rank,
     ampi *destPtr = thisProxy[rank].ckLocal();
     if (destPtr != NULL) {
       char* targdata = destPtr->winLocalGet(orgcnt, orgtype, targdisp, targcnt, targtype, win->index);
-      if (orgddt->isContig()) {
+      if (orgddt->isContig() && targddt->isContig()) {
         int orgsize = getDDT()->getType(orgtype)->getSize(orgcnt);
         orgddt->serialize((char*)orgaddr, targdata, orgcnt, orgsize, UNPACK);
+      } else if (orgddt->isContig()) {
+        // The origin is contiguous and the target is not: gather the target
+        // elements into the origin buffer (PACK copies from targdata into
+        // orgaddr), as winRemoteGet does into its reply.
+        int targsize = getDDT()->getType(targtype)->getSize(targcnt);
+        targddt->serialize(targdata, (char*)orgaddr, targcnt, targsize, PACK);
       } else {
         // The target is contiguous: scatter its bytes into the non-contiguous
         // origin buffer (UNPACK copies from targdata into orgaddr).
@@ -312,11 +297,8 @@ char* ampi::winLocalGet(int orgcnt, MPI_Datatype orgtype, MPI_Aint targdisp, int
 
   win_obj *winobj = winObjects[winIndex];
   CkDDT_DataType *tddt = getDDT()->getType(targtype);
-  int targunit = tddt->getSize();
-  int orgunit = getDDT()->getSize(orgtype);
+  winobj->checkTarget("MPI_Get", targdisp, targcnt, tddt);
   char* targaddr = (char*)(winobj->baseAddr) + winobj->disp_unit*targdisp;
-
-  winobj->get(targaddr, orgcnt, orgunit, targdisp, targcnt, targunit);
 
   AMPI_DEBUG("    Rank[%d] local get win  [%d] \n", thisIndex, *(int*)(targaddr));
   return targaddr;
@@ -328,12 +310,9 @@ AmpiMsg* ampi::winRemoteGet(int orgcnt, MPI_Datatype orgtype, MPI_Aint targdisp,
 
   win_obj *winobj = winObjects[winIndex];
   CkDDT_DataType *tddt = getDDT()->getType(targtype);
-  int targunit = tddt->getSize();
   int targtotalsize = tddt->getSize(targcnt); // bytes packed into the reply
-  int orgunit = getDDT()->getSize(orgtype);
+  winobj->checkTarget("MPI_Get", targdisp, targcnt, tddt);
   char* targaddr = (char*)(winobj->baseAddr) + winobj->disp_unit*targdisp;
-
-  winobj->get(targaddr, orgcnt, orgunit, targdisp, targcnt, targunit);
 
   AMPI_DEBUG("    Rank[%d] get win  [%d] \n", thisIndex, *(int*)(targaddr));
   AmpiMsg *msg = new (targtotalsize, 0) AmpiMsg(0, 0, MPI_RMA_TAG, thisIndex, targtotalsize);
@@ -357,11 +336,8 @@ AmpiMsg* ampi::winRemoteIget(MPI_Aint orgdisp, int orgcnt, MPI_Datatype orgtype,
   AMPI_DEBUG("    RemoteIget invoked at Rank[%d:%d]\n", thisIndex, myRank);
   win_obj *winobj = winObjects[winIndex];
   CkDDT_DataType *tddt = getDDT()->getType(targtype);
-  int targunit = tddt->getSize();
   int targtotalsize = tddt->getSize(targcnt); // bytes packed into the reply
-  int orgunit = getDDT()->getSize(orgtype);
-
-  winobj->iget(orgcnt, orgunit, targdisp, targcnt, targunit);
+  winobj->checkTarget("AMPI_Iget", targdisp, targcnt, tddt);
 
   AmpiMsg *msg = new (targtotalsize, 0) AmpiMsg(0, 0, MPI_RMA_TAG, thisIndex, targtotalsize);
 
@@ -438,21 +414,35 @@ int ampi::winAccumulate(const void *orgaddr, int orgcnt, MPI_Datatype orgtype, i
   return MPI_SUCCESS;
 }
 
+// Apply op to targcnt elements of the target (type tddt, handle targtype) at
+// displacement targdisp, with operands taken from sorgaddr, which holds
+// them packed (contiguous). The reduction functions work on the datatype's
+// extent layout, so for a non-contiguous type the operands are first
+// unpacked into a buffer of targcnt extents.
+void ampi::accumulateIntoTarget(win_obj *winobj, char *sorgaddr, MPI_Aint targdisp, int targcnt,
+                                CkDDT_DataType *tddt, MPI_Datatype targtype, MPI_Op op) noexcept {
+  if (tddt->isContig()) {
+    winobj->accumulate(sorgaddr, targcnt, targdisp, targtype, op, parent);
+  }
+  else {
+    // CkDDT_DataType::serialize places element k at k*extent of userdata.
+    // Only predefined target types reach here (MPI_Accumulate and
+    // MPI_Get_accumulate reject derived ones), and their bytes lie in [0, extent).
+    std::vector<char> getdata((size_t)targcnt * tddt->getExtent());
+    int targsize = tddt->getSize(targcnt);
+    tddt->serialize(getdata.data(), sorgaddr, targcnt, targsize, UNPACK);
+    winobj->accumulate(getdata.data(), targcnt, targdisp, targtype, op, parent);
+  }
+}
+
 void ampi::winRemoteAccumulate(int orgtotalsize, char* sorgaddr, int orgcnt,
                                MPI_Datatype orgtype, MPI_Aint targdisp,
                                int targcnt, MPI_Datatype targtype, MPI_Op op,
                                int winIndex) noexcept {
   win_obj *winobj = winObjects[winIndex];
   CkDDT_DataType *ddt = getDDT()->getType(targtype);
-  if (ddt->isContig()) {
-    winobj->accumulate(sorgaddr, targcnt, targdisp, targtype, op, parent);
-  }
-  else {
-    std::vector<char> getdata(orgtotalsize);
-    int targsize = getDDT()->getType(targtype)->getSize(targcnt);
-    ddt->serialize(getdata.data(), sorgaddr, targcnt, targsize, UNPACK);
-    winobj->accumulate(getdata.data(), targcnt, targdisp, targtype, op, parent);
-  }
+  winobj->checkTarget("MPI_Accumulate", targdisp, targcnt, ddt);
+  accumulateIntoTarget(winobj, sorgaddr, targdisp, targcnt, ddt, targtype, op);
 }
 
 int ampi::winGetAccumulate(const void *orgaddr, int orgcnt, MPI_Datatype orgtype,
@@ -468,8 +458,18 @@ int ampi::winGetAccumulate(const void *orgaddr, int orgcnt, MPI_Datatype orgtype
   if (orgddt->isContig()) {
     ampi *destPtr = thisProxy[rank].ckLocal();
     if (destPtr != NULL) {
-      destPtr->winLocalGetAccumulate(orgtotalsize, (char*)orgaddr, orgcnt, orgtype, targdisp,
-                                     targcnt, targtype, op, (char*)resaddr, win->index);
+      // winLocalGetAccumulate packs the original target elements contiguously;
+      // a non-contiguous result datatype receives them through a buffer.
+      if (resddt->isContig()) {
+        destPtr->winLocalGetAccumulate(orgtotalsize, (char*)orgaddr, orgcnt, orgtype, targdisp,
+                                       targcnt, targtype, op, (char*)resaddr, win->index);
+      } else {
+        int ressize = resddt->getSize(rescnt);
+        std::vector<char> packed(std::max(ressize, getDDT()->getType(targtype)->getSize(targcnt)));
+        destPtr->winLocalGetAccumulate(orgtotalsize, (char*)orgaddr, orgcnt, orgtype, targdisp,
+                                       targcnt, targtype, op, packed.data(), win->index);
+        resddt->serialize((char*)resaddr, packed.data(), rescnt, ressize, UNPACK);
+      }
       return MPI_SUCCESS;
     }
 #if AMPI_RDMA_IMPL
@@ -510,25 +510,16 @@ void ampi::winLocalGetAccumulate(int orgtotalsize, char* sorgaddr, int orgcnt, M
                                  char *resaddr, int winIndex) noexcept {
   win_obj *winobj = winObjects[winIndex];
   CkDDT_DataType *tddt = getDDT()->getType(targtype);
-  int targunit = tddt->getSize();
-  int orgunit = getDDT()->getSize(orgtype);
+  winobj->checkTarget("MPI_Get_accumulate", targdisp, targcnt, tddt);
   char* targaddr = (char*)(winobj->baseAddr) + winobj->disp_unit*targdisp;
 
-  // Copy the targaddr buffer directly to resaddr
-  winobj->get(targaddr, orgcnt, orgunit, targdisp, targcnt, targunit);
-  int targsize = getDDT()->getType(targtype)->getSize(targcnt);
+  // Pack the original target elements into resaddr (contiguous, the
+  // caller unpacks them into the result datatype)
+  int targsize = tddt->getSize(targcnt);
   tddt->serialize(targaddr, resaddr, targcnt, targsize, PACK);
 
   // Accumulate sorgaddr into targaddr
-  if (tddt->isContig()) {
-    winobj->accumulate(sorgaddr, targcnt, targdisp, targtype, op, parent);
-  }
-  else {
-    std::vector<char> getdata(orgtotalsize);
-    int targsize = getDDT()->getType(targtype)->getSize(targcnt);
-    tddt->serialize(getdata.data(), sorgaddr, targcnt, targsize, UNPACK);
-    winobj->accumulate(getdata.data(), targcnt, targdisp, targtype, op, parent);
-  }
+  accumulateIntoTarget(winobj, sorgaddr, targdisp, targcnt, tddt, targtype, op);
 }
 
 AmpiMsg* ampi::winRemoteGetAccumulate(int orgtotalsize, char* sorgaddr, int orgcnt, MPI_Datatype orgtype,
@@ -536,27 +527,17 @@ AmpiMsg* ampi::winRemoteGetAccumulate(int orgtotalsize, char* sorgaddr, int orgc
                                       int winIndex) noexcept {
   win_obj *winobj = winObjects[winIndex];
   CkDDT_DataType *tddt = getDDT()->getType(targtype);
-  int targunit = tddt->getSize();
   int targtotalsize = tddt->getSize(targcnt); // bytes packed into the reply
-  int orgunit = getDDT()->getSize(orgtype);
+  winobj->checkTarget("MPI_Get_accumulate", targdisp, targcnt, tddt);
   char* targaddr = (char*)(winobj->baseAddr) + winobj->disp_unit*targdisp;
 
   // Send back the targaddr buffer before it is accumulated into
-  winobj->get(targaddr, orgcnt, orgunit, targdisp, targcnt, targunit);
   AmpiMsg *msg = new (targtotalsize, 0) AmpiMsg(0, 0, MPI_RMA_TAG, thisIndex, targtotalsize);
   int targsize = getDDT()->getType(targtype)->getSize(targcnt);
   tddt->serialize(targaddr, msg->getData(), targcnt, targsize, PACK);
 
   // Accumulate sorgaddr into targaddr
-  if (tddt->isContig()) {
-    winobj->accumulate(sorgaddr, targcnt, targdisp, targtype, op, parent);
-  }
-  else {
-    std::vector<char> getdata(orgtotalsize);
-    int targsize = getDDT()->getType(targtype)->getSize(targcnt);
-    tddt->serialize(getdata.data(), sorgaddr, targcnt, targsize, UNPACK);
-    winobj->accumulate(getdata.data(), targcnt, targdisp, targtype, op, parent);
-  }
+  accumulateIntoTarget(winobj, sorgaddr, targdisp, targcnt, tddt, targtype, op);
 
   return msg;
 }
@@ -591,7 +572,7 @@ int ampi::winCompareAndSwap(const void *orgaddr, const void *compaddr, void *res
 void ampi::winLocalCompareAndSwap(int size, char* sorgaddr, char* compaddr, char* resaddr,
                                   MPI_Aint targdisp, int winIndex) noexcept {
   win_obj *winobj = winObjects[winIndex];
-  winobj->put(sorgaddr, 1, size, targdisp, 1, size); // bounds check only, copies nothing
+  winobj->checkTargetBytes("MPI_Compare_and_swap", targdisp, 0, size);
 
   char* targaddr = ((char*)(winobj->baseAddr)) + winobj->disp_unit*targdisp;
   bool match = (memcmp(targaddr, compaddr, size) == 0);
@@ -787,6 +768,7 @@ AMPI_API_IMPL(int, MPI_Put, const void *orgaddr, int orgcnt, MPI_Datatype orgtyp
                             MPI_Aint targdisp, int targcnt, MPI_Datatype targtype, MPI_Win win)
 {
   AMPI_API("AMPI_Put", orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, win);
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
   if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   handle_MPI_BOTTOM((void*&)orgaddr, orgtype);
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
@@ -804,6 +786,7 @@ AMPI_API_IMPL(int, MPI_Get, void *orgaddr, int orgcnt, MPI_Datatype orgtype, int
                             MPI_Win win)
 {
   AMPI_API("AMPI_Get", orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, win);
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
   if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   handle_MPI_BOTTOM(orgaddr, orgtype);
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
@@ -827,6 +810,7 @@ AMPI_API_IMPL(int, MPI_Accumulate, const void *orgaddr, int orgcnt, MPI_Datatype
                                    MPI_Datatype targtype, MPI_Op op, MPI_Win win)
 {
   AMPI_API("AMPI_Accumulate", orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, op, win);
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
   if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   handle_MPI_BOTTOM((void*&)orgaddr, orgtype);
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
@@ -848,6 +832,7 @@ AMPI_API_IMPL(int, MPI_Get_accumulate, const void *orgaddr, int orgcnt, MPI_Data
                                        MPI_Datatype targtype, MPI_Op op, MPI_Win win)
 {
   AMPI_API("AMPI_Get_accumulate", orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, op, win);
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
   if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   handle_MPI_BOTTOM((void*&)orgaddr, orgtype);
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
@@ -869,10 +854,12 @@ AMPI_API_IMPL(int, MPI_Rput, const void *orgaddr, int orgcnt, MPI_Datatype orgty
                              MPI_Request *request)
 {
   AMPI_API("AMPI_Rput", orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, win, request);
-  if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
   ampi *ptr = getAmpiInstance(winStruct->comm);
   *request = ptr->postReq(getAmpiParent()->reqPool.newReq<SendReq>(orgtype, winStruct->comm, ptr->getDDT(), AMPI_REQ_COMPLETED));
+  // The request is complete already: MPI_PROC_NULL makes the call a no-op.
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
+  if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   return ptr->winPut(orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, winStruct);
 }
 /*
@@ -888,10 +875,12 @@ AMPI_API_IMPL(int, MPI_Rget, void *orgaddr, int orgcnt, MPI_Datatype orgtype, in
                              MPI_Win win, MPI_Request *request)
 {
   AMPI_API("AMPI_Rget", orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, win, request);
-  if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
   ampi *ptr = getAmpiInstance(winStruct->comm);
   *request = ptr->postReq(getAmpiParent()->reqPool.newReq<SendReq>(orgtype, winStruct->comm, ptr->getDDT(), AMPI_REQ_COMPLETED));
+  // The request is complete already: MPI_PROC_NULL makes the call a no-op.
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
+  if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   return ptr->winGet(orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, winStruct);
 }
 
@@ -908,10 +897,12 @@ AMPI_API_IMPL(int, MPI_Raccumulate, const void *orgaddr, int orgcnt, MPI_Datatyp
                                     MPI_Op op, MPI_Win win, MPI_Request *request)
 {
   AMPI_API("AMPI_Raccumulate", orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, op, win, request);
-  if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
   ampi *ptr = getAmpiInstance(winStruct->comm);
   *request = ptr->postReq(getAmpiParent()->reqPool.newReq<SendReq>(orgtype, winStruct->comm, ptr->getDDT(), AMPI_REQ_COMPLETED));
+  // The request is complete already: MPI_PROC_NULL makes the call a no-op.
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
+  if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   return ptr->winAccumulate(orgaddr, orgcnt, orgtype, rank,
                             targdisp, targcnt, targtype, op, winStruct);
 }
@@ -931,10 +922,12 @@ AMPI_API_IMPL(int, MPI_Rget_accumulate, const void *orgaddr, int orgcnt, MPI_Dat
                                         MPI_Request *request)
 {
   AMPI_API("AMPI_Rget_accumulate", orgaddr, orgcnt, orgtype, rank, targdisp, targcnt, targtype, op, win, request);
-  if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
   ampi *ptr = getAmpiInstance(winStruct->comm);
   *request = ptr->postReq(getAmpiParent()->reqPool.newReq<SendReq>(orgtype, winStruct->comm, ptr->getDDT(), AMPI_REQ_COMPLETED));
+  // The request is complete already: MPI_PROC_NULL makes the call a no-op.
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
+  if (targtype > AMPI_MAX_PREDEFINED_TYPE) {CkAbort("AMPI does not currently support RMA with derived datatypes.");}
   return ptr->winGetAccumulate(orgaddr, orgcnt, orgtype, resaddr, rescnt, restype,
                                rank, targdisp, targcnt, targtype, op, winStruct);
 }
@@ -992,6 +985,7 @@ AMPI_API_IMPL(int, MPI_Fetch_and_op, const void *orgaddr, void *resaddr, MPI_Dat
   if (!fetchAndOpTypeAllowed(type)) {
     return ampiErrhandler("AMPI_Fetch_and_op", MPI_ERR_TYPE);
   }
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
   handle_MPI_BOTTOM((void*&)orgaddr, type);
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
   ampi *ptr = getAmpiInstance(winStruct->comm);
@@ -1012,6 +1006,7 @@ AMPI_API_IMPL(int, MPI_Compare_and_swap, const void *orgaddr, const void *compad
   if (!compareAndSwapTypeAllowed(type)) {
     return ampiErrhandler("AMPI_Compare_and_swap", MPI_ERR_TYPE);
   }
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
   handle_MPI_BOTTOM((void*&)orgaddr, type);
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
   ampi *ptr = getAmpiInstance(winStruct->comm);
