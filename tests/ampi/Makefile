@@ -22,6 +22,7 @@ DIRS = \
   groupfree \
   bsend \
   wildcard \
+  commdup \
   intercomm_coll \
 
 ifeq (1,$(CMK_CAN_LINK_FORTRAN))

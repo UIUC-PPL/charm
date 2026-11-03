@@ -2365,6 +2365,9 @@ int compareAmpiSplitKey(const void *a_, const void *b_) {
 // Caller needs to eventually call newAmpi.doneInserting()
 CProxy_ampi ampi::createNewChildAmpiSync() noexcept {
   CkArrayOptions opts;
+  // Bound to the TCharm array: the location manager, its bounds (the world
+  // size; elements are indexed by world rank) and the wide-collection id
+  // layout all come from TCHARM_Build_threads, so none are set here.
   opts.bindTo(parentProxy);
   opts.setSectionAutoDelegate(false);
   opts.setNumInitial(0);
