@@ -49,8 +49,9 @@ win_obj::~win_obj() noexcept {
 // rank's Isomalloc stack or heap and moves with the rank at the same address
 // (as every AmpiRequest's buffer pointer does), so only the bookkeeping is
 // packed and the base pointer keeps its value. That holds only while the
-// buffer is in Isomalloc memory: with another memory module, malloc'd memory
-// stays behind, so unpacking a live window there is refused. Messages for the
+// buffer is in Isomalloc memory: without the Isomalloc memory module
+// (-memory default), malloc'd memory stays behind, so unpacking a live window
+// there is refused. Messages for the
 // window that are in flight at AMPI_Migrate (a lock request, a Put under a
 // lock) reach the rank at its new location; a lock held or waited for at that
 // point travels with the window.
