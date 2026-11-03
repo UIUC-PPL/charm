@@ -21,7 +21,7 @@ DIRS = \
   groupfree \
   bsend \
   wildcard \
-#  intercomm_coll \ # causes hangs in SMP mode
+  intercomm_coll \
 
 ifeq (1,$(CMK_CAN_LINK_FORTRAN))
   DIRS += fallreduce
