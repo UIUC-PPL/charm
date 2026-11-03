@@ -537,6 +537,12 @@ one node (`hapiDevPoolCheckRegistrable`).
 
 ## Measured 2026-11-01: real routing, two A40 nodes, eight GPUs
 
+> **Superseded in part (2026-11-02):** the NCCL baselines in this section
+> ran without the Slingshot plugin and the example's serving arms from
+> "Copies up to four" on ran with a serving bug; the next section has the
+> re-measured matrix and the corrected ratios. The example's training rows
+> and the four-GPU rows stand.
+
 Everything above routes a hashed Zipf. This section replays recorded routing
 (`-E`, `--trace`; `ref/README.md` has the tools; the traces are release
 `traces-2026-11-01` of <https://github.com/adityapb/charm-moe-traces>, 473 MB
@@ -785,6 +791,152 @@ nothing: every PE learns the round's job-wide decision count
 (`LBManager::LastRoundDecisions`) and the dispatchers resume the lookahead
 inside the round's window when it is zero. Rule and plumbing:
 `doc/internals/lb-multiplicity.md`.
+
+## Measured 2026-11-02: the same matrix with NCCL on Slingshot, and a serving fix
+
+**Correction.** Every NCCL baseline of the 2026-11-01 section (the PyTorch
+reference, Megatron-Core, FastMoE, FasterMoE) ran without the `aws-ofi-nccl`
+plugin, so across the two nodes NCCL did not use Slingshot through libfabric:
+its logs at `NCCL_DEBUG=INFO` show `NET/IB : No device found` and no plugin,
+which leaves its socket transport. The example's own exchange goes through
+LCI over the cxi provider. The baselines' two-node numbers were therefore
+too slow and the ratios quoted there too large; the one-node (four-GPU)
+rows, where NCCL stays on P2P and shared memory, and the example's own rows
+stand. `ref/refwrap.sh` now sets what `module load aws-ofi-nccl/1.19.2` sets
+(`NCCL_NET_PLUGIN=ofi`, `FI_PROVIDER=cxi`, `FI_CXI_DISABLE_HOST_REGISTER=1`,
+`FI_MR_CACHE_MONITOR=userfaultfd`, the plugin and libfabric 2.3.1 on the
+library path) and logs NCCL's INIT and NET lines, so every rank log carries
+`Using network Libfabric`. Without the userfaultfd monitor one arm (Mixtral,
+EPLB packing, 704 MB experts) hung inside NCCL's tree connection on all
+eight ranks, the libfabric memhooks deadlock with CUDA (job 23452305); with
+it, the arm ran. The FasterMoE calibration on the plugin: the 470 MB
+broadcast to 8 ranks 154 -> 87.8 ms, so its shadow policy ran with
+NETBW 5.35 GB/s instead of 3.05.
+
+Jobs 23452305 (gpub002+012, MoE layer alone, SmartMoE and Mixtral) and
+23454982 (gpub030+089, OLMoE, the block variants, the re-run arm), bf16, 8
+GPUs, steady state steps 23-43 of 40 + 3, one run per arm; the example's
+arms in the same jobs. The first column of each pair is the 2026-11-01 value
+for reference, the second the re-measurement.
+
+**MoE layer alone** (ms/step; "old | new"):
+
+| SmartMoE training routing, layer 2        | training        | serving         |
+|-------------------------------------------|----------------:|----------------:|
+| example plain                             | 79.9 \| 81.1    | 33.4 \| 35.3 |
+| example ShedLB, critical-path rule (1 copy)| 50.9 \| 52.1   | 27.8 \| 27.4 (23.4 settled) |
+| PyTorch reference, static                 | 178.4 \| 158.5  | 100.8 \| 78.4   |
+| PyTorch reference, EPLB packing every 10  | 201.6 \| 171.4  | 127.9 \| 97.2   |
+| PyTorch reference, one static copy        | 232.5 \| 128.9  | 73.3 \| 53.5    |
+| Megatron-Core, grouped GEMM               | 164.6 \| 126.6  | 95.4 \| 74.0    |
+| Megatron-Core, capacity factor 1.25       | 165.1 \| 127.0  |                 |
+| FastMoE as shipped                        | 239.8 \| 190.2  | 106.6 \| 84.1   |
+| FasterMoE (schedule + shadows)            | 113.1 \| 76.4   | 130.7 \| 97.5   |
+
+| Mixtral-8x7B routing, layer 12            | training        | serving         |
+|-------------------------------------------|----------------:|----------------:|
+| example plain                             | 162.0 \| 161.8  | 120.1 \| 117 (112-130) |
+| example ShedLB, critical-path (no copy)   | 164.8 \| 164.2  | 125.6 \| 124.8 |
+| PyTorch reference, static                 | 334.5 \| 275.5  | 197.6 \| 140.6  |
+| PyTorch reference, EPLB packing every 10  | 333.9 \| 289.3  | 203.8 \| 153.9  |
+| PyTorch reference, one static copy        | 673.1 \| 351.9  | 227.2 \| 165.4  |
+| Megatron-Core, grouped GEMM               | 351.6 \| 263.0  | 182.3 \| 131.2  |
+| Megatron-Core, capacity factor 1.25       | 337.3 \| 262.9  |                 |
+| FastMoE as shipped                        | 386.3 \| 300.6  | 193.2 \| 129.9  |
+| FasterMoE (no shadow chosen)              | 376.3 \| 259.7  | 254.0 \| 161.9  |
+
+| OLMoE-1B-7B routing, layer 12             | training        | serving         |
+|-------------------------------------------|----------------:|----------------:|
+| example plain                             | 237.7 \| 243.1  | 243.6 \| 249.9 |
+| example ShedLB (nothing to decide)        | 262.3 \| 240.8  | 248.8 \| 269.7 |
+| PyTorch reference, static                 | 333.2 \| 194.7  | 314.5 \| 172.8  |
+| PyTorch reference, EPLB packing every 10  | 308.5 \| 200.9  | 284.0 \| 178.1  |
+| PyTorch reference, one static copy        |   -   \| 215.7  |   -   \| 189.1  |
+| Megatron-Core, grouped GEMM               | 455.6 \| 261.0  | 280.2 \| 173.3  |
+| Megatron-Core, capacity factor 1.25       |   -   \| 261.4  |                 |
+| FastMoE as shipped                        | 697.4 \| 556.5  | 332.5 \| 268.2  |
+| FasterMoE                                 | 641.1 \| 350.2  | 403.0 \| 230.9  |
+
+**Transformer block** (`-w` / `--attn`; the example's rows are the first
+with the attention kernels of 2026-11-02, which loop over the grid):
+
+| SmartMoE routing, block                   | training        | serving         |
+|-------------------------------------------|----------------:|----------------:|
+| example plain                             | 98.0 \| 102.7   | 35.6 \| 36.4 |
+| example ShedLB (1 copy)                   | 63.8 \| 68.9    | 30.0 \| 28.8 |
+| PyTorch reference, static                 | 185.8 \| 166.2  | 103.2 \| 80.4   |
+| PyTorch reference, EPLB packing every 10  | 212.1 \| 181.6  | 131.9 \| 100.4  |
+| PyTorch reference, one static copy        | 241.2 \| 138.1  | 73.7 \| 55.5    |
+| Megatron-Core, grouped GEMM               | 175.6 \| 137.0  | 97.8 \| 76.9    |
+| Megatron-Core, capacity factor 1.25       | 174.7 \| 137.3  |                 |
+| FastMoE as shipped                        | 249.6 \| 201.4  | 109.9 \| 87.3   |
+| FasterMoE                                 | 119.2 \| 86.5   | 132.5 \| 100.0  |
+
+| Mixtral routing, block                    | training        | serving         |
+|-------------------------------------------|----------------:|----------------:|
+| example plain                             | 178.9 \| 183.7  | 137.9 \| 148.1 |
+| example ShedLB, critical path (no copy)   | 188.4 \| 184.0  | 134.2 \| 118.6 |
+| PyTorch reference, static                 | 358.3 \| 308.3  | 221.6 \| 149.2  |
+| PyTorch reference, EPLB packing every 10  | 362.3 \| 319.0  | 205.8 \| 161.1  |
+| PyTorch reference, one static copy        | 695.9 \| 384.9  | 242.8 \| 174.2  |
+| Megatron-Core, grouped GEMM               | 368.3 \| 296.1  | 202.6 \| 141.2  |
+| Megatron-Core, capacity factor 1.25       | 369.2 \| 294.7  |                 |
+| FastMoE as shipped                        | 421.0 \| 333.9  | 201.4 \| 140.0  |
+| FasterMoE                                 | 417.9 \| 287.1  | 267.4 \| 172.3  |
+
+What the corrected numbers say. On SmartMoE's training routing the
+example with ShedLB is 1.5x faster than FasterMoE and 2.4x faster than
+Megatron-Core in training (2.2x and 3.2x were quoted), and 3.6x faster than FasterMoE and 2.7x faster than Megatron-Core in serving (3.4x over Megatron-Core was quoted)
+in serving. On Mixtral's routing the plain example is 1.6x faster than
+Megatron-Core and FasterMoE in training (2.2x and 2.3x were quoted), and
+in serving the plain example (112-130 over six runs) is level with Megatron-Core (131.2) and FastMoE (129.9) and 1.4x faster than FasterMoE (1.5x and 1.6x were quoted). On OLMoE's routing, where the step is the
+token exchange (top-8), the PyTorch reference's one all-to-all on the
+plugin is now faster than the example's one message per expert, 194.7
+against 243.1 in training and 172.8 against 249.9 in serving; the 2026-11-01
+text had the example 1.3-1.4x ahead there, which was the socket transport,
+not the exchange. The baselines gained 11-48% from the plugin, the most
+where fp32 partials crossed the node link every step (the reference's static
+copy) and in FasterMoE's shadow broadcasts.
+
+**A serving bug, found and removed** (2026-11-02). In the same jobs the
+example's serving arms came out 16-30% slower than on 2026-11-01 while its
+training arms matched (SmartMoE 43.3 against 33.4, Mixtral 139.3 against
+120.1), and in serving the arm with a copy gave a different out2 than the
+plain arm at every checksum step from the copy's first step on, where the
+training pairs agreed to the last digit. The same node pair ran this
+morning's binary against the 2026-11-01 17:13 one: 42.6 and 43.0 against
+33.3 and 33.3 ms/step, with the GPU time per step halved (24 against 40 ms),
+the same message and kernel counts, and two to three times the LCI send
+retries. The serving branch of `Expert::runStep` still read `for (p = 0;
+p < 2; p++)` from before the four-partition tree, and a copy ran partition
+`rank()` instead of its block: in serving, the dispatchers of partitions 2
+and 3 had their output segments never written and sent on never-recorded
+events, ran free and flooded the sends. The forward now runs every partition
+(a copy's other partitions hold no tokens). Validated in job 23456024 on
+gpub001+002 (and 23465756 on gpub091+099): SmartMoE plain serving 35.3 and 35.3 ms/step (43.3 with the bug; this
+morning's binary on the same nodes 42.1), with a copy 27.4 (23.4 settled);
+OLMoE 249.9 and 269.7; the block variants 36.4 and 28.8 (SmartMoE), 148.1
+and 118.6 (Mixtral); every plain-versus-copy serving pair equal to the last
+digit, and the training checksum unchanged by the fix. Mixtral's serving
+step spreads 112-130 ms over six runs on two node pairs (one run on
+gpub001+002 at 155.0), with or without lookahead (114.2 against 116.8) and
+with two or four partitions: its step is the 128 MB slab exchange and the
+spread is the exchange's, not the binary's; the 2026-11-01 band (120.1 +-
+1.6, three runs on one pair) understated it. The serving checksums of the "Copies up to
+four, validated" paragraph came from that binary and covered half the
+dispatchers' outputs; the training checksums there were right.
+
+
+**Two partitions against four** (job 23465756, same source built with
+`-DMOE_K_PART=2`, `moe.k2`): SmartMoE plain serving 33.9 and 33.7 ms/step
+against 35.3 and 35.3 with four, with a copy 28.6 against 27.4; Mixtral
+serving 130.2 and 115.8 against 116.8 and 112.4, inside its spread; the
+block variant 150.3 against 148.1. The four-partition build is the default
+because copies up to four need it; a serving deployment with at most two
+copies per expert gets the 2026-11-01 step back from the two-partition
+build. The two builds' checksums differ in the ninth digit (the partition
+boundaries set the chunk sequence) and each build's plain and copy arms
+agree with each other.
 
 ## Measured (2026-09-06, one A40 node, four PEs, `+gpupool`)
 

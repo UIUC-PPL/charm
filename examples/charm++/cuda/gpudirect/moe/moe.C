@@ -192,7 +192,10 @@ static inline int stepsSinceLastLB(int s) {
 // all four leaves itself and folds the same way. Every copy then applies the
 // same update, so their weights stay identical, and out2 and w2 are the same
 // bits whatever the balancer did (doc/internals/lb-multiplicity.md).
-static const int K_PART = 4;        // dispatcher partitions, fixed
+#ifndef MOE_K_PART
+#define MOE_K_PART 4
+#endif
+static const int K_PART = MOE_K_PART;   // dispatcher partitions, fixed at build time (-DMOE_K_PART=2 for the two-partition variant)
 static const int K_MAX_COPIES = 4;  // copies the channel tables are sized for
 static inline int partitionOf(int disp) { return disp % K_PART; }
 static inline int partitionSize(int p) {
@@ -2394,14 +2397,12 @@ class Expert : public CBase_Expert {
     }
     hapiCheck(hapiEventRecord(ev_start, g->stream));
     if (serve_only) {
-      // Serving: the forward of both partitions here, or of this copy's; no
-      // gradient, no update, no exchange. The weight checksum is what it was.
-      if (!replicated) {
-        for (int p = 0; p < 2; p++)
-          if (partitionTokens(p) > 0) chunks += runPartition(g, p, NULL, NULL);
-      } else if (n_tot > 0) {
-        chunks += runPartition(g, rank(), NULL, NULL);
-      }
+      // Serving: the forward of every partition here, or of this copy's
+      // block of them; no gradient, no update, no exchange. The weight
+      // checksum is what it was. (A copy's dispatchers are its block's, so
+      // the other partitions hold no tokens.)
+      for (int p = 0; p < K_PART; p++)
+        if (partitionTokens(p) > 0) chunks += runPartition(g, p, NULL, NULL);
       applyUpdate(g, NULL, NULL, NULL, NULL, 0);
     } else if (!replicated) {
       // Both partitions here, each into its own lane accumulator, and the
