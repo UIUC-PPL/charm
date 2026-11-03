@@ -2581,6 +2581,17 @@ disabled at startup by passing the *+LBOff* flag at runtime, and
 toggled from the application by calling ``LBTurnInstrumentOn()`` and
 ``LBTurnInstrumentOff()``, enabling or disabling instrumentation on
 the calling PE.
+A program may therefore measure only the iterations just before a load
+balancing step. Tools that watch object loads while the program runs
+should not depend on this switch: a program linked with ``-tracemode
+utilization`` answers the CCS request ``CkPerfObjLoads`` with every PE's
+cumulative execution time per array element, taken from the trace
+events, while ``LBObjLoads`` (the load balancing manager) reports the
+database as it is, and is empty while the instrumentation is off. The
+two replies have the same layout and key each element the same way; the
+trace's figures include the suspended-and-resumed parts
+of threaded entry methods and of TCharm (AMPI) threads, and they are
+never cleared by a load balancing step, where the database's are.
 
 Charm++ then provides a collection of load balancing strategies whose
 job it is to decide on a new mapping of objects to processors based on
@@ -11909,7 +11920,8 @@ The main directories in a Charm++ installation are:
    Directory where Charm++ is built.
 
 ``charm/tests``
-   Test Charm++ programs used by autobuild.
+   Test Charm++ programs, run by ``make test`` and the continuous
+   integration (see :ref:`sec:testing`).
 
 Reducing disk usage
 ~~~~~~~~~~~~~~~~~~~
@@ -11972,6 +11984,31 @@ example
 .. code-block:: bash
 
    $ TESTRUN_LAUNCHER="srun --mpi=pmi2 -N2 --ntasks-per-node=1 -c2" make test
+
+.. _sec:testing:
+
+Testing and coverage
+~~~~~~~~~~~~~~~~~~~~
+
+``charm/tests``, ``charm/examples`` and ``charm/benchmarks`` each have a
+``Makefile`` whose ``test`` target builds and runs every program under it
+against the build (``make -C tests test``), or run ``make test`` in one
+directory. A build directory of the git checkout links these directories,
+so ``make -C <builddir>/tests test`` works too. The continuous integration
+runs a fixed subset of the test directories on every pull request
+(``TEST_DIRS`` in ``.github/workflows/reconverse-ci.yaml``).
+
+How much of the runtime those tests reach is measured weekly with clang
+source-based coverage and published at
+https://charmplusplus.org/charm-coverage/: line, function and region
+coverage of ``src/`` and of reconverse, over the CI subset, over every other
+test directory, and over the examples, each cumulative with the one before.
+The front page shows the headline numbers of every run, and each run keeps
+its full report, the per-file view, and lcov and JSON exports. The tooling
+is in ``charm/coverage`` and its README explains how to make the same
+measurement locally (``./build ... --coverage``, then ``coverage/run.sh``
+and ``coverage/report.sh``), how to combine runs from several machines, and
+the traps in reading the numbers.
 
 .. _sec:compile:
 

@@ -2204,6 +2204,7 @@ bool CkLocRec::invokeEntry(CkMigratable* obj, void* msg, int epIdx, bool doFree)
     if (_entryTable[epIdx]->traceEnabled)
     {
       CmiObjId projID = idx.getProjectionID();
+      _TRACE_SET_OBJECT(myLocMgr->ckGetGroupID().idx, id);
       _TRACE_BEGIN_EXECUTE_DETAILED(env->getEvent(), ForChareMsg, epIdx, env->getSrcPe(),
                                     env->getTotalsize(), &projID, obj);
       if (_entryTable[epIdx]->appWork)
@@ -2225,6 +2226,7 @@ bool CkLocRec::invokeEntry(CkMigratable* obj, void* msg, int epIdx, bool doFree)
       if (_entryTable[epIdx]->appWork)
         _TRACE_END_APPWORK();
       _TRACE_END_EXECUTE();
+      _TRACE_CLEAR_OBJECT();
     }
   }
 #endif

@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <deque>
+#include <map>
 
 #include "charm++.h"
 
@@ -43,6 +44,7 @@
 
 
 /* readonly */ extern CProxy_TraceUtilizationBOC traceUtilizationGroupProxy;
+/* readonly */ extern CProxy_TraceObjLoadsBOC traceObjLoadsGroupProxy;
 
 // This function has unused arguments to match the type of
 // CcdCondFn, which CcdCallOnConditionKeep takes
@@ -59,12 +61,18 @@ class TraceUtilizationInit : public Chare {
     fflush(stdout);
    
     traceUtilizationGroupProxy = CProxy_TraceUtilizationBOC::ckNew();
+    traceObjLoadsGroupProxy = CProxy_TraceObjLoadsBOC::ckNew();
     
     CkPrintf("Trace Summary now listening in for CCS Client\n");
     CcsRegisterHandler("CkPerfSumDetail compressed", CkCallback(CkIndex_TraceUtilizationBOC::ccsRequestSumDetailCompressed(NULL), traceUtilizationGroupProxy[0])); 
     // The entry-method names the stream's indices refer to, as sts text,
     // so a client needs no copy of the .util.sts file.
     CcsRegisterHandler("CkPerfSumDetail sts", CkCallback(CkIndex_TraceUtilizationBOC::ccsRequestSts(NULL), traceUtilizationGroupProxy[0]));
+    // Per-object cumulative execution time on every PE, from the same
+    // begin/endExecute events, independent of the load-balancing
+    // database and its instrumentation switch (same reply layout and
+    // object ids as LBManager's "LBObjLoads").
+    CcsRegisterHandler("CkPerfObjLoads", CkCallback(CkIndex_TraceObjLoadsBOC::ccsRequestObjLoads(NULL), traceObjLoadsGroupProxy[0]));
     
     CkPrintf("[%d] Setting up periodic startCollectData callback\n", CkMyPe());
     CcdCallOnConditionKeep(CcdPERIODIC_1second, collectUtilizationData, (void *)NULL);
@@ -219,6 +227,35 @@ class TraceUtilization : public Trace {
   unsigned int numBinsSent;
   unsigned int previouslySentBins;
 
+  // Per-object loads for the CCS handler "CkPerfObjLoads": cumulative
+  // execution time of every array element that ran on this PE, keyed by
+  // its collection and 64-bit id (_TRACE_OBJECT_COLL / _TRACE_OBJECT_ID
+  // at beginExecute: the load database's object manager id and object
+  // id, so "LBObjLoads" reports the same keys).
+  // Nothing is read from the element itself, which for a constructor
+  // entry is not constructed yet. An element not seen for OBJ_EXPIRE
+  // seconds is dropped (expireObjLoads, once a second), so the table
+  // stays the size of the recently active object set; a client that
+  // takes differences between snapshots sees a dropped-and-returned
+  // element start from zero, which is the right value.
+  //
+  // The time is measured between the element's own begin and end, at
+  // whatever nesting depth they occur: a broadcast to an array is one
+  // group entry whose delivery loop runs every local element inside it,
+  // so the outer pair (which the bins above use) spans all of them.
+  // Time of nested element executions ([inline] sends) is excluded from
+  // the enclosing element's. A threaded entry's resumed segments and a
+  // TCharm thread's segments arrive with the element's id set by the
+  // thread listener and by TCharm, so they count for the element too.
+  struct ObjLoad { double wall = 0; double lastSeen = 0; };
+  typedef std::pair<int, CmiUInt8> ObjKey;   // collection, id
+  static constexpr double OBJ_EXPIRE = 60.0;
+  static const int OBJ_MAX_DEPTH = 16;
+  std::map<ObjKey, ObjLoad> objLoads;
+  struct ObjFrame { ObjKey key; double start, nested; bool valid; };
+  ObjFrame objFrames[OBJ_MAX_DEPTH + 1];   // indexed by execDepth
+  double idleTotal, idleStart;   // from the scheduler's idle callbacks
+
 
   TraceUtilization() {
     execEp = TRACEON_EP;
@@ -226,7 +263,20 @@ class TraceUtilization : public Trace {
     cpuTime = NULL;
     lastBinUsed = -1;
     numBinsSent = 0;
+    for (int i = 0; i <= OBJ_MAX_DEPTH; i++) objFrames[i].valid = false;
+    idleTotal = idleStart = 0.0;
   }
+
+  /// Append this PE's record for "CkPerfObjLoads" to buf, the layout and
+  /// keys of LBManager's "LBObjLoads" (there the third field is the wall
+  /// time since the instrumentation was switched on):
+  ///   int32 pe, double wallNow, double elapsed, double idleTotal, int32 n,
+  ///   n x { uint64 objId, int32 collection, double objWall, uint8 1 }
+  /// elapsed is the trace's clock (seconds since it started), so
+  /// elapsed - idleTotal is the PE's busy time.
+  void snapshotObjLoads(std::vector<char> &buf);
+  /// Drop objects not seen for OBJ_EXPIRE seconds.
+  void expireObjLoads();
 
 
   /// Initialize memory after the number of EPs has been determined
@@ -250,8 +300,8 @@ class TraceUtilization : public Trace {
   void beginExecute(CmiObjId  *tid);
   void beginExecute(int event,int msgType,int ep,int srcPe, int mlen=0, CmiObjId *idx=NULL, void *obj=NULL);
   void endExecute(void);
-  void beginIdle(double currT) {}
-  void endIdle(double currT) {}
+  void beginIdle(double currT) { idleStart = currT; }
+  void endIdle(double currT) { idleTotal += currT - idleStart; }
   void beginPack(void){}
   void endPack(void) {}
   void beginUnpack(void) {}
@@ -358,6 +408,23 @@ class TraceUtilizationBOC : public CBase_TraceUtilizationBOC {
   void collectSumDetailData();
   void sumDetailDataCollected(CkReductionMsg *);
 
+};
+
+
+/// "CkPerfObjLoads": PE 0 keeps the reply tokens, broadcasts
+/// collectObjLoads, and answers every waiting request from the
+/// concatenated reduction. Its own group (see the .ci).
+class TraceObjLoadsBOC : public CBase_TraceObjLoadsBOC {
+ public:
+  TraceObjLoadsBOC() {}
+  TraceObjLoadsBOC(CkMigrateMessage *m) : CBase_TraceObjLoadsBOC(m) {}
+  void ccsRequestObjLoads(CkCcsRequestMsg *m);
+  void collectObjLoads();
+  void objLoadsCollected(CkReductionMsg *);
+ private:
+  // Used on PE 0 only: the CCS callback and the reduction both land there.
+  std::deque<CcsDelayedReply> objLoadsReplies;
+  bool objLoadsCollecting = false;
 };
 
 

@@ -472,7 +472,7 @@ class ampiParent;
 class win_obj {
  public:
   void *baseAddr;
-  MPI_Aint winSize;
+  MPI_Aint winSize; // in bytes, as passed to MPI_Win_create
   int disp_unit;
   MPI_Comm comm;
 
@@ -501,16 +501,15 @@ class win_obj {
 
   std::unordered_map<int, uintptr_t> & getAttributes() { return attributes; }
 
-  int put(void *orgaddr, int orgcnt, int orgunit,
-          MPI_Aint targdisp, int targcnt, int targunit) noexcept;
+  // Abort unless the target bytes of an RMA call lie inside the window.
+  // checkTargetBytes: bytes [lo, hi) relative to byte offset disp_unit*targdisp.
+  // checkTarget: the bytes that targcnt elements of tddt occupy there.
+  void checkTargetBytes(const char *opname, MPI_Aint targdisp, MPI_Aint lo, MPI_Aint hi) const noexcept;
+  void checkTarget(const char *opname, MPI_Aint targdisp, int targcnt,
+                   const CkDDT_DataType *tddt) const noexcept;
 
-  int get(void *orgaddr, int orgcnt, int orgunit,
-          MPI_Aint targdisp, int targcnt, int targunit) noexcept;
   int accumulate(void *orgaddr, int count, MPI_Aint targdisp, MPI_Datatype targtype,
                  MPI_Op op, ampiParent* pptr) noexcept;
-
-  int iget(int orgcnt, MPI_Datatype orgtype,
-          MPI_Aint targdisp, int targcnt, MPI_Datatype targtype) noexcept;
   int igetWait(MPI_Request *req, MPI_Status *status) noexcept;
   int igetFree(MPI_Request *req, MPI_Status *status) noexcept;
 
@@ -1304,6 +1303,27 @@ class AmpiRequest {
   ///  returning a valid MPI error code.
   virtual CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept =0;
 
+  /// Before the rank suspends on this request: mark it blocked and count what
+  /// its completion must count down. Returns the number of requests counted in
+  /// parent->numBlockedReqs (0 for a request that completes by polling, which
+  /// the caller must then poll again), and sets viaColl when the completion
+  /// resumes the rank through blockOnColl rather than blockOnRecv.
+  /// Used by blockUntilComplete (thread AMPI) and by campi's request_awaiter.
+  virtual int beginBlocking(ampiParent* parent, bool& viaColl) noexcept {
+    setBlocked(true);
+    viaColl = false;
+    return 1;
+  }
+
+  /// After the rank resumes: undo beginBlocking's marks.
+  virtual void endBlocking(ampiParent* parent) noexcept { setBlocked(false); }
+
+  /// Suspend the calling thread until this request completes, as the
+  /// single-request wait() implementations do: beginBlocking, block through
+  /// blockOnRecv or blockOnColl, endBlocking. Returns the (possibly migrated)
+  /// parent.
+  CMI_WARN_UNUSED_RESULT ampiParent* blockUntilComplete(ampiParent* parent) noexcept;
+
   /// Mark this request for cancellation.
   /// Supported only for IReq requests
   virtual void cancel() noexcept {}
@@ -1340,8 +1360,9 @@ class AmpiRequest {
     if (type != MPI_DATATYPE_NULL) ddt->freeType(type);
   }
 
-  /// Set whether the request is currently blocked on
-  void setBlocked(bool b) noexcept { blocked = b; }
+  /// Set whether the request is currently blocked on. A blocked request
+  /// decrements ampiParent::numBlockedReqs when it completes (ampi::handleBlockedReq).
+  virtual void setBlocked(bool b) noexcept { blocked = b; }
   bool isBlocked() const noexcept { return blocked; }
 
   /// Returns the type of request:
@@ -1473,6 +1494,11 @@ class RednReq final : public AmpiRequest {
   ~RednReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    int n = AmpiRequest::beginBlocking(parent, viaColl);
+    viaColl = true; // completed by a collective result, which resumes via blockOnColl
+    return n;
+  }
   void cancel() noexcept override {}
   AmpiReqType getType() const noexcept override { return AMPI_REDN_REQ; }
   bool isUnmatched() const noexcept override { return !complete; }
@@ -1502,6 +1528,11 @@ class GatherReq final : public AmpiRequest {
   ~GatherReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    int n = AmpiRequest::beginBlocking(parent, viaColl);
+    viaColl = true; // completed by a collective result, which resumes via blockOnColl
+    return n;
+  }
   void cancel() noexcept override {}
   AmpiReqType getType() const noexcept override { return AMPI_GATHER_REQ; }
   bool isUnmatched() const noexcept override { return !complete; }
@@ -1535,6 +1566,11 @@ class GathervReq final : public AmpiRequest {
   ~GathervReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent*  wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    int n = AmpiRequest::beginBlocking(parent, viaColl);
+    viaColl = true; // completed by a collective result, which resumes via blockOnColl
+    return n;
+  }
   AmpiReqType getType() const noexcept override { return AMPI_GATHERV_REQ; }
   bool isUnmatched() const noexcept override { return !complete; }
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override { return true; }
@@ -1665,6 +1701,14 @@ class GPUReq : public AmpiRequest {
   ~GPUReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  // As wait(): not marked blocked and not counted down; AMPI_GPU_complete
+  // resumes the rank directly (ampi::unblock). Counted as one so that the
+  // caller suspends instead of polling.
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    viaColl = false;
+    return 1;
+  }
+  void endBlocking(ampiParent* parent) noexcept override {}
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override;
   void receive(ampi *ptr, CkReductionMsg *msg) noexcept override;
   AmpiReqType getType() const noexcept override { return AMPI_GPU_REQ; }
@@ -1682,7 +1726,12 @@ class ATAReq final : public AmpiRequest {
   ATAReq() =default;
   ~ATAReq() =default;
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
+  /// An ATAReq receives no messages itself; its blocks do. Marking it blocked
+  /// marks each of its blocks, so that each block's completion decrements
+  /// numBlockedReqs; beginBlocking counts the incomplete blocks.
+  void setBlocked(bool b) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override;
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override { return true; }
   void receive(ampi *ptr, CkReductionMsg *msg) noexcept override {}
   int getCount() const noexcept { return reqs.size(); }
@@ -1715,6 +1764,12 @@ class GReq final : public AmpiRequest {
   ~GReq() noexcept { (*freeFn)(extraState); }
   bool test(MPI_Status *sts=MPI_STATUS_IGNORE) noexcept override;
   CMI_WARN_UNUSED_RESULT ampiParent* wait(ampiParent* parent, MPI_Status *sts) noexcept override;
+  // Completes by polling (MPIX poll/wait functions): nothing counts it down.
+  int beginBlocking(ampiParent* parent, bool& viaColl) noexcept override {
+    viaColl = false;
+    return 0;
+  }
+  void endBlocking(ampiParent* parent) noexcept override {}
   bool receive(ampi *ptr, AmpiMsg *msg, bool deleteMsg=true) noexcept override { return true; }
   void receive(ampi *ptr, CkReductionMsg *msg) noexcept override {}
   void cancel() noexcept override { (*cancelFn)(extraState, complete); }
@@ -1913,17 +1968,32 @@ inline void pupFromBuf(const void *data,T &t) noexcept {
      that order without making point-to-point messages wait behind scan
      messages, which always travel through the scheduler while PE-local
      point-to-point sends are delivered inline.
+   - Blocks of the (i)alltoall, (i)neighbor and (i)scatter families (tags
+     MPI_ATA_TAG, MPI_NBOR_TAG, MPI_SCATTER_TAG; sent by ampi::send like
+     point-to-point messages): one sequence per peer rank of their own, index
+     ampiBlockSeqIdx(rank). Two such collectives outstanding on a
+     communicator send under the same tag to the same peer, so their blocks
+     must be matched in send order (issue #4097). They do not share the
+     point-to-point sequence, so that a user message never waits in oorder
+     behind a collective block, or the reverse.
    - Other collective tags are not sequenced (seq 0). */
 inline bool ampiIsScanTag(int tag) noexcept {
   return tag == MPI_SCAN_TAG || tag == MPI_EXSCAN_TAG;
 }
-inline int ampiScanSeqIdx(int rank) noexcept { return COLL_SEQ_IDX - 1 - rank; }
+inline bool ampiIsBlockTag(int tag) noexcept {
+  return tag == MPI_ATA_TAG || tag == MPI_NBOR_TAG || tag == MPI_SCATTER_TAG;
+}
+// Scan and block sequences interleave below COLL_SEQ_IDX: -2, -4, ... for
+// scans of ranks 0, 1, ..., and -3, -5, ... for blocks.
+inline int ampiScanSeqIdx(int rank) noexcept { return COLL_SEQ_IDX - 1 - 2*rank; }
+inline int ampiBlockSeqIdx(int rank) noexcept { return COLL_SEQ_IDX - 2 - 2*rank; }
 inline bool ampiTagIsSequenced(int tag) noexcept {
-  return tag <= MPI_BCAST_TAG || ampiIsScanTag(tag);
+  return tag <= MPI_BCAST_TAG || ampiIsScanTag(tag) || ampiIsBlockTag(tag);
 }
 /// rank is the peer: the destination when sending, the source when receiving.
 inline int ampiSeqIdx(int tag, int rank) noexcept {
   if (ampiIsScanTag(tag)) return ampiScanSeqIdx(rank);
+  if (ampiIsBlockTag(tag)) return ampiBlockSeqIdx(rank);
   if (tag >= MPI_BCAST_TAG && tag <= MPI_ATA_TAG) return COLL_SEQ_IDX;
   return rank;
 }
@@ -2811,6 +2881,7 @@ class ampi final : public CBase_ampi {
   CProxy_ampi remoteProxy; // valid only for intercommunicator
   CkPupPtrVec<win_obj> winObjects;
   int numCommCreationsInProgress{};
+  int numUnblocks{}; // count of unblock() calls (comm creation done), for campi
   void setNumCommCreationsInProgress(int x)
   {
     CkAssert(numCommCreationsInProgress == 0);
@@ -2836,8 +2907,6 @@ class ampi final : public CBase_ampi {
   bool inorder(AmpiMsg *msg) noexcept;
   void inorderBcast(AmpiMsg *msg, bool deleteMsg) noexcept;
   void inorderRdma(char* buf, int size, CMK_REFNUM_TYPE seq, int tag, int srcRank) noexcept;
-  inline void localInorder(char* buf, int size, int seqIdx, CMK_REFNUM_TYPE seq, int tag,
-                           int srcRank, IReq* ireq) noexcept;
 
   void init() noexcept;
   void findParentAfterMigration() noexcept;
@@ -2857,8 +2926,10 @@ class ampi final : public CBase_ampi {
   void setInitDoneFlag() noexcept;
 
   inline void unblock() noexcept {
+    ++numUnblocks; // lets campi tell this wake-up from others (not pupped)
     thread->resume();
   }
+  int getNumUnblocks() const noexcept { return numUnblocks; }
 
   void injectMsg(int size, char* buf) noexcept;
   void genericSync(AmpiMsg *) noexcept;
@@ -3048,6 +3119,8 @@ class ampi final : public CBase_ampi {
   int intercomm_ibcast(int root, void* buf, int count, MPI_Datatype type, MPI_Comm intercomm, MPI_Request *request) noexcept;
   static void bcastraw(void* buf, int len, CkArrayID aid) noexcept;
   void split(int color,int key,MPI_Comm *dest, AmpiCommType type) noexcept;
+  void splitPost(int color,int key, AmpiCommType type) noexcept;
+  void splitFinish(MPI_Comm *dest) noexcept;
   MPI_Comm commCreate(const std::vector<int>& vec, AmpiCommType type) noexcept;
   MPI_Comm cartCreate0D() noexcept;
   MPI_Comm cartCreate(std::vector<int>& vec, int ndims, const int* dims) noexcept;
@@ -3080,6 +3153,7 @@ class ampi final : public CBase_ampi {
   inline bool opIsCommutative(MPI_Op op) const noexcept { return parent->opIsCommutative(op); }
   inline MPI_User_function* op2User_function(MPI_Op op) const noexcept { return parent->op2User_function(op); }
   void topoDup(int topoType, int rank, MPI_Comm comm, MPI_Comm *newcomm) noexcept;
+  void topoDupFinish(int topoType, MPI_Comm comm, MPI_Comm *newcomm) noexcept;
 
   inline AmpiRequestList& getReqs() noexcept { return parent->ampiReqs; }
   CkDDT *getDDT() noexcept {return &parent->myDDT;}
@@ -3116,6 +3190,8 @@ class ampi final : public CBase_ampi {
   void winRemoteAccumulate(int orgtotalsize, char* orgaddr, int orgcnt, MPI_Datatype orgtype,
                            MPI_Aint targdisp, int targcnt, MPI_Datatype targtype,
                            MPI_Op op, int winIndex) noexcept;
+  void accumulateIntoTarget(win_obj *winobj, char *sorgaddr, MPI_Aint targdisp, int targcnt,
+                            CkDDT_DataType *tddt, MPI_Datatype targtype, MPI_Op op) noexcept;
   int winGetAccumulate(const void *orgaddr, int orgcnt, MPI_Datatype orgtype, void *resaddr,
                        int rescnt, MPI_Datatype restype, int rank, MPI_Aint targdisp,
                        int targcnt, MPI_Datatype targtype, MPI_Op op, WinStruct *win) noexcept;
@@ -3151,6 +3227,21 @@ class ampi final : public CBase_ampi {
 
 CMI_WARN_UNUSED_RESULT ampiParent *getAmpiParent() noexcept;
 bool isAmpiThread() noexcept;
+
+/* TCharm Semaphore ID's for AMPI startup */
+#define AMPI_TCHARM_SEMAID 0x00A34100 /* __AMPI__ */
+#define AMPI_BARRIER_SEMAID 0x00A34200 /* __AMPI__ */
+
+// Pieces of ampiInit/MPI_Finalize shared with campi (coroutine AMPI, campi.C)
+CkArrayOptions ampiInitRootArrayOptions(CkArrayID *threads, int *nchunks) noexcept;
+ampiParent *ampiInitWorldLocal(ampi *ptr, int nchunks) noexcept;
+void removeUnimportantArrayObjsfromPeCache() noexcept;
+int ampiFinalizeBody() noexcept;
+// Defined in campi.C: ampiParent::prepareCtv reports its parent in campi mode
+void campi_parent_attached(TCharm *tc, ampiParent *parent) noexcept;
+// Defined in campi.C: per-PE campi setup, called from ampiProcInit on every
+// PE before any rank starts (registers campi's Converse handlers)
+void campi_proc_init() noexcept;
 CMI_WARN_UNUSED_RESULT ampi *getAmpiInstance(MPI_Comm comm) noexcept;
 void checkComm(MPI_Comm comm) noexcept;
 void checkRequest(MPI_Request req) noexcept;

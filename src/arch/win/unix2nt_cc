@@ -1,0 +1,464 @@
+#!/bin/bash
+
+set -o errexit
+
+##############################################################################
+# unix2nt_cc:  for VC++ ver 8 and later (VS 2003, 2008, 2010)
+# Maps UNIX C/C++ compiler command-line options to
+# Microsoft Visual C++ command line options.
+# That is, this script is a UNIX-ifying wrapper for
+# the NT CL and LINK commands.
+#
+# Known bugs: pathnames with spaces cause quoting problems.
+##############################################################################
+
+# Configurable option: Location of MSDEV
+if [[ -z "$VCINSTALLDIR" ]]
+then
+  VCC_DIR='C:/Program Files (x86)/Microsoft Visual Studio 14.0/VC'
+else
+  VCC_DIR="$VCINSTALLDIR"
+fi
+if [[ ! -d "$(cygpath -u "$VCC_DIR")" ]]
+then
+  echo "\$VCINSTALLDIR is not set properly: $VCC_DIR"
+  exit 1
+fi
+if [[ -n "$WINDOWSSDKDIR" ]]
+then
+  SDK_DIR="$WINDOWSSDKDIR"
+elif [[ -n "$WindowsSdkDir" ]]
+then
+  SDK_DIR="$WindowsSdkDir"
+else
+  SDK_DIR='C:/Program Files/Windows Kits/10'
+fi
+if [[ ! -d "$(cygpath -u "$SDK_DIR")" ]]
+then
+  echo "\$WindowsSdkDir is not set properly: $SDK_DIR"
+  exit 1
+fi
+
+#CL command-line options for -O and -g mode
+#only for the environment that has set corresponding environmental variables
+CL_CMD='CL.EXE'
+# Define NOMINMAX to avoid definition of unexpected min(a,b) and max(a,b)
+# macros,per http://support.microsoft.com/kb/143208
+# -Zc:__cplusplus: report the real language level in __cplusplus (MSVC
+# otherwise says 199711L whatever -std: is in force).
+# -bigobj: generated .def.h files can exceed the default section count.
+CL_COMMON=(-nologo -W1 -EHsc -D_WINDOWS -DNOMINMAX -Zc:__cplusplus -bigobj)
+CL_MT='-MT'
+CL_DLL='-LD'
+
+# assembler
+ML_CMD='ML64.EXE'
+ML_COMMON=(-nologo -W1 -D_WINDOWS -DNOMINMAX)
+
+#LINK command-line options for -O and -g mode
+#only for the environment that has set corresponding environmental variables
+#Here, the full path to "link.exe" has to be added because, in cygwin, there
+#is a file "/usr/bin/link" which has the same name, and takes higher precedence
+#than the microsoft one.
+cl_path="$(command -v cl)"
+if [[ "$(command -v link)" != '/usr/bin/link' ]]
+then
+LINK_CMD='link.exe'
+elif [[ -d "$(cygpath -u "${cl_path%cl}")" ]]
+then
+LINK_CMD="${cl_path%cl}link.exe"
+elif [[ -d "$(cygpath -u "$VCC_DIR/BIN/amd64")" ]]
+then
+LINK_CMD="$VCC_DIR/BIN/amd64/LINK.EXE"
+else
+LINK_CMD="$VCC_DIR/BIN/LINK.EXE"
+fi
+# -STACK: the main thread's stack (PE 0 runs on it) is fixed in the executable;
+# Windows defaults it to 1 MB, Linux and the other PE threads get 8 MB.
+# -DEBUG writes a PDB, which lets runtime stack traces name functions; it is
+# metadata only, but it turns dead-code and identical-code folding off unless
+# asked for, so a non-debug link asks for them again below.
+LINK_COMMON=(-nologo -subsystem:console -DYNAMICBASE:NO -STACK:8388608 -DEBUG -INCREMENTAL:NO)
+LINK_OPT=(-OPT:REF -OPT:ICF)
+LINK_POST=(ws2_32.lib kernel32.lib user32.lib psapi.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib -MACHINE:X64 -ERRORREPORT:NONE)
+
+if [[ -z "$LIB" ]]
+then
+	echo "Variables already set!"
+#	export INCLUDE="$VCC_DIR/include"
+#	export LIB="$VCC_DIR/lib"
+fi
+
+###################################################################
+#
+#  Utility routines used below
+#
+###################################################################
+
+# PrintUsage: prints a helpful command-line usage message and quits
+# Args: any additional messages
+printUsage() {
+    echo "Usage: unix2nt_cc [ flags ] <files>"
+    echo
+    echo "  flags:"
+    echo "        -c <file> -o <target> -g -O"
+    echo "        -D<define> -I<include path> -L<lib path> -l<library>"
+	echo "  files: <fName>.c <fName>.C <fName>.cpp <fName>.cxx"
+    echo
+    echo "  Compiles C, C++ programs using NT CL and LINK commands."
+	echo "Version 1.0, Parallel Programming Lab, UIUC, 2001"
+    echo $*
+    exit 1
+}
+
+runCmd()
+{
+  [[ -n "$VERBOSE" ]] && echo "unix2nt_cc>" "$@"
+  "$@"
+}
+
+# End blows away the temporary files (unless SAVE is true) and exits
+# Args: <exit code>
+End() {
+    exit $1
+}
+
+# This procedure prints an error message and exits.
+# ("1>&2" redirects the echo output to stderr).
+# Args: written to stderr
+Abort() {
+	echo "unix2nt_cc Fatal Error in directory $(pwd)" 1>&2
+	echo "   $*" 1>&2
+	echo "unix2nt_cc exiting..." 1>&2
+	End 1
+}
+
+# This procedure removes the extension (the ".c" in "./main.c") from
+# its first argument, and prints the result. Unlike the builtin command
+# basename, it keeps the directory path.
+# Args: <name to strip>
+stripExtension() {
+	se_base="$(echo "$1" | awk -F/ '{print $NF}')"
+	se_strip="$(echo "$se_base" | awk -F. '{ORS="";print $1;for (i=2;i<NF;i++) print "."$i}')"
+	se_ret="$(echo "$1" | awk -F/ '{ORS="";for (i=1;i<NF;i++) print $i"/"}')$se_strip"
+	echo "$se_ret"
+}
+
+# GetExtension returns the extension on the given file name
+# or "" if none.  (e.g. "./bob/snack.c" returns ".c")
+# Args: <name to find extension of>
+getExtension() {
+	se_base="$(echo "$1" | awk -F/ '{print $NF}')"
+	se_ret="$(echo "$se_base" | awk -F. '{if (NF<=1) print ""; else print "."$NF}')"
+	echo "$se_ret"
+}
+
+##############################################################################
+#
+# Parse & convert the arguments
+#
+##############################################################################
+
+#Program state:
+VERBOSE=''
+DEBUG_SCRIPT=''
+SAVE=''
+
+DOCOMPILE=''
+DOASSEMBLE=''
+DOLINK=''
+DODEPS=''
+SHARED=''
+OUTPUT=''
+CL_OPTS=("${CL_COMMON[@]}")
+ML_OPTS=("${ML_COMMON[@]}")
+LINK_OPTS=("${LINK_COMMON[@]}")
+LIBDIR=''
+LIBDIRS=()
+
+#NT CL and LINK command-line arguments:
+LINK=()
+CL=()
+ML=()
+
+[[ $# -eq 0 ]] && printUsage "Error: No arguments given."
+
+while [[ ! $# -eq 0 ]]
+do
+	arg="$1"
+	shift
+
+	case "$arg" in
+	-verbose)
+		VERBOSE='1'
+		;;
+	-shared)
+		SHARED='1'
+		;;
+	-E)
+		CL+=(-E)
+		ML+=(-EP)
+		;;
+	-O0)
+		CL_OPTS+=(-Od)
+		;;
+	-Og)
+		CL_OPTS+=(-DNDEBUG -Od)
+		ML_OPTS+=(-DNDEBUG)
+		;;
+	-O|-O1|-Os)
+		CL_OPTS+=(-DNDEBUG -O1)
+		ML_OPTS+=(-DNDEBUG)
+		;;
+	-O2)
+		CL_OPTS+=(-DNDEBUG -O2)
+		ML_OPTS+=(-DNDEBUG)
+		;;
+	-O3|-Ofast)
+		CL_OPTS+=(-DNDEBUG -Ox)
+		ML_OPTS+=(-DNDEBUG)
+		;;
+	-flto|-flto=*)
+		CL_OPTS+=(-GL)
+		LINK_OPTS+=(-LTCG)
+		;;
+	-g|-g[123456789]|-ggdb|-ggdb[123])
+		# Debug information only, as -g is for GCC and clang. The C runtime
+		# stays the release one (-MT): the debug one (-MTd) is a different ABI,
+		# so a -g object could not be linked with anything built without -g
+		# (reconverse, or a production Charm++ under a -g program).
+		CL_OPTS+=(-Z7)
+		ML_OPTS+=(-Zi -Zd)
+		LINK_OPT=()
+		;;
+# Language level. MSVC has no C++11 mode; its lowest is C++14.
+	-std=c++11|-std=gnu++11|-std=c++14|-std=gnu++14|-std:c++14)
+		CL_OPTS+=(-std:c++14)
+		;;
+	-std=c++17|-std=gnu++17|-std:c++17)
+		CL_OPTS+=(-std:c++17)
+		;;
+	-std=c++20|-std=gnu++20|-std:c++20)
+		CL_OPTS+=(-std:c++20)
+		;;
+	-std=c11|-std=gnu11|-std:c11)
+		CL_OPTS+=(-std:c11)
+		;;
+	-std=c17|-std=gnu17|-std:c17)
+		CL_OPTS+=(-std:c17)
+		;;
+	-std=c99|-std=gnu99)
+		;;
+	-c)
+		CL+=("$arg")
+		ML+=("$arg")
+		;;
+	-D)
+		CL+=("$arg$1")
+		ML+=("$arg$1")
+		shift
+		;;
+	-U)
+		CL+=("$arg$1")
+		shift
+		;;
+	-D*)
+		CL+=("$arg")
+		ML+=("$arg")
+		;;
+	-U*)
+		CL+=("$arg")
+		;;
+#Include directories. One cygpath cannot convert (a relative path climbing
+#above the drive) cannot exist either, so skip it, as GCC skips a missing
+#directory, rather than fail the compile.
+	-I)
+		if path="$(cygpath -w "$1" 2>/dev/null)"
+		then
+			CL+=("-I$path")
+			ML+=("-I$path")
+		fi
+		shift
+		;;
+	-I*)
+		if path="$(cygpath -w "${arg#-I}" 2>/dev/null)"
+		then
+			CL+=("-I$path")
+			ML+=("-I$path")
+		fi
+		;;
+	-MM|-M)
+		DODEPS='1'
+		;;
+	-MG|-MP)
+		;;
+	-L)
+		LIBDIR="$(cygpath -w "$1")"
+		LIBDIRS+=("$(cygpath -u "$LIBDIR")")
+		LINK+=("-LIBPATH:$LIBDIR")
+		shift
+		;;
+	-L*)
+		LIBDIR="${arg#-L}"
+		LIBDIR="$(cygpath -w "$LIBDIR")"
+		LIBDIRS+=("$(cygpath -u "$LIBDIR")")
+		LINK+=("-LIBPATH:$LIBDIR")
+		;;
+	-l*)
+		if [[ "$arg" != '-lm' ]]
+		then
+#Convert -lfoo to path-to-foo.a
+			L="${arg#-l}"
+			D=''
+#As with ld, the first -L directory holding the library wins, so a
+#library later on the path cannot shadow one named earlier.
+			[[ ${#LIBDIRS[@]} -ne 0 ]] && \
+			for dir in "${LIBDIRS[@]}"
+			do
+			  [[ -r "$dir/lib$L" ]] && D="$dir/lib$L"
+			  [[ -r "$dir/lib$L.a" ]] && D="$dir/lib$L.a"
+			  [[ -r "$dir/$L.lib" ]] && D="$dir/$L.lib"
+			  [[ -r "$dir/lib$L.lib" ]] && D="$dir/lib$L.lib"
+			  [[ -n "$D" ]] && break
+			done
+			if [[ -z "$D" ]]
+			then
+			  [[ -r "$L" ]] && D="$L"
+			  [[ -r "$L.a" ]] && D="$L.a"
+			  [[ -r "$L.lib" ]] && D="$L.lib"
+			  [[ -r "lib$L.a" ]] && D="lib$L.a"
+			  [[ -r "lib$L.lib" ]] && D="lib$L.lib"
+			fi
+			[[ -z "$D" ]] && Abort "Couldn't find library $L in . or ${LIBDIRS[*]}"
+			LINK+=("$(cygpath -w "$D")")
+		fi
+		;;
+	-o)
+		out="$1"
+		shift
+		if [[ "$(getExtension "$out")" = ".o" ]]
+		then
+#It's a .o output filename-- tell CL
+			OUTPUT="-Fo$(cygpath -w "$out")"
+		elif [[ "$(getExtension "$out")" = ".obj" ]]
+		then
+			OUTPUT="-Fo$(cygpath -w "$out")"
+		elif [[ "$(getExtension "$out")" = ".so" ]]
+		then
+			OUTPUT="-Fo$(cygpath -w "$out")"
+		elif [[ "$(getExtension "$out")" = ".dll" ]]
+		then
+			OUTPUT="-Fo$(cygpath -w "$out")"
+			LINK+=(-dll "-out:$out")
+			DOLINK='1'
+		elif [[ "$(getExtension "$out")" = ".exe" ]]
+		then
+			LINK+=("-out:$out")
+			DOLINK='1'
+		else
+#It's an exe filename-- tell LINK
+			LINK+=("-out:$out.exe")
+			DOLINK='1'
+		fi
+		;;
+
+#Object file or library-- add to link
+	*.o|*.a|*.lib|*.obj)
+		if [[ -n "$DOCOMPILE" ]]
+		then
+		  CL+=("$(cygpath -w "$arg")")
+		else
+		  LINK+=("$(cygpath -w "$arg")")
+		  DOLINK='1'
+		fi
+		;;
+#C source file
+	*.c)
+		base="$(stripExtension "$arg")"
+		source="$arg"
+		CL+=("-Tc$(cygpath -w "$arg")")
+		OBJ_OUTPUT="-Fo$(cygpath -w "$base").o"
+		LINK+=("$(cygpath -w "$base").o")
+		DOCOMPILE='1'
+		;;
+#ASM source file
+	*.asm)
+		base="$(stripExtension "$arg")"
+		source="$arg"
+		ML+=("-Ta$(cygpath -w "$arg")")
+#		OUTPUT="-Fo$base.o"
+		LINK+=("$(cygpath -w "$base").o")
+		DOASSEMBLE='1'
+		;;
+#C++ source file
+	*.C|*.cxx|*.cpp)
+		base="$(stripExtension "$arg")"
+		source="$arg"
+		CL+=("-Tp$(cygpath -w "$arg")")
+#		OUTPUT="-Fo$base.o"
+		LINK+=("$base.o")
+		DOCOMPILE='1'
+		;;
+	-fno-stack-protector)
+		CL_OPTS+=(-GS-)
+		;;
+	-fno-lifetime-dse|-rdynamic|-Wl,--export-dynamic|-fvisibility=*|-Wl,-undefined,dynamic_lookup|-ftls-model=*)
+		# UNKNOWN_FLAGS
+		# Error out so configure knows not to pass us these arguments, avoiding the below warning.
+		exit 1
+		;;
+# Default
+	*)
+#		printUsage  "Error: Unrecognized argument $arg"
+		echo  "Ignored Unrecognized argument $arg"
+		;;
+	esac
+done
+
+[[ -n "$SHARED" ]] && CL_OPTS+=("$CL_DLL") || CL_OPTS+=("$CL_MT")
+
+CLML_OPTS=()
+[[ -n "$OUTPUT" ]] && CLML_OPTS+=("$OUTPUT")
+[[ -n "$DOLINK" && -z "$OUTPUT" ]] && CLML_OPTS+=("$OBJ_OUTPUT")
+
+if [[ -n "$DODEPS" ]]
+then
+	OPTS=("${CL_OPTS[@]}" "${CL[@]}" -showIncludes)
+	echo "$base.o: $source \\"
+	"$CL_CMD" "${OPTS[@]}" | sed -e '/^Note: including file:/!d' \
+		-e 's/^Note: including file:\s*\(.*\)$/\1/' \
+		-e 's/\\/\//g' \
+		-e 's/ /\\ /g' \
+		-e 's/^\(.*\)$/\t\1 \\/' \
+	| tr -d '\r'
+	exit 0
+fi
+
+if [[ -n "$DOCOMPILE" ]]
+then
+	OPTS=("${CL_OPTS[@]}" "${CLML_OPTS[@]}" "${CL[@]}" '-I.') # '-I.' in case input file is a full path
+	if ! runCmd "$CL_CMD" "${OPTS[@]}"
+	then
+		Abort "Error executing" "$CL_CMD" "${OPTS[@]}"
+	fi
+fi
+
+if [[ -n "$DOASSEMBLE" ]]
+then
+	OPTS=("${ML_OPTS[@]}" "${CLML_OPTS[@]}" "${ML[@]}")
+	if ! runCmd "$ML_CMD" "${OPTS[@]}"
+	then
+		Abort "Error executing" "$ML_CMD" "${OPTS[@]}"
+	fi
+fi
+
+if [[ -n "$DOLINK" ]]
+then
+	OPTS=("${LINK_OPTS[@]}" "${LINK_OPT[@]}" "${LINK[@]}" "${LINK_POST[@]}")
+	if ! runCmd "$LINK_CMD" "${OPTS[@]}"
+	then
+		Abort "Error executing" "$LINK_CMD" "${OPTS[@]}"
+	fi
+fi
+
+exit 0

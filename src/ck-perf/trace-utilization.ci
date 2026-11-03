@@ -18,7 +18,20 @@ module TraceUtilization {
 
   };
 
+  // Its own group, so that its reduction cannot pair with a round of
+  // the one-second reduction of TraceUtilizationBOC (which a PE skips when it
+  // has too few new bins). Contributions of a group are matched by order.
+  group [migratable] TraceObjLoadsBOC {
+    entry TraceObjLoadsBOC(void);
+    entry void ccsRequestObjLoads(CkCcsRequestMsg *m);
+    entry void collectObjLoads();
+    entry void objLoadsCollected(CkReductionMsg *);
+  };
+
   readonly CProxy_TraceUtilizationBOC traceUtilizationGroupProxy;
+  readonly CProxy_TraceObjLoadsBOC traceObjLoadsGroupProxy;
+
+  initnode void registerSumDetailCompressedReducer(void);
 
 };
 

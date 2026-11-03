@@ -357,12 +357,12 @@ int main(int argc, char **argv) {
   intercomm_scatterv_test(myFirstComm, global_rank, root, false); /* Intercomm scatterv test */
   intercomm_scatterv_test(myFirstComm, global_rank, root, true); /* Intercomm iscatterv test */
 
-#if 0
   /* Intercommunicator barrier collective tests */
   if (global_rank == 0) printf("[0] Testing intercomm barrier\n");
   intercomm_barrier_test(myFirstComm, global_rank, false); /* Intercomm barrier test */
   intercomm_barrier_test(myFirstComm, global_rank, true); /* Intercomm ibarrier test */
 
+#if 0 /* AMPI does not implement gather and gatherv for intercommunicators */
   /* Intercommunicator gather collective tests */
   if (global_rank == 0) printf("[0] Testing intercomm gather\n");
   intercomm_gather_test(myFirstComm, global_rank, root, false); /* Intercomm gather test */

@@ -10,10 +10,15 @@ progdir="$(dirname "$0")"
 # Substituted when Charm++ is configured: 1 on reconverse builds, which have
 # no charmrun and launch a program directly with +pe.
 reconverse="@CMK_RECONVERSE@"
+# Substituted when Charm++ is configured with CMake: the Charm++ build
+# directory, where lcrun sits at _deps/lci-src/lcrun on reconverse builds.
+# Needed because ampicc copies this script next to the program it builds.
+charmbuild="@CMAKE_BINARY_DIR@"
 
 verbose=0
 num_ranks=1
 num_hosts=0
+num_procs=0
 
 virtual_ranks=0
 
@@ -29,14 +34,24 @@ usage() {
   echo "    -h|--help                 Show this help"
   echo "    -v|--verbose              Verbose output"
   echo "    -n|-np|--np|-p <#ranks>   Number of ranks"
-  echo "    --host <host1,host2,...>  Comma-separated list of hosts"
+  if [[ "$reconverse" = "1" ]]; then
+    echo "    --procs|-procs <#processes>"
+    echo "                              Number of processes, launched with lcrun"
+  else
+    echo "    --host <host1,host2,...>  Comma-separated list of hosts"
+  fi
   echo "    -vr|--vr                  Use virtual ranks"
   echo
   if [[ "$reconverse" = "1" ]]; then
-    echo "This is a reconverse build: the program runs as one process,"
-    echo "\"<program> +pe <#ranks>\" (with -vr: \"+vp<#ranks> +pe 1\")."
-    echo "For several processes, launch the program directly, e.g."
-    echo "    lcrun -n <#processes> <program> +pe <#PEs> [+vp<#ranks>]"
+    echo "This is a reconverse build. Without --procs the program runs as one"
+    echo "process, \"<program> +pe <#ranks>\" (with -vr: \"+vp<#ranks> +pe 1\")."
+    echo "With --procs it runs as \"lcrun -n <#processes> <program> +pe <#ranks>\""
+    echo "(with -vr: \"+vp<#ranks> +pe <#processes>\"); <#ranks> must be a"
+    echo "multiple of <#processes>. Under a batch system, use the site launcher"
+    echo "instead, e.g. \"srun -n 4 setarch \$(uname -m) -R <program> +pe 16\"."
+    echo "On Linux the program runs under \"setarch <arch> -R\" (address space"
+    echo "randomization off, needed for threads that migrate between processes"
+    echo "or restart from a checkpoint); AMPIRUN_VA_RANDOMIZATION=1 leaves it on."
   else
     echo "Other options will be passed unmodified to charmrun."
   fi
@@ -84,6 +99,15 @@ processArgs() {
         shift
         ;;
 
+      --procs|-procs)
+        num_procs="$1"
+        if ! [[ "$num_procs" =~ ^[1-9][0-9]*$ ]]; then
+          echo "$progname error: --procs needs a positive integer, not \"$num_procs\""
+          exit 1
+        fi
+        shift
+        ;;
+
       -vr|--vr)
         virtual_ranks=1
         ;;
@@ -115,11 +139,15 @@ runCmd() {
 
 if [[ "$reconverse" = "1" ]]; then
   if [[ -n $hosts ]]; then
-    echo "$progname error: --host is not supported on reconverse builds; launch multi-process runs with lcrun or srun, e.g. lcrun -n <#processes> <program> +pe <#PEs>"
+    echo "$progname error: --host is not supported on reconverse builds; use --procs <#processes> to run several processes on this host through lcrun, or the site launcher (srun) for several hosts"
     exit 1
   fi
   if [[ ${#cmd[@]} -eq 0 ]]; then
     echo "$progname error: no program given"
+    exit 1
+  fi
+  if ! [[ "$num_ranks" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$progname error: the number of ranks must be a positive integer, not \"$num_ranks\""
     exit 1
   fi
   # charmrun finds a program named without a path in the current directory;
@@ -141,13 +169,68 @@ if [[ "$reconverse" = "1" ]]; then
     esac
   done
   cmd=("${args[@]}")
-  if [[ $virtual_ranks == 0 ]]; then
+  if [[ $num_procs -gt 0 ]]; then
+    if [[ $virtual_ranks == 0 ]]; then
+      if (( num_ranks % num_procs != 0 )); then
+        echo "$progname error: $num_ranks ranks cannot be divided evenly among $num_procs processes"
+        exit 1
+      fi
+      cmd+=(+pe "$num_ranks")
+    else
+      cmd+=("+vp$num_ranks" +pe "$num_procs")
+    fi
+    # lcrun is LCI's launcher script, fetched into the Charm++ build
+    # directory. Look next to this script first (bin/ampirun), then in the
+    # configured build directory (a copy made by ampicc), then on PATH.
+    lcrun=""
+    for c in "$progdir/../_deps/lci-src/lcrun" "$charmbuild/_deps/lci-src/lcrun"; do
+      if [[ -x "$c" ]]; then lcrun="$c"; break; fi
+    done
+    if [[ -z "$lcrun" ]] && command -v lcrun > /dev/null 2>&1; then
+      lcrun=lcrun
+    fi
+    if [[ -z "$lcrun" ]]; then
+      echo "$progname error: --procs needs lcrun, which is not at $charmbuild/_deps/lci-src/lcrun or on PATH"
+      exit 1
+    fi
+    cmd=("$lcrun" -n "$num_procs" "${cmd[@]}")
+  elif [[ $virtual_ranks == 0 ]]; then
     cmd+=(+pe "$num_ranks")
   else
     cmd+=("+vp$num_ranks" +pe 1)
   fi
+  # Address space randomization is turned off on Linux, as classic charmrun
+  # did with personality(ADDR_NO_RANDOMIZE): a migratable thread that moves
+  # to another process, or is restored from a checkpoint by a new process,
+  # resumes on a stack holding return addresses into the program and into
+  # libreconverse, which are valid only if the code is at the same address
+  # in every process. "setarch <arch> -R" sets that personality flag and
+  # execs the command; the flag is inherited across fork and exec, so in
+  # front of lcrun it reaches every process lcrun starts. (Under srun the
+  # prefix must go inside the launch instead, after srun's arguments,
+  # because slurmd starts the tasks.) AMPIRUN_VA_RANDOMIZATION=1 leaves
+  # randomization on, like classic charmrun's ++va-randomization. macOS is
+  # left alone: it has no setarch, and randomization cannot be turned off
+  # there from a script. Where the personality call is refused (Docker's
+  # default seccomp profile does not allow ADDR_NO_RANDOMIZE), setarch exits
+  # 1 without running the command; a probe finds that out once, and the run
+  # goes ahead with randomization on, as classic charmrun did when its call
+  # failed.
+  if [[ "$(uname -s)" = "Linux" && "${AMPIRUN_VA_RANDOMIZATION:-}" != "1" ]] \
+     && command -v setarch > /dev/null 2>&1; then
+    if setarch "$(uname -m)" -R true > /dev/null 2>&1; then
+      cmd=(setarch "$(uname -m)" -R "${cmd[@]}")
+    else
+      echo "$progname: setarch -R is not permitted here; running with address space randomization on" 1>&2
+    fi
+  fi
   runCmd "${cmd[@]}"
   exit $?
+fi
+
+if [[ $num_procs -gt 0 ]]; then
+  echo "$progname error: --procs is only supported on reconverse builds; with charmrun use ++ppn"
+  exit 1
 fi
 
 handle_hosts
