@@ -2296,6 +2296,7 @@ void ampi::pup(PUP::er &p) noexcept
   postedBcastReqs.pup(p, AmmPupPostedReqs);
   p|greq_classes;
   p|oorder;
+  p|winObjects; // the windows created on this communicator (ampiParent packs the WinStructs)
   // Do not PUP myComm here, since ampiParent owns it.
   // We update the pointer to it in findParentAfterMigration()
 }
