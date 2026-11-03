@@ -62,6 +62,9 @@ jacobi-get-tokens:
 test: ampi
 	$(call run, +p3 ./jacobi.pup 2 2 2 40 +vp8 +balancer RotateLB +LBDebug 1 )
 	$(call run, +p3 ./jacobi 2 2 2 40 +vp8 +balancer RotateLB +LBDebug 1 )
+	# No balancer here: ampi::pup does not pack a rank's windows, so a rank
+	# that migrated would lose its MPI_Win.
+	$(call run, +p3 ./jacobi-get 2 2 2 40 +vp8 )
 ifeq (1,$(CMK_SUPPORTS_TLSGLOBALS))
 	$(call run, +p3 ./jacobi.tls 2 2 2 40 +vp8 +balancer RotateLB +LBDebug 1)
 endif

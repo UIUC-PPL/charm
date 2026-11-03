@@ -472,7 +472,7 @@ class ampiParent;
 class win_obj {
  public:
   void *baseAddr;
-  MPI_Aint winSize;
+  MPI_Aint winSize; // in bytes, as passed to MPI_Win_create
   int disp_unit;
   MPI_Comm comm;
 
@@ -501,16 +501,15 @@ class win_obj {
 
   std::unordered_map<int, uintptr_t> & getAttributes() { return attributes; }
 
-  int put(void *orgaddr, int orgcnt, int orgunit,
-          MPI_Aint targdisp, int targcnt, int targunit) noexcept;
+  // Abort unless the target bytes of an RMA call lie inside the window.
+  // checkTargetBytes: bytes [lo, hi) relative to byte offset disp_unit*targdisp.
+  // checkTarget: the bytes that targcnt elements of tddt occupy there.
+  void checkTargetBytes(const char *opname, MPI_Aint targdisp, MPI_Aint lo, MPI_Aint hi) const noexcept;
+  void checkTarget(const char *opname, MPI_Aint targdisp, int targcnt,
+                   const CkDDT_DataType *tddt) const noexcept;
 
-  int get(void *orgaddr, int orgcnt, int orgunit,
-          MPI_Aint targdisp, int targcnt, int targunit) noexcept;
   int accumulate(void *orgaddr, int count, MPI_Aint targdisp, MPI_Datatype targtype,
                  MPI_Op op, ampiParent* pptr) noexcept;
-
-  int iget(int orgcnt, MPI_Datatype orgtype,
-          MPI_Aint targdisp, int targcnt, MPI_Datatype targtype) noexcept;
   int igetWait(MPI_Request *req, MPI_Status *status) noexcept;
   int igetFree(MPI_Request *req, MPI_Status *status) noexcept;
 
@@ -3174,6 +3173,8 @@ class ampi final : public CBase_ampi {
   void winRemoteAccumulate(int orgtotalsize, char* orgaddr, int orgcnt, MPI_Datatype orgtype,
                            MPI_Aint targdisp, int targcnt, MPI_Datatype targtype,
                            MPI_Op op, int winIndex) noexcept;
+  void accumulateIntoTarget(win_obj *winobj, char *sorgaddr, MPI_Aint targdisp, int targcnt,
+                            CkDDT_DataType *tddt, MPI_Datatype targtype, MPI_Op op) noexcept;
   int winGetAccumulate(const void *orgaddr, int orgcnt, MPI_Datatype orgtype, void *resaddr,
                        int rescnt, MPI_Datatype restype, int rank, MPI_Aint targdisp,
                        int targcnt, MPI_Datatype targtype, MPI_Op op, WinStruct *win) noexcept;
