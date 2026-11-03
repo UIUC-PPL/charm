@@ -290,6 +290,19 @@ against the environment's NCCL headers and `libnccl.so.2` (`build_fastmoe.sh
 FastMoE reports itself as 1.1.0). The group size of the group-wise exchange is
 FastMoE's default (4).
 
+**The network NCCL uses.** Delta has no NCCL module; every harness uses the
+`nvidia-nccl-cu13` 2.29.7 wheel inside the `pytorch-2.12.1-cu130` environment.
+Across nodes NCCL reaches Slingshot only through the `aws-ofi-nccl` plugin
+(`module aws-ofi-nccl/1.19.2`: `NCCL_NET_PLUGIN=ofi`, `FI_PROVIDER=cxi`,
+`FI_CXI_DISABLE_HOST_REGISTER=1`, `FI_MR_CACHE_MONITOR=userfaultfd`, the plugin
+and libfabric 2.3.1 on the library path); without it NCCL finds no IB device
+and falls back to its socket transport, which is what every two-node baseline
+number dated 2026-11-01 ran on (the example's README, "Measured 2026-11-02",
+has the re-measurement). `refwrap.sh` sets the plugin on every rank and logs
+NCCL's INIT and NET lines, so a rank log shows `Using network Libfabric`. The
+userfaultfd monitor is required: with libfabric's default memhooks one arm
+hung in NCCL's connection setup (job 23452305).
+
 Three patches were needed to run it at all, in the clone that was built
 (`git diff` against 55af4f9): the smart-schedule backward's dtype dispatch
 did not include bf16 (the forward's did); the shipped shadow policy sums the
