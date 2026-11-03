@@ -5,6 +5,7 @@ DIRS = \
   ibarrier \
   cas \
   onesided \
+  coll_extent \
   stacksize \
   migration \
   datatype \

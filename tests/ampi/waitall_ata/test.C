@@ -232,6 +232,35 @@ static void stageLarge()
       ataCheck(st, b);
     }
   }
+  // Three outstanding: a zero-copy block, then a sync-message block, then a
+  // small one. Between processes the zero-copy block arrives last (its entry
+  // runs after the runtime's get), so the other two are stashed behind it;
+  // its arrival then drains past the sync message, whose data is still being
+  // fetched, to the small block. The drain used to stop at the sync message
+  // and the small block stayed stranded, which hung the receiver.
+  for (int order = 0; order < 2; order++) {
+    Ata a, b, c;
+    ataInit(a, 7, 25600, 1);
+    ataInit(b, 8, 32768, 2);
+    ataInit(c, 9, 4, 1);
+    ataStart(a);
+    ataStart(b);
+    ataStart(c);
+    if (order == 0) {
+      MPI_Wait(&a.req, MPI_STATUS_IGNORE);
+      MPI_Wait(&b.req, MPI_STATUS_IGNORE);
+      MPI_Wait(&c.req, MPI_STATUS_IGNORE);
+    } else {
+      MPI_Request r[3] = {c.req, b.req, a.req};
+      MPI_Waitall(3, r, MPI_STATUSES_IGNORE);
+      c.req = r[0];
+      b.req = r[1];
+      a.req = r[2];
+    }
+    ataCheck(st, a);
+    ataCheck(st, b);
+    ataCheck(st, c);
+  }
 }
 
 // 4. MPI_Ialltoallv: rank s sends s+d+1 ints to rank d; two outstanding
