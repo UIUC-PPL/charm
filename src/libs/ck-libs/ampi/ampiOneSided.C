@@ -48,17 +48,25 @@ win_obj::~win_obj() noexcept {
 // checkpointed. The window's memory is the user's buffer, which lives in the
 // rank's Isomalloc stack or heap and moves with the rank at the same address
 // (as every AmpiRequest's buffer pointer does), so only the bookkeeping is
-// packed and the base pointer keeps its value. Migration happens inside the
-// collective AMPI_Migrate, so no RMA call is in flight; a lock held or
-// waited for at that point travels with the window.
+// packed and the base pointer keeps its value. That holds only while the
+// buffer is in Isomalloc memory: with another memory module, malloc'd memory
+// stays behind, so unpacking a live window there is refused. Messages for the
+// window that are in flight at AMPI_Migrate (a lock request, a Put under a
+// lock) reach the rank at its new location; a lock held or waited for at that
+// point travels with the window.
 void win_obj::pup(PUP::er &p) noexcept {
   p((char *)&baseAddr, sizeof(void *));
+  p|initflag;
+  if (p.isUnpacking() && initflag && !CmiMemoryIs(CMI_MEMORY_IS_ISOMALLOC)) {
+    CkAbort("AMPI> an MPI_Win cannot move with its rank without the Isomalloc heap: "
+            "its memory would stay at the old location. Link with -memory isomalloc, "
+            "or free the window before AMPI_Migrate and create it again afterwards.");
+  }
   p|winSize;
   p|disp_unit;
   p|comm;
   p|owner;
   p|winName;
-  p|initflag;
   p|attributes;
 
   int queued = lockQueue.length();

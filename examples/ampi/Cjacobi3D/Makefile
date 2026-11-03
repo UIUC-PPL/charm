@@ -51,8 +51,12 @@ jacobi.rose: jacobi.C
 	$(CHARMC) -roseomptlsglobals -o jacobi.rose.o -c $<
 	$(CHARMC) -roseomptlsglobals -o $@ jacobi.rose.o
 
+# jacobi-get creates an MPI_Win over the chunk, and a window's memory has to
+# keep its address when the rank migrates or restarts. The Isomalloc heap
+# moves the chunk at the same address; chunk_pup, which frees the chunk and
+# allocates a new one, would not. So the pup routine is left out (-DNO_PUP).
 jacobi-get: jacobi-get.C
-	$(CHARMC) -c jacobi-get.C
+	$(CHARMC) -c -DNO_PUP jacobi-get.C
 	$(CHARMC) -o $@ jacobi-get.o -lm
 
 jacobi-get-tokens:
