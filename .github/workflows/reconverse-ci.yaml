@@ -65,6 +65,7 @@ env:
     tests/charm++/objid_insert
     tests/charm++/objid_wide
     tests/charm++/anytime_bcastred
+    tests/charm++/delegation/multicast
     tests/charm++/atsync_reduction
     tests/charm++/threaded_redn
     tests/charm++/qd
