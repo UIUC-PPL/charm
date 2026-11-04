@@ -61,8 +61,9 @@
  * skipped on restart, so its results must be in the state object. A
  * resumable function other than main that contains a site (directly or in a
  * function it awaits) has its own CAMPI_RESUMABLE/CAMPI_END and is awaited
- * with CAMPI_CALL or CAMPI_CALL_TO. Case labels of a site must not be inside
- * a switch statement of the user's own, and two sites must not share a line.
+ * with CAMPI_CALL or CAMPI_CALL_TO. A site is one statement and may be the
+ * body of an if or a loop. Case labels of a site must not be inside a switch
+ * statement of the user's own, and two sites must not share a line.
  *
  * +campi_fakemigrate on the command line makes every migrate site rebuild
  * the rank in place (state packed and unpacked, frames destroyed, main run
@@ -100,23 +101,32 @@
     ::campi::abort_no_site(campi_frame_);                                     \
   }
 
-// A migrate site: AMPI_Migrate(info) at a restart point.
+// A migrate site: AMPI_Migrate(info) at a restart point. The case label comes
+// first and the rest is one statement, so a site may be the body of an if or a
+// loop; the label still belongs to the restart switch, and the jump to it on
+// restart enters that body directly.
 #define CAMPI_MIGRATE(info_)                                                  \
   case __LINE__:                                                              \
-    ::campi::note_site(campi_frame_, __LINE__);                               \
-    (void)co_await ::campi::Migrate(info_)
+    do {                                                                      \
+      ::campi::note_site(campi_frame_, __LINE__);                             \
+      (void)co_await ::campi::Migrate(info_);                                 \
+    } while (0)
 
 // A call site: awaits a resumable function that contains a site. The case
 // label in front of it keeps it out of expressions, so the second form
 // assigns the awaited value: CAMPI_CALL_TO(s.x, f(s)); means s.x = co_await f(s);
 #define CAMPI_CALL(expr_)                                                     \
   case __LINE__:                                                              \
-    ::campi::note_site(campi_frame_, __LINE__, true);                         \
-    co_await (expr_)
+    do {                                                                      \
+      ::campi::note_site(campi_frame_, __LINE__, true);                       \
+      co_await (expr_);                                                       \
+    } while (0)
 #define CAMPI_CALL_TO(lhs_, expr_)                                            \
   case __LINE__:                                                              \
-    ::campi::note_site(campi_frame_, __LINE__, true);                         \
-    (lhs_) = co_await (expr_)
+    do {                                                                      \
+      ::campi::note_site(campi_frame_, __LINE__, true);                       \
+      (lhs_) = co_await (expr_);                                              \
+    } while (0)
 
 #define CAMPI_AWAIT(expr) (co_await (expr))
 

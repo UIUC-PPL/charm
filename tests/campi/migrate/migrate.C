@@ -1,8 +1,9 @@
 /*
  * campi test: restartable ranks. Each step of the loop has a Sendrecv ring
- * and four migrate sites: two in main, one in phase() (a resumable function
- * awaited with CAMPI_CALL, with a Send/Recv ring before its site) and one in
- * tally() (awaited with CAMPI_CALL_TO, whose info asks for nothing). The
+ * and five migrate sites: three in main (the third the unbraced body of an
+ * if, taken on odd steps), one in phase() (a resumable function awaited with
+ * CAMPI_CALL, with a Send/Recv ring before its site) and one in tally()
+ * (awaited with CAMPI_CALL_TO, whose info asks for nothing). The
  * loop counter and every value carried across a site are in the State, so
  * a rank that migrates (+balancer), is rebuilt in place (+campi_fakemigrate)
  * or restarts from a checkpoint (-chkpt DIR, written at the second site of
@@ -26,12 +27,14 @@ struct State {
   int recvd = 0;           // main's ring value, used after the first site
   int phaseGot = 0;        // phase()'s ring value, used after its site
   int tallied = 0;         // tally()'s result
+  int extra = 0;           // set before the conditional site, used after it
   std::string chkpt_dir;
   MPI_Info chkpt_info = MPI_INFO_NULL;
   MPI_Info noop_info = MPI_INFO_NULL;
 
   void pup(PUP::er &p) {
     p | rank; p | size; p | step; p | acc; p | recvd; p | phaseGot; p | tallied;
+    p | extra;
     p | chkpt_dir; p | chkpt_info; p | noop_info;
   }
 };
@@ -63,7 +66,7 @@ static long long expected(int rank, int size)
 {
   long long left = (rank + size - 1) % size, e = 0;
   for (long long t = 0; t < NSTEPS; t++)
-    e += (left * 1000 + t) * (t + 1) + 3 * (left * 7 + t) + (2 * t + 1);
+    e += (left * 1000 + t) * (t + 1) + 3 * (left * 7 + t) + (2 * t + 1) + 5 * t;
   return e;
 }
 
@@ -100,6 +103,9 @@ CAMPI_MAIN_STATE(State, argc, argv, s)
                                                                 : AMPI_INFO_LB_SYNC);
     CAMPI_CALL_TO(s.tallied, tally(s));
     s.acc += s.tallied;
+    s.extra = 5 * s.step;
+    if (s.step % 2 == 1) CAMPI_MIGRATE(AMPI_INFO_LB_SYNC);
+    s.acc += s.extra;
   }
 
   printf("migrate: rank %d checksum %lld (expected %lld)\n", s.rank, s.acc,

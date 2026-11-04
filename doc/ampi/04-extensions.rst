@@ -547,7 +547,10 @@ The macros:
 
 A migration point is identified by its source line, so two of them must
 not share a line, and none may be inside a ``switch`` statement of the
-program's own. Three rules follow from the restart:
+program's own. Each of the three site macros is one statement, so a
+migration point may be the body of an ``if`` or a loop without braces, as
+in ``if (s.step % 10 == 9) CAMPI_MIGRATE(AMPI_INFO_LB_SYNC);``. Three rules
+follow from the restart:
 
 1. Values carried across a migration point live in the state object, not in
    local variables. The compiler rejects a jump past the declaration of a
