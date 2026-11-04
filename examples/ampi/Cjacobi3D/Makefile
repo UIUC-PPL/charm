@@ -76,6 +76,14 @@ endif
 ifeq ($(TESTRUN_VA_RANDOMIZATION),1)
 RECONVERSE_VA_RANDOMIZED = 1
 endif
+# With randomization on and more than one process, ranks must not migrate
+# between processes either (Isomalloc refuses that too), and the balancer in
+# the checkpoint runs would move them, so those runs are left out as well.
+ifeq ($(RECONVERSE_VA_RANDOMIZED),1)
+ifneq ($(filter-out 0 1,$(TESTRUN_PROCS)),)
+NO_CHKPT_RUNS = 1
+endif
+endif
 endif
 
 # The final line of a restarted run must be the final line of the
@@ -101,6 +109,7 @@ endif
 	# process count does not divide). The Isomalloc build (jacobi) restores
 	# the stack and heap, the -memory default build (jacobi.pup) restores the
 	# chunk with chunk_pup.
+ifneq ($(NO_CHKPT_RUNS),1)
 	rm -rf log log.pup
 	$(call run, +p4 ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +balancer RotateLB ) 2>&1 | tee chkpt.log
 	grep "^jacobi: 40 iterations" chkpt.log
@@ -116,6 +125,7 @@ ifneq ($(RECONVERSE_VA_RANDOMIZED),1)
 	$(call check_restart,restart6.log,chkpt.log)
 	$(call run, +p6 ./jacobi.pup 2 2 2 40 -chkpt 20 log.pup +vp8 +balancer RotateLB +restart log.pup ) 2>&1 | tee restart6.pup.log
 	$(call check_restart,restart6.pup.log,chkpt.pup.log)
+endif
 endif
 
 testp: ampi
