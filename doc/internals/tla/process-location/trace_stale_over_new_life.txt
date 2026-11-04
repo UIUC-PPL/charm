@@ -1,0 +1,170 @@
+Error: Invariant HolderEntryNotStale is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 0
+/\ net = {}
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 0
+/\ creates = 0
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 2: <Create line 336, col 5 to line 348, col 69 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 0, pe |-> 0, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 0
+/\ net = {[to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1]}
+/\ holder = 0
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 0
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 3: <Emigrate line 398, col 5 to line 411, col 86 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 2, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 1
+/\ net = { [to |-> 2, type |-> "imm", ep |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 1, idx |-> TRUE, pe |-> 2, life |-> 1] }
+/\ holder = -1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 0
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 4: <Next line 515, col 8 to line 515, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 2, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> 1, pe |-> 2, w |-> {}, own |-> TRUE] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 1, idx |-> TRUE, pe |-> 2, life |-> 1] }
+/\ holder = 2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 0
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 5: <Delete line 356, col 5 to line 370, col 73 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 2, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "dead", ep |-> 1, pe |-> 2, life |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 1, idx |-> TRUE, pe |-> 2, life |-> 1] }
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 1
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 6: <Create line 336, col 5 to line 348, col 69 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 0, pe |-> 0, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "dead", ep |-> 1, pe |-> 2, life |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 2],
+  [to |-> 1, type |-> "upd", ep |-> 1, idx |-> TRUE, pe |-> 2, life |-> 1] }
+/\ holder = 0
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 1
+/\ creates = 2
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 7: <Next line 515, col 8 to line 515, col 29 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 2, w |-> {}, own |-> FALSE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "dead", ep |-> 1, pe |-> 2, life |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 2] }
+/\ holder = 0
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 1
+/\ creates = 2
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+18275 states generated, 11194 distinct states found, 7452 states left on queue.
+The depth of the complete state graph search is 7.
+The average outdegree of the complete state graph is 3 (minimum is 0, the maximum 12 and the 95th percentile is 7).
+Finished in 01s at (2026-11-03 16:22:33)

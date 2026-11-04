@@ -1,0 +1,194 @@
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 0
+/\ net = {}
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {}
+/\ dels = 0
+/\ creates = 0
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 2: <Send line 217, col 5 to line 230, col 72 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 0
+/\ net = {[b |-> 0, to |-> 1, type |-> "app", mid |-> 1, hops |-> 0]}
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 0
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 3: <Create line 288, col 5 to line 298, col 63 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 0, pe |-> 0, life |-> 1, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 0
+/\ net = { [b |-> 0, to |-> 1, type |-> "app", mid |-> 1, hops |-> 0],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1] }
+/\ holder = 0
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 4: <Emigrate line 330, col 5 to line 341, col 80 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, life |-> 1, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "imm", ep |-> 1],
+  [b |-> 0, to |-> 1, type |-> "app", mid |-> 1, hops |-> 0],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1] }
+/\ holder = -1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 5: <Next line 429, col 8 to line 429, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, life |-> 1, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "imm", ep |-> 1],
+  [b |-> 1, to |-> 1, type |-> "app", mid |-> 1, hops |-> 1],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1] }
+/\ holder = -1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 6: <Next line 429, col 8 to line 429, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, life |-> 1, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "imm", ep |-> 1],
+  [b |-> 2, to |-> 1, type |-> "app", mid |-> 1, hops |-> 2],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1] }
+/\ holder = -1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 7: <Next line 429, col 8 to line 429, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, life |-> 1, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "imm", ep |-> 1],
+  [b |-> 3, to |-> 1, type |-> "app", mid |-> 1, hops |-> 2],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1] }
+/\ holder = -1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 8: <Next line 429, col 8 to line 429, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, life |-> 1, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "imm", ep |-> 1],
+  [b |-> 4, to |-> 1, type |-> "app", mid |-> 1, hops |-> 2],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1] }
+/\ holder = -1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 9: <Next line 429, col 8 to line 429, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, life |-> 1, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "imm", ep |-> 1],
+  [b |-> 5, to |-> 1, type |-> "app", mid |-> 1, hops |-> 2],
+  [to |-> 1, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 0, life |-> 1] }
+/\ holder = -1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
