@@ -39,6 +39,15 @@ entry, and is planned once there is more than one chapter.
 | Checkpoint, restart, shrink/expand | not yet written |
 | The reconverse layer: what Charm++ asks of the machine layer | not yet written |
 
+## Models
+
+`tla/` holds TLA+ models of protocols described in the chapters, with the TLC
+configurations that were run and the counterexamples they produced:
+[`tla/process-location/`](tla/process-location/README.md) for the
+process-level location table (chapter above; checked for PR #4123). A model
+is kept when it found something or when the protocol is likely to change
+again; its README says what is modeled, what is not, and how to rerun it.
+
 To add a chapter, copy the shape of an existing one: a one-paragraph
 summary, a diagram where the structure has one, the data structures, the
 protocols, the limits and their diagnostics, and a closing "where in the

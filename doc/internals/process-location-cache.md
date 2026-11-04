@@ -552,9 +552,16 @@ Existing: `tests/charm++/anytime_migration`, `anytime_bcastred`,
 - `tests/charm++/objid_recreate`: the home's handling of an element re-created
   under the same id (section 3.5). Every PE drives the home-side handlers of a
   packed-kind array's `CkLocMgr` directly, for the indices it is the home of, in
-  the six orders of creation updates, move updates and death notices that the
+  seven orders of creation updates, move updates and death notices that the
   network can produce, and checks that the live life is the one located
   afterwards. No element exists and nothing is sent.
+
+The protocols of section 3 were also checked with TLA+: `tla/process-location/`
+holds the model (two processes of two PEs, or three of one; one element that
+is created, migrates, dies and is created again; one or two application
+messages; unordered delivery), the TLC configurations, and the counterexamples
+that led to the rules of section 3.5. Its README maps every model action to the
+functions here, so the model can follow the code.
 
 ## 8. Where in the source
 
