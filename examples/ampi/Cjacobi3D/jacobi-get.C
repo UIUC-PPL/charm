@@ -28,6 +28,15 @@ void chunk_pup(pup_er p, void *d)
   pup_int(p, &cp->xidx);
   pup_int(p, &cp->yidx);
   pup_int(p, &cp->zidx);
+  /* The neighbor ranks, which the Igets after a migration address. The sb*
+     pointers are not packed: they are set by AMPI_Iget_data within an
+     iteration and are invalid outside it. */
+  pup_int(p, &cp->xp);
+  pup_int(p, &cp->xm);
+  pup_int(p, &cp->yp);
+  pup_int(p, &cp->ym);
+  pup_int(p, &cp->zp);
+  pup_int(p, &cp->zm);
   if(pup_isDeleting(p))
     delete cp;
 }
@@ -142,7 +151,8 @@ int main(int ac, char** av)
   MPI_Type_vector(1,1,DIMX,MPI_DOUBLE,&planevec);
   MPI_Type_commit(&planevec);
 
-  MPI_Win_create(cp->t, DIMX*DIMY*DIMZ, sizeof(double), 0, MPI_COMM_WORLD, &win);
+  // The window size is in bytes; disp_unit scales the displacements only.
+  MPI_Win_create(cp->t, DIMX*DIMY*DIMZ*sizeof(double), sizeof(double), 0, MPI_COMM_WORLD, &win);
 
   maxerr = 0.0;
   for(iter=1; iter<=niter; iter++) {
@@ -158,9 +168,9 @@ int main(int ac, char** av)
     AMPI_Iget(0, DIMY*DIMZ, MPI_DOUBLE, cp->xp, 0, DIMY*DIMZ, MPI_DOUBLE, win, &reqxp);
     AMPI_Iget(0, DIMY*DIMZ, MPI_DOUBLE, cp->xm, (DIMX-1)*DIMY*DIMZ, DIMY*DIMZ, MPI_DOUBLE, win, &reqxm);
     AMPI_Iget(0, DIMX*DIMZ, MPI_DOUBLE, cp->yp, 0, DIMZ, linevec, win, &reqyp);
-    AMPI_Iget(0, DIMX*DIMZ, MPI_DOUBLE, cp->yp, (DIMY-1), DIMZ, linevec, win, &reqym);
+    AMPI_Iget(0, DIMX*DIMZ, MPI_DOUBLE, cp->ym, (DIMY-1), DIMZ, linevec, win, &reqym);
     AMPI_Iget(0, DIMX*DIMY, MPI_DOUBLE, cp->zp, 0, DIMX*DIMY, planevec, win, &reqzp);
-    AMPI_Iget(0, DIMX*DIMY, MPI_DOUBLE, cp->zp, 0, DIMX*DIMY, planevec, win, &reqzm);
+    AMPI_Iget(0, DIMX*DIMY, MPI_DOUBLE, cp->zm, 0, DIMX*DIMY, planevec, win, &reqzm);
 
     AMPI_Iget_wait(&reqxp, &stsxp, win);
     AMPI_Iget_wait(&reqxm, &stsxm, win);
@@ -169,12 +179,12 @@ int main(int ac, char** av)
     AMPI_Iget_wait(&reqzp, &stszp, win);
     AMPI_Iget_wait(&reqzm, &stszm, win);
 
-    AMPI_Iget_data((double*)cp->sbxp, stsxp);
-    AMPI_Iget_data((double*)cp->sbxm, stsxm);
-    AMPI_Iget_data((double*)cp->sbyp, stsyp);
-    AMPI_Iget_data((double*)cp->sbym, stsym);
-    AMPI_Iget_data((double*)cp->sbzp, stszp);
-    AMPI_Iget_data((double*)cp->sbzm, stszm);
+    AMPI_Iget_data((void*)&cp->sbxp, stsxp);
+    AMPI_Iget_data((void*)&cp->sbxm, stsxm);
+    AMPI_Iget_data((void*)&cp->sbyp, stsyp);
+    AMPI_Iget_data((void*)&cp->sbym, stsym);
+    AMPI_Iget_data((void*)&cp->sbzp, stszp);
+    AMPI_Iget_data((void*)&cp->sbzm, stszm);
 
 
     if(iter > 25 &&  iter < 85 && thisIndex == 35)

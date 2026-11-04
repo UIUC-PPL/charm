@@ -51,15 +51,44 @@ then
   # LCI's bootstrap reads the inherited SLURM_NTASKS/SLURM_PROCID and waits
   # for peers that never come. Unset, the default is lcrun for multi-process
   # and a bare exec for single-process, as on a workstation or hosted CI.
+  #
+  # Address space randomization: a migratable thread (an AMPI rank) that
+  # moves to another process, or is restored from a checkpoint by a new
+  # process, resumes on a stack that holds return addresses into the program
+  # and into libreconverse. Those addresses are only valid if the code is
+  # loaded at the same address in every process, so on Linux the program is
+  # run under "setarch <arch> -R", which sets the ADDR_NO_RANDOMIZE
+  # personality flag before exec. The flag is inherited across fork and exec,
+  # so for lcrun the prefix goes in front of lcrun and reaches every process
+  # it starts. With TESTRUN_LAUNCHER (srun, mpirun) the prefix goes inside
+  # the launch, after the launcher's arguments, because the launcher's daemon
+  # (slurmd) starts the tasks on the compute nodes and they do not inherit a
+  # flag set on the srun process. Classic charmrun did the same through
+  # personality() and its ++va-randomization option; here
+  # TESTRUN_VA_RANDOMIZATION=1 leaves randomization on. macOS is left alone:
+  # it has no setarch, and randomization cannot be turned off from a script.
+  # Where the personality call is refused (Docker's default seccomp profile
+  # does not allow ADDR_NO_RANDOMIZE), setarch exits 1 without running the
+  # command; a probe finds that out once, and the run then goes ahead with
+  # randomization on, as classic charmrun did when its call failed.
+  norand=()
+  if [[ "$(uname -s)" = "Linux" && "$TESTRUN_VA_RANDOMIZATION" != "1" ]] \
+     && command -v setarch > /dev/null 2>&1; then
+    if setarch "$(uname -m)" -R true > /dev/null 2>&1; then
+      norand=(setarch "$(uname -m)" -R)
+    else
+      echo "testrun(reconverse): setarch -R is not permitted here; running with address space randomization on" >&2
+    fi
+  fi
   if [[ -n "$TESTRUN_LAUNCHER" ]]; then
     read -r -a launcher <<< "$TESTRUN_LAUNCHER"
-    cmd=("${launcher[@]}" -n "$procs" "$prog" +pe "$p" "${args[@]}")
+    cmd=("${launcher[@]}" -n "$procs" "${norand[@]}" "$prog" +pe "$p" "${args[@]}")
   elif [[ $procs -gt 1 ]]; then
     LCRUN="$CHARMBIN/../_deps/lci-src/lcrun"
     [[ -x "$LCRUN" ]] || LCRUN=lcrun
-    cmd=("$LCRUN" -n "$procs" "$prog" +pe "$p" "${args[@]}")
+    cmd=("${norand[@]}" "$LCRUN" -n "$procs" "$prog" +pe "$p" "${args[@]}")
   else
-    cmd=("$prog" +pe "$p" "${args[@]}")
+    cmd=("${norand[@]}" "$prog" +pe "$p" "${args[@]}")
   fi
   echo "testrun(reconverse): ${cmd[*]}"
   time "${cmd[@]}"

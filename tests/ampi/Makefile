@@ -4,6 +4,8 @@ DIRS = \
   megampi \
   ibarrier \
   cas \
+  onesided \
+  coll_extent \
   stacksize \
   migration \
   datatype \
@@ -11,6 +13,7 @@ DIRS = \
   collmatch \
   migrate_colls \
   scan \
+  waitall_ata \
   privatization \
   jacobi3d \
   exit \
@@ -19,7 +22,8 @@ DIRS = \
   groupfree \
   bsend \
   wildcard \
-#  intercomm_coll \ # causes hangs in SMP mode
+  commdup \
+  intercomm_coll \
 
 ifeq (1,$(CMK_CAN_LINK_FORTRAN))
   DIRS += fallreduce
@@ -61,8 +65,12 @@ ifneq ($(filter-out 0 1,$(TESTRUN_PROCS)),)
 RECONVERSE_NA += \
   migration \
   megampi \
+  onesided \
   privatization \
   scan \
+  waitall_ata \
+  collmatch \
+  migrate_colls \
 
 endif
 endif

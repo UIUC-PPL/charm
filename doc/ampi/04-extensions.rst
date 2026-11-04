@@ -73,7 +73,10 @@ Once the AMPI runtime system decides which ranks to send to which
 processors, it calls the specified pack subroutine for that rank, with
 the rank-specific data that was registered with the system using
 ``AMPI_Register_pup``. If an AMPI application uses Isomalloc, then the
-system will define the Pack/Unpack routines for the user. This section
+system will define the Pack/Unpack routines for the user. The memory of
+an ``MPI_Win`` has to keep its address when the rank moves: leave a
+window's buffer to Isomalloc, which moves it at the same address, and do
+not free and reallocate it in a pack subroutine. This section
 explains how a subroutine should be written for performing explicit
 pack/unpack.
 
@@ -493,7 +496,10 @@ requested data arrives and runtime system takes care to allocate space,
 do appropriate unpacking based on data type, and return.
 ``AMPI_Iget_free`` lets the runtime system free the resources being used
 for this get request including the data buffer. Finally,
-``AMPI_Iget_data`` is the routine used to access the data.
+``AMPI_Iget_data`` is the routine used to access the data: it stores the
+address of the received data in ``*(void **)data``, so its first argument
+is the address of a pointer variable, not a buffer; the data stays valid
+until ``AMPI_Iget_free``.
 
 .. code-block:: c++
 

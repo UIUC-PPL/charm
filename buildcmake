@@ -627,10 +627,11 @@ fi
 
 if [[ $opt_ampi_only -eq 1 ]]; then
     # AMPI doesn't use Charm-MPI interop, msg priorities, non-FIFO queues, or CcdSCHEDLOOP.
-    # AMPI creates O(NumVirtualRanks) chare arrays by default (for MPI_COMM_SELF),
-    # so we bump up the number of bits reserved for the collection in the objid.
+    # AMPI's O(NumVirtualRanks) chare arrays (one per communicator) use the
+    # wide-collection id layout (set on the TCharm array they bind to), so the
+    # standard collection width needs no change here.
     opt_prio_type="char"
-    opt_extra_opts=('-DCMK_NO_INTEROP=1' '-DCMK_NO_MSG_PRIOS=1' '-DCMK_FIFO_QUEUE_ONLY=1' '-DCSD_NO_SCHEDLOOP=1' '-DCMK_OBJID_COLLECTION_BITS=29' "${opt_extra_opts[@]}")
+    opt_extra_opts=('-DCMK_NO_INTEROP=1' '-DCMK_NO_MSG_PRIOS=1' '-DCMK_FIFO_QUEUE_ONLY=1' '-DCSD_NO_SCHEDLOOP=1' "${opt_extra_opts[@]}")
 fi
 
 # Special handling for gni-crayxc, gni-crayxe, mpi-crayxc, mpi-crayxe, mpi-crayshasta, ofi-crayshasta
