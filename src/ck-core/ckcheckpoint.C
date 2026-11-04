@@ -19,6 +19,7 @@ using std::ostringstream;
 #include "charm++.h"
 #include "ck.h"
 #include "ckcheckpoint.h"
+#include "memory-isomalloc.h"
 #include "CkCheckpoint.decl.h"
 
 void noopit(const char*, ...)
@@ -747,6 +748,14 @@ static bool checkpointOne(const char* dirname, CkCallback& cb, bool requestStatu
 	}
 
 	if(CmiFclose(fRO)!=0)
+	{
+	  return false;
+	}
+
+	// The address range Isomalloc managed, so that a restart with another
+	// process count unpacks the checkpointed thread stacks and heaps at the
+	// same addresses (CmiIsomallocInitExtent reads it from +restart's directory).
+	if (!CmiIsomallocWriteRegion(getCheckpointFileName(dirname, "Isomalloc").c_str()))
 	{
 	  return false;
 	}

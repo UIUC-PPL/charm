@@ -51,6 +51,11 @@ void * CmiIsomallocContextPermanentAllocAlign(CmiIsomallocContext ctx, size_t al
 
 CmiIsomallocContext CmiIsomallocGetThreadContext(CthThread th);
 
+/* Record the managed address range in this file, for a restart from the
+   checkpoint that holds it (a disk checkpoint calls this on PE 0). Returns 0
+   when the file could not be written. */
+int CmiIsomallocWriteRegion(const char * path);
+
 void CmiIsomallocContextEnableRecording(CmiIsomallocContext ctx, int enable); /* internal use only */
 #ifdef __cplusplus
 void CmiIsomallocGetRecordedHeap(CmiIsomallocContext ctx,
