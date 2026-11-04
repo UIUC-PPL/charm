@@ -3253,6 +3253,10 @@ void campi_parent_attached(TCharm *tc, ampiParent *parent) noexcept;
 // Defined in campi.C: per-PE campi setup, called from ampiProcInit on every
 // PE before any rank starts (registers campi's Converse handlers)
 void campi_proc_init() noexcept;
+// Defined in campi.C: ampiParent::resumeAfterMigration and ResumeThread report
+// in campi mode that the load balancing step or checkpoint the rank waits on
+// in AMPI_Migrate is over, before they wake the rank.
+void campi_migrate_resumed(TCharm *tc) noexcept;
 
 // The actions an AMPI_Migrate info asks for, in the order of its keys
 // (shared by AMPI_Migrate and campi::Migrate). Values "false" add nothing;

@@ -1623,6 +1623,7 @@ void ampiParent::resumeAfterMigration() noexcept {
     CtvAccess(ampiPtr) = oldAMPI;
   }
 
+  if (tcharm_campi) campi_migrate_resumed(thread);
   thread->start();
 }
 
@@ -1726,6 +1727,7 @@ void ampiParent::Checkpoint(int len, const char* dname) noexcept {
 }
 
 void ampiParent::ResumeThread() noexcept {
+  if (tcharm_campi) campi_migrate_resumed(thread);
   thread->resume();
 }
 

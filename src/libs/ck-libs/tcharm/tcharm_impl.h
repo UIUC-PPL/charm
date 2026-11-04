@@ -82,10 +82,17 @@ extern bool tcharm_nothreads;
 // (before TCharm::procInit runs) when the application registers a coroutine
 // main; tcharm itself never refers to campi symbols.
 extern bool tcharm_campi;
+// start: TCharm::run builds the rank and schedules it. resume: TCharm::start
+// wakes it. pup: TCharm::pup packs the rank (its state object and restart
+// sites) or, unpacking, builds the rank anew. destroy: ~TCharm destroys it.
 typedef void (*TCharmCampiStartFn)(TCharm *tc);
 typedef void (*TCharmCampiResumeFn)(void *rank);
+typedef void (*TCharmCampiPupFn)(TCharm *tc, PUP::er &p);
+typedef void (*TCharmCampiDestroyFn)(void *rank);
 extern TCharmCampiStartFn tcharm_campi_start_fn;
 extern TCharmCampiResumeFn tcharm_campi_resume_fn;
+extern TCharmCampiPupFn tcharm_campi_pup_fn;
+extern TCharmCampiDestroyFn tcharm_campi_destroy_fn;
 
 //Thread-local variables:
 CtvExtern(TCharm *,_curTCharm);
@@ -114,7 +121,7 @@ class TCharm: public CBase_TCharm
 	TCharmInitMsg *initMsg; //Thread initialization data
 	double timeOffset; //Value to add to CkWallTimer to get my clock
 
-	void *campiRank; // campi mode: this element's rank record (campi.C); not pupped
+	void *campiRank; // campi mode: this element's rank record (campi.C); pupped by tcharm_campi_pup_fn
 
 	// Called from ResumeFromSync so TCharm users can do things before start()
 	CkCallback resumeAfterMigrationCallback;
