@@ -42,6 +42,16 @@ test: hello
 ifneq ($(filter-out 0 1,$(TESTRUN_PROCS)),)
 	TESTRUN_PROCS=1 $(call run, +p4 ./hello +vp8 +restart log )
 endif
+	# A checkpoint written after a load balancing step: RotateLB at step 1
+	# moves every rank to another PE, so rank 0 is not on PE 0 when the
+	# checkpoint is taken at step 2. The restart runs with and without the
+	# balancer.
+	-sync
+	rm -rf log
+	$(call run, +p4 ./hello +vp8 +balancer RotateLB )
+	-sync
+	$(call run, +p2 ./hello +vp8 +balancer RotateLB +restart log )
+	$(call run, +p4 ./hello +vp8 +restart log )
 
 clean:
 	rm -f *.o *.mod moduleinit.C hello *~ conv-host charmrun ampirun restart-adopted.log
