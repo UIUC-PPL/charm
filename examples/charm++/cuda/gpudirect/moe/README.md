@@ -798,7 +798,9 @@ inside the round's window when it is zero. Rule and plumbing:
 
 > Superseded in part (2026-11-03): the Megatron-Core rows below ran
 > sequential experts, and the FasterMoE serving rows paid a per-step
-> garbage collection; see "Measured 2026-11-03".
+> garbage collection; "Measured 2026-11-03" has the cause and "Measured
+> 2026-11-04" the eight-GPU baseline rows re-measured and the corrected
+> ratios.
 
 **Correction.** Every NCCL baseline of the 2026-11-01 section (the PyTorch
 reference, Megatron-Core, FastMoE, FasterMoE) ran without the `aws-ofi-nccl`
@@ -1012,6 +1014,97 @@ Megatron-Core ratios there are too large by the margins above. Megatron's
 DeepEP ("flex") dispatcher and its NVLink-multicast inference dispatcher
 cannot run on Delta's A40 nodes (no InfiniBand, no NVLink), so the
 all-to-all dispatcher stays the Megatron configuration.
+
+## Measured 2026-11-04: the eight-GPU matrix with the baselines as their authors run them
+
+Job 23497275, two A40 nodes (gpub026 and gpub032), the baseline arms of the
+2026-11-02 matrix re-run with the corrections of the 2026-11-03 section:
+Megatron-Core with the Transformer Engine grouped experts, fp32 master
+weights on every training arm of Megatron and FastMoE, and FasterMoE's
+serving step without the per-step collection. The example's rows are those
+of the 2026-11-02 section (its serving rows from the fixed binary); its
+block rows are re-measured with the fused attention in the next section.
+"Was" is the 2026-11-02 value.
+
+| MoE layer alone, 8 GPUs, ms/step               | SmartMoE train | SmartMoE serve | Mixtral train | Mixtral serve | OLMoE train | OLMoE serve |
+|------------------------------------------------|---------------:|---------------:|--------------:|--------------:|------------:|------------:|
+| example plain                                  |           81.1 |           35.3 |         161.8 |    112 to 130 |       243.1 |       249.9 |
+| example ShedLB                                 |           52.1 |           27.4 |         164.2 |         124.8 |       240.8 |             |
+| PyTorch reference, static (2026-11-02)         |                |                |         275.5 |         140.6 |       194.7 |       172.8 |
+| Megatron-Core, TE experts, masters             | 119.8 (was 126.6) | 74.4 (74.0) | 243.5 (263.0) | 131.9 (131.2) | 248.1 (261.0) | 169.6 (173.3) |
+| Megatron-Core, same, capacity factor 1.25      | 119.9 (127.0)  |                | 244.9 (262.9) |               | 248.1 (261.4) |           |
+| Megatron-Core, TE experts, no masters          |          117.3 |                |               |               |             |             |
+| FastMoE plain, masters                         | 192.5 (190.2)  |    84.1 (same) | 301.3 (300.6) |  129.9 (same) | 555.9 (556.5) | 268.2 (same) |
+| FasterMoE, masters; serving fixed              |   78.6 (76.4)  |    40.3 (97.5) | 258.2 (259.7) | 105.1 (161.9) | 350.7 (350.2) | 171.9 (230.9) |
+
+| transformer block, 8 GPUs, ms/step             | SmartMoE train | SmartMoE serve | Mixtral train | Mixtral serve |
+|------------------------------------------------|---------------:|---------------:|--------------:|--------------:|
+| example plain, unfused attention (2026-11-02)  |          102.7 |           36.4 |         183.7 |         148.1 |
+| example ShedLB, unfused attention (2026-11-02) |           68.9 |           28.8 |         184.0 |         118.6 |
+| Megatron-Core, TE experts, masters             | 129.3 (137.0)  |    77.3 (76.9) | 276.5 (296.1) | 141.8 (141.2) |
+| Megatron-Core, same, capacity factor 1.25      | 128.9 (137.3)  |                | 276.2 (294.7) |               |
+| FastMoE plain, masters                         | 202.5 (201.4)  |    87.3 (same) | 335.8 (333.9) |  140.0 (same) |
+| FasterMoE, masters; serving fixed              |   89.3 (86.5)  |   43.7 (100.0) | 288.9 (287.1) | 117.1 (172.3) |
+
+What the numbers say, eight GPUs, MoE layer alone. Master weights cost the
+baselines 1 to 3 ms a step (Megatron TE on SmartMoE: 117.3 without, 119.8
+with), and the Transformer Engine experts save 7 to 20 ms in training on
+every routing and nothing in serving, where the step is the exchange. The
+corrected ratios: on SmartMoE's routing the example with ShedLB trains 1.5x
+faster than FasterMoE and 2.3x faster than Megatron-Core, and serves 1.5x
+faster than FasterMoE (3.6x was published; FasterMoE's shadow of the hottest
+expert does in serving what ShedLB's copy does, and the harness had hidden it)
+and 2.7x faster than Megatron-Core; the plain example serves 1.1x faster than
+FasterMoE. On Mixtral's routing the plain example trains 1.5x faster than
+Megatron-Core and 1.6x faster than FasterMoE, and in serving FasterMoE is now
+the fastest system (105.1 against the example's 112 to 130 and 124.8 with a
+copy, Megatron-Core's 131.9 and FastMoE's 129.9): its group-wise exchange
+overlaps the 128 MB slabs that bound every other step there. On OLMoE's
+routing the PyTorch reference (194.7 / 172.8), Megatron-Core (248.1 / 169.6)
+and FasterMoE (serving 171.9) are ahead of the example (243.1 / 249.9): one
+all-to-all beats one message per expert when the step is the top-8 exchange.
+Capacity factor 1.25 changes nothing on any routing.
+
+**The block rows with the fused attention** (job 23499744, gpub002 and
+gpub026, the same twelve arms with the fused build `moe` and the unfused
+build `moe.attn_unfused`). The example's attention sublayer under `-B` now
+runs on cuDNN's fused attention graphs (the Makefile's `MOE_CUDNN_ATTN`,
+default on where cuDNN 9 and its frontend are found; the fp32 path and the
+HIP build stay unfused): the scores never touch memory, as in the flash
+kernel PyTorch's attention dispatches to for the references. Every run
+checks the fused path at startup against the unfused kernels, one training
+step on the same weights and a random input, and aborts past a relative L2
+error of 5e-2; measured here it is 3.6e-3 on the output and 1.1e-3 to 2.1e-3
+on the two weight gradients, bf16 rounding, at both head sizes (64 and 128).
+The "Block:" header line names the kernels. The fused and unfused builds'
+checksums differ by that rounding carried through the run (the fifth digit
+of `out2` after forty training steps), and within each build the plain and
+ShedLB arms agree to the last digit, in training and in serving, on both
+routings.
+
+| transformer block, 8 GPUs, ms/step               | SmartMoE train | SmartMoE serve | Mixtral train | Mixtral serve |
+|--------------------------------------------------|---------------:|---------------:|--------------:|--------------:|
+| example plain, fused attention                   |           89.3 |           32.6 |         170.1 |         118.3 |
+| example ShedLB, fused attention                  |           57.8 |           27.0 |         172.6 |         136.7 |
+| example plain, unfused attention, same nodes     |          102.9 |           36.2 |         183.7 |         153.6 |
+| Megatron-Core, TE experts, masters (above)       |          129.3 |           77.3 |         276.5 |         141.8 |
+| FastMoE plain, masters (above)                   |          202.5 |           87.3 |         335.8 |         140.0 |
+| FasterMoE, masters, serving fixed (above)        |           89.3 |           43.7 |         288.9 |         117.1 |
+
+The attention sublayer's increment over the MoE-only step in training is
+now 8.2 ms on SmartMoE's routing (21.6 unfused; Megatron-Core pays 9.5 and
+FasterMoE 10.7) and 8.3 on Mixtral's (21.9 unfused; the references pay 31
+to 33: the example's attention runs on a lane while the dispatcher waits on
+the exchange, so on an exchange-bound step it fills idle GPU time rather
+than adding to the step). In Mixtral serving the unfused attention had cost
+35 ms on top of the exchange (153.6 against 118.3 on the same nodes): its
+score traffic competed with the slab exchange for memory bandwidth. The block
+ratios: on SmartMoE's routing the example with ShedLB trains 1.5x faster than
+FasterMoE and 2.2x faster than Megatron-Core (the plain example is level
+with FasterMoE), and serves 1.6x faster than FasterMoE and 2.9x faster than
+Megatron-Core; on Mixtral's routing the plain example trains 1.6x faster
+than Megatron-Core and 1.7x faster than FasterMoE, and serves level with
+FasterMoE (118.3 against 117.1), 1.2x faster than Megatron-Core and FastMoE.
 
 ## Measured (2026-09-06, one A40 node, four PEs, `+gpupool`)
 

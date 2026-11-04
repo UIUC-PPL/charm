@@ -21,6 +21,17 @@ NVCC = nvcc
 NVCC_FLAGS = -c -std=c++17 -use_fast_math -gencode arch=compute_86,code=sm_86 $(OPTS) -I$(MATHLIBS)/include
 # ShedLB is this application's balancer (README: why); +balancer on the command line still overrides it.
 LD_LIBS = -balancer ShedLB -module EveryLB -module DiffusionLB -L$(MATHLIBS)/lib64 -lcublas -Wl,-rpath,$(MATHLIBS)/lib64
+# The block variant's attention (-w) under -B runs on cuDNN's fused attention graphs: cuDNN 9 and its header-only
+# frontend from the pytorch-2.12.1-cu130 environment (the same kernels PyTorch's attention dispatches to). Found
+# there by default; MOE_CUDNN_ATTN=0 on the make line builds the unfused kernels (the A/B of README "Measured
+# 2026-11-04"). The fp32 path and the HIP build are always unfused.
+CUDNN_DIR ?= /sw/rh9.4/user/python/conda-env/pytorch-2.12.1-cu130/lib/python3.12/site-packages/nvidia/cudnn
+CUDNN_FE ?= /sw/rh9.4/user/python/conda-env/pytorch-2.12.1-cu130/lib/python3.12/site-packages/include
+MOE_CUDNN_ATTN ?= $(if $(wildcard $(CUDNN_FE)/cudnn_frontend.h),1,0)
+ifeq ($(MOE_CUDNN_ATTN),1)
+NVCC_FLAGS += -DMOE_CUDNN_ATTN=1 -I$(CUDNN_DIR)/include -I$(CUDNN_FE)
+LD_LIBS += -L$(CUDNN_DIR)/lib -l:libcudnn.so.9 -Wl,-rpath,$(CUDNN_DIR)/lib -L$(CUDA_DIR)/lib64 -lnvrtc -Wl,-rpath,$(CUDA_DIR)/lib64   # the wheel ships no libcudnn.so link; the frontend references NVRTC
+endif
 endif
 
 TARGET = moe

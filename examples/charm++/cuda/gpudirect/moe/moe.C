@@ -480,9 +480,9 @@ public:
           "reshuffled every %d steps, seed %ld\n", zipf_z, p_max * n_experts,
           drift_period, moe_seed);
     if (use_attn)
-      CkPrintf("Block: an attention sublayer (q/k/v/o %d x %d, 32 heads, causal, sequences of 1024) runs on each "
+      CkPrintf("Block: an attention sublayer (q/k/v/o %d x %d, 32 heads, causal, sequences of 1024, %s) runs on each "
           "dispatcher's tokens before the MoE, trained on its own loss%s\n", d_model, d_model,
-          serve_only ? " (forward only)" : "");
+          moeAttnKernels(use_bf16 != 0), serve_only ? " (forward only)" : "");
     if (rep_init_expert >= 0)
       CkPrintf("Expert %d starts as two copies (-X): copy 1 on PE %d serves the odd dispatchers\n",
           rep_init_expert, CkNodeFirst(1 % CkNumNodes()));

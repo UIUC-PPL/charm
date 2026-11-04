@@ -3,6 +3,23 @@
 #include "../hapi_blas.h"
 #include <cstdio>
 #include <cstdlib>
+// The block variant's attention under -B runs on cuDNN's fused attention graphs (the flash-attention
+// kernels PyTorch's scaled_dot_product_attention dispatches to): the scores never touch memory.
+// MOE_CUDNN_ATTN=0 (the Makefile) builds the unfused kernels instead; the fp32 path is always unfused.
+#ifndef MOE_CUDNN_ATTN
+#define MOE_CUDNN_ATTN 0
+#endif
+#if MOE_CUDNN_ATTN
+#include <cudnn.h>
+#include <cudnn_frontend.h>
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+namespace fe = cudnn_frontend;
+#endif
 
 #define BLOCK_1D 256
 
@@ -507,22 +524,163 @@ static void* attnAlloc(size_t bytes) {
   return p;
 }
 
-void moeAttnInit(MoeGpu* g, MoeAttn* a, int Ttok, int d, int H, int S, uint64_t seed) {
+#if MOE_CUDNN_ATTN
+// ---- cuDNN fused attention: one graph for the training forward (with the softmax statistics), one for
+// the inference forward, one for the backward. Q, K and V are strided views of the packed [T x 3d] qkv
+// array (token t = b S + s, column h dh + i, at column offsets 0, d, 2d), O and dO of [T x d] arrays,
+// and dQ, dK, dV are written straight into the packed [T x 3d] dqkv: no head copies on either side.
+struct AttnFused {
+  cudnnHandle_t handle = nullptr;
+  std::shared_ptr<fe::graph::Graph> fwd, inf, bwd;
+  std::shared_ptr<fe::graph::Tensor_attributes> fQ, fK, fV, fO, fS;
+  std::shared_ptr<fe::graph::Tensor_attributes> iQ, iK, iV, iO;
+  std::shared_ptr<fe::graph::Tensor_attributes> bQ, bK, bV, bO, bdO, bS, bdQ, bdK, bdV;
+  void* ws = nullptr;
+  int64_t ws_bytes = 0;
+};
+#define feCheck(call) do { auto _e = (call); if (!_e.is_good()) { \
+    fprintf(stderr, "cuDNN frontend: %s (%s:%d)\n", _e.get_message().c_str(), __FILE__, __LINE__); abort(); } } while (0)
+#define cudnnCheck(call) do { cudnnStatus_t _s = (call); if (_s != CUDNN_STATUS_SUCCESS) { \
+    fprintf(stderr, "cuDNN: %s (%s:%d)\n", cudnnGetErrorString(_s), __FILE__, __LINE__); abort(); } } while (0)
+
+// A [B, H, S, dh] bf16 view of a row-major [T x w] array (row t = b S + s, column h dh + i).
+static std::shared_ptr<fe::graph::Tensor_attributes> attnView(std::shared_ptr<fe::graph::Graph>& g,
+    const char* name, int64_t b, int64_t h, int64_t s, int64_t dh, int64_t w) {
+  return g->tensor(fe::graph::Tensor_attributes().set_name(name).set_dim({b, h, s, dh})
+      .set_stride({s * w, dh, w, 1}).set_data_type(fe::DataType_t::BFLOAT16));
+}
+static std::shared_ptr<fe::graph::Graph> attnGraph() {
+  auto g = std::make_shared<fe::graph::Graph>();
+  g->set_io_data_type(fe::DataType_t::BFLOAT16).set_intermediate_data_type(fe::DataType_t::FLOAT)
+      .set_compute_data_type(fe::DataType_t::FLOAT);
+  return g;
+}
+static int64_t attnBuild(std::shared_ptr<fe::graph::Graph>& g, cudnnHandle_t h) {
+  feCheck(g->validate());
+  feCheck(g->build_operation_graph(h));
+  feCheck(g->create_execution_plans({fe::HeurMode_t::A}));
+  feCheck(g->check_support(h));
+  feCheck(g->build_plans(h));
+  int64_t ws = 0;
+  feCheck(g->get_workspace_size(ws));
+  return ws;
+}
+static void attnFusedInit(MoeGpu* g, MoeAttn* a) {
+  AttnFused* f = new AttnFused;
+  cudnnCheck(cudnnCreate(&f->handle));
+  cudnnCheck(cudnnSetStream(f->handle, g->stream));
+  const int64_t b = a->nseq, h = a->H, s = a->S, d = a->d, dh = d / h;
+  const float scale = 1.0f / sqrtf((float)dh);
+  // training forward
+  f->fwd = attnGraph();
+  f->fQ = attnView(f->fwd, "Q", b, h, s, dh, 3 * d);
+  f->fK = attnView(f->fwd, "K", b, h, s, dh, 3 * d);
+  f->fV = attnView(f->fwd, "V", b, h, s, dh, 3 * d);
+  auto fo = f->fwd->sdpa(f->fQ, f->fK, f->fV, fe::graph::SDPA_attributes().set_name("attn")
+      .set_generate_stats(true).set_causal_mask(true).set_attn_scale(scale));
+  f->fO = fo[0]; f->fS = fo[1];
+  f->fO->set_output(true).set_dim({b, h, s, dh}).set_stride({s * d, dh, d, 1});
+  f->fS->set_output(true).set_data_type(fe::DataType_t::FLOAT).set_dim({b, h, s, 1}).set_stride({h * s, s, 1, 1});
+  int64_t ws = attnBuild(f->fwd, f->handle);
+  // inference forward: no statistics
+  f->inf = attnGraph();
+  f->iQ = attnView(f->inf, "Q", b, h, s, dh, 3 * d);
+  f->iK = attnView(f->inf, "K", b, h, s, dh, 3 * d);
+  f->iV = attnView(f->inf, "V", b, h, s, dh, 3 * d);
+  auto io = f->inf->sdpa(f->iQ, f->iK, f->iV, fe::graph::SDPA_attributes().set_name("attn_inf")
+      .set_generate_stats(false).set_causal_mask(true).set_attn_scale(scale));
+  f->iO = io[0];
+  f->iO->set_output(true).set_dim({b, h, s, dh}).set_stride({s * d, dh, d, 1});
+  ws = std::max(ws, attnBuild(f->inf, f->handle));
+  // backward: dQ, dK, dV from Q, K, V, O, dO and the statistics
+  f->bwd = attnGraph();
+  f->bQ = attnView(f->bwd, "Q", b, h, s, dh, 3 * d);
+  f->bK = attnView(f->bwd, "K", b, h, s, dh, 3 * d);
+  f->bV = attnView(f->bwd, "V", b, h, s, dh, 3 * d);
+  f->bO = attnView(f->bwd, "O", b, h, s, dh, d);
+  f->bdO = attnView(f->bwd, "dO", b, h, s, dh, d);
+  f->bS = f->bwd->tensor(fe::graph::Tensor_attributes().set_name("stats").set_dim({b, h, s, 1})
+      .set_stride({h * s, s, 1, 1}).set_data_type(fe::DataType_t::FLOAT));
+  auto bo = f->bwd->sdpa_backward(f->bQ, f->bK, f->bV, f->bO, f->bdO, f->bS,
+      fe::graph::SDPA_backward_attributes().set_name("attn_bwd").set_causal_mask(true).set_attn_scale(scale));
+  f->bdQ = bo[0]; f->bdK = bo[1]; f->bdV = bo[2];
+  f->bdQ->set_output(true).set_dim({b, h, s, dh}).set_stride({s * 3 * d, dh, 3 * d, 1});
+  f->bdK->set_output(true).set_dim({b, h, s, dh}).set_stride({s * 3 * d, dh, 3 * d, 1});
+  f->bdV->set_output(true).set_dim({b, h, s, dh}).set_stride({s * 3 * d, dh, 3 * d, 1});
+  ws = std::max(ws, attnBuild(f->bwd, f->handle));
+  f->ws_bytes = ws;
+  f->ws = ws > 0 ? attnAlloc((size_t)ws) : nullptr;
+  a->fused = f;
+}
+// o = Attn(qkv) (and the statistics when training).
+static void attnFusedForward(MoeAttn* a, bool train) {
+  AttnFused* f = (AttnFused*)a->fused;
+  moe_bf16* qkv = (moe_bf16*)a->qkv;
+  const int d = a->d;
+  if (train) {
+    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> pack = {
+        {f->fQ, qkv}, {f->fK, qkv + d}, {f->fV, qkv + 2 * d}, {f->fO, a->o}, {f->fS, a->stats}};
+    feCheck(f->fwd->execute(f->handle, pack, f->ws));
+  } else {
+    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> pack = {
+        {f->iQ, qkv}, {f->iK, qkv + d}, {f->iV, qkv + 2 * d}, {f->iO, a->o}};
+    feCheck(f->inf->execute(f->handle, pack, f->ws));
+  }
+}
+// dqkv = the gradients over q, k, v from dO (in a->doh), with o and the statistics of the forward.
+static void attnFusedBackward(MoeAttn* a) {
+  AttnFused* f = (AttnFused*)a->fused;
+  moe_bf16* qkv = (moe_bf16*)a->qkv;
+  moe_bf16* dqkv = (moe_bf16*)a->dqkv;
+  const int d = a->d;
+  std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> pack = {
+      {f->bQ, qkv}, {f->bK, qkv + d}, {f->bV, qkv + 2 * d}, {f->bO, a->o}, {f->bdO, a->doh}, {f->bS, a->stats},
+      {f->bdQ, dqkv}, {f->bdK, dqkv + d}, {f->bdV, dqkv + 2 * d}};
+  feCheck(f->bwd->execute(f->handle, pack, f->ws));
+}
+#endif
+
+const char* moeAttnKernels(bool bf16) {
+#if MOE_CUDNN_ATTN
+  return bf16 ? "cuDNN fused attention (the flash kernels)" : "unfused cuBLAS and softmax kernels (fp32)";
+#else
+  (void)bf16;
+  return "unfused cuBLAS and softmax kernels";
+#endif
+}
+
+template <class T>
+static void attnStepT(MoeGpu* g, MoeAttn* a, const void* x, bool train, float lr);
+
+// want_fused: the cuDNN path when this build has it and the operands are bf16; else the unfused kernels.
+static void attnInit(MoeGpu* g, MoeAttn* a, int Ttok, int d, int H, int S, uint64_t seed, bool want_fused) {
   a->T = Ttok; a->d = d; a->H = H; a->S = S; a->nseq = Ttok / S; a->bf16 = g->bf16;
   const size_t esz = g->bf16 ? sizeof(moe_bf16) : sizeof(float);
-  const size_t B = (size_t)a->nseq * H, dh = d / H;
+  const size_t B = (size_t)a->nseq * H;
+  a->fused = nullptr; a->stats = nullptr;
+  a->qh = a->kh = a->vh = a->oh = a->dqh = a->dkh = a->dvh = a->p = nullptr; a->scores = nullptr;
   a->Wqkv = attnAlloc(esz * d * 3 * d);
   a->Wo = attnAlloc(esz * d * d);
   a->qkv = attnAlloc(esz * Ttok * 3 * d);
-  a->qh = attnAlloc(esz * Ttok * d); a->kh = attnAlloc(esz * Ttok * d); a->vh = attnAlloc(esz * Ttok * d);
-  a->oh = attnAlloc(esz * Ttok * d);
   a->o = attnAlloc(esz * Ttok * d);
   a->h = attnAlloc(esz * Ttok * d);
-  a->scores = (float*)attnAlloc(sizeof(float) * B * S * S);
-  a->p = attnAlloc(esz * B * S * S);
   a->doh = attnAlloc(esz * Ttok * d);
-  a->dqh = attnAlloc(esz * Ttok * d); a->dkh = attnAlloc(esz * Ttok * d); a->dvh = attnAlloc(esz * Ttok * d);
   a->dqkv = attnAlloc(esz * Ttok * 3 * d);
+#if MOE_CUDNN_ATTN
+  if (g->bf16 && want_fused) {
+    a->stats = (float*)attnAlloc(sizeof(float) * B * S);
+    attnFusedInit(g, a);
+  }
+#else
+  (void)want_fused;
+#endif
+  if (!a->fused) {
+    a->qh = attnAlloc(esz * Ttok * d); a->kh = attnAlloc(esz * Ttok * d); a->vh = attnAlloc(esz * Ttok * d);
+    a->oh = attnAlloc(esz * Ttok * d);
+    a->scores = (float*)attnAlloc(sizeof(float) * B * S * S);
+    a->p = attnAlloc(esz * B * S * S);
+    a->dqh = attnAlloc(esz * Ttok * d); a->dkh = attnAlloc(esz * Ttok * d); a->dvh = attnAlloc(esz * Ttok * d);
+  }
   a->gWqkv = (float*)attnAlloc(sizeof(float) * d * 3 * d);
   a->gWo = (float*)attnAlloc(sizeof(float) * d * d);
   // Weights uniform in +-1/sqrt(d), the PyTorch harness's bound.
@@ -538,6 +696,73 @@ void moeAttnInit(MoeGpu* g, MoeAttn* a, int Ttok, int d, int H, int S, uint64_t 
   hapiCheck(hapiFree(tmp));
 }
 
+static void attnFree(MoeAttn* a) {
+  void* bufs[] = {a->Wqkv, a->Wo, a->qkv, a->qh, a->kh, a->vh, a->oh, a->o, a->h, a->scores, a->p, a->doh,
+                  a->dqh, a->dkh, a->dvh, a->dqkv, a->gWqkv, a->gWo, a->stats};
+  for (void* b : bufs) if (b) hapiCheck(hapiFree(b));
+#if MOE_CUDNN_ATTN
+  if (a->fused) {
+    AttnFused* f = (AttnFused*)a->fused;
+    if (f->ws) hapiCheck(hapiFree(f->ws));
+    cudnnCheck(cudnnDestroy(f->handle));
+    delete f;
+  }
+#endif
+  memset(a, 0, sizeof(*a));
+}
+
+#if MOE_CUDNN_ATTN
+static double relL2(const float* x, const float* ref, size_t n) {
+  double dd = 0.0, rr = 0.0;
+  for (size_t i = 0; i < n; i++) { const double e = (double)x[i] - ref[i]; dd += e * e; rr += (double)ref[i] * ref[i]; }
+  return rr > 0.0 ? sqrt(dd / rr) : sqrt(dd);
+}
+static void toHost(std::vector<float>& out, const void* dev, size_t n, bool bf16) {
+  out.resize(n);
+  if (!bf16) { hapiCheck(hapiMemcpy(out.data(), dev, n * sizeof(float), hapiMemcpyDeviceToHost)); return; }
+  std::vector<moe_bf16> b(n);
+  hapiCheck(hapiMemcpy(b.data(), dev, n * sizeof(moe_bf16), hapiMemcpyDeviceToHost));
+  for (size_t i = 0; i < n; i++) { const unsigned u = ((unsigned)b[i]) << 16; memcpy(&out[i], &u, 4); }
+}
+// Once, at startup: the fused path's forward output and weight gradients against the unfused kernels'
+// on the same weights and a random input (one training step at learning rate 0). The two differ by
+// the fused kernel's internal rounding, a relative error around 1e-3 in bf16; past 5e-2 the run aborts.
+static void attnSelfCheck(MoeGpu* g, MoeAttn* a, uint64_t seed) {
+  MoeAttn u;
+  attnInit(g, &u, a->T, a->d, a->H, a->S, seed, false);
+  const size_t n = (size_t)a->T * a->d, nq = (size_t)a->d * 3 * a->d, no = (size_t)a->d * a->d;
+  float* xf = (float*)attnAlloc(sizeof(float) * n);
+  moe_bf16* xb = (moe_bf16*)attnAlloc(sizeof(moe_bf16) * n);
+  moeInitUniform(xf, n, seed + 7, sqrtf(3.0f), g->stream);
+  moeCastBf16(xf, xb, n, g->stream);
+  attnStepT<moe_bf16>(g, a, xb, true, 0.0f);
+  attnStepT<moe_bf16>(g, &u, xb, true, 0.0f);
+  hapiCheck(hapiStreamSynchronize(g->stream));
+  std::vector<float> ha, hu, qa, qu, oa, ou;
+  toHost(ha, a->h, n, true); toHost(hu, u.h, n, true);
+  toHost(qa, a->gWqkv, nq, false); toHost(qu, u.gWqkv, nq, false);
+  toHost(oa, a->gWo, no, false); toHost(ou, u.gWo, no, false);
+  const double eh = relL2(ha.data(), hu.data(), n), eq = relL2(qa.data(), qu.data(), nq), eo = relL2(oa.data(), ou.data(), no);
+  printf("Attention self-check, fused against unfused (one step, lr 0): relative L2 error h %.2e, dWqkv %.2e, dWo %.2e\n",
+      eh, eq, eo);
+  if (!(eh < 5e-2 && eq < 5e-2 && eo < 5e-2)) {
+    fprintf(stderr, "Attention self-check failed: the fused kernels disagree with the unfused ones\n");
+    abort();
+  }
+  hapiCheck(hapiFree(xf));
+  hapiCheck(hapiFree(xb));
+  attnFree(&u);
+}
+#endif
+
+void moeAttnInit(MoeGpu* g, MoeAttn* a, int Ttok, int d, int H, int S, uint64_t seed) {
+  attnInit(g, a, Ttok, d, H, S, seed, true);
+  printf("Attention: %s\n", moeAttnKernels(g->bf16));
+#if MOE_CUDNN_ATTN
+  if (a->fused) attnSelfCheck(g, a, seed);
+#endif
+}
+
 template <class T>
 static void attnStepT(MoeGpu* g, MoeAttn* a, const void* x, bool train, float lr) {
   hapiBlasHandle_t hb = (hapiBlasHandle_t)g->blas;
@@ -547,30 +772,46 @@ static void attnStepT(MoeGpu* g, MoeAttn* a, const void* x, bool train, float lr
   const size_t nTd = (size_t)Ttok * d;
   const long long sQ = (long long)S * dh, sP = (long long)S * S;
   const float scale = 1.0f / sqrtf((float)dh);
-  // forward
+  // forward: qkv = x Wqkv, o = Attn(q, k, v), h = o Wo
   gemm_rm_ex(hb, false, false, Ttok, 3 * d, d, 1.0f, x, d, a->Wqkv, 3 * d, ab, 0.0f, a->qkv, ab, 3 * d);
-  toHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->qkv, (T*)a->qh, Ttok, d, H, S, 0, 3 * d);
-  toHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->qkv, (T*)a->kh, Ttok, d, H, S, d, 3 * d);
-  toHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->qkv, (T*)a->vh, Ttok, d, H, S, 2 * d, 3 * d);
-  gemm_rm_batched_ex(hb, false, true, S, S, dh, 1.0f, a->qh, dh, sQ, a->kh, dh, sQ, ab, 0.0f, a->scores, HAPI_R_32F, S, sP, B);
-  causalSoftmaxKernel<T><<<(unsigned)((size_t)B * S), 256, 0, g->stream>>>(a->scores, (T*)a->p, S, scale);
-  gemm_rm_batched_ex(hb, false, false, S, dh, S, 1.0f, a->p, S, sP, a->vh, dh, sQ, ab, 0.0f, a->oh, ab, dh, sQ, B);
-  mergeHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->oh, (T*)a->o, Ttok, d, H, S, 0, d);
+#if MOE_CUDNN_ATTN
+  if (a->fused) {
+    attnFusedForward(a, train);
+  } else
+#endif
+  {
+    toHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->qkv, (T*)a->qh, Ttok, d, H, S, 0, 3 * d);
+    toHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->qkv, (T*)a->kh, Ttok, d, H, S, d, 3 * d);
+    toHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->qkv, (T*)a->vh, Ttok, d, H, S, 2 * d, 3 * d);
+    gemm_rm_batched_ex(hb, false, true, S, S, dh, 1.0f, a->qh, dh, sQ, a->kh, dh, sQ, ab, 0.0f, a->scores, HAPI_R_32F, S, sP, B);
+    causalSoftmaxKernel<T><<<(unsigned)((size_t)B * S), 256, 0, g->stream>>>(a->scores, (T*)a->p, S, scale);
+    gemm_rm_batched_ex(hb, false, false, S, dh, S, 1.0f, a->p, S, sP, a->vh, dh, sQ, ab, 0.0f, a->oh, ab, dh, sQ, B);
+    mergeHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->oh, (T*)a->o, Ttok, d, H, S, 0, d);
+  }
   gemm_rm_ex(hb, false, false, Ttok, d, d, 1.0f, a->o, d, a->Wo, d, ab, 0.0f, a->h, ab, d);
   hapiCheck(hapiPeekAtLastError());
   if (!train) return;
   // backward of 1/2 |h|^2: dh = h
   gemm_rm_ex(hb, true, false, d, d, Ttok, 1.0f, a->o, d, a->h, d, ab, 0.0f, a->gWo, HAPI_R_32F, d);
-  gemm_rm_ex(hb, false, true, Ttok, d, d, 1.0f, a->h, d, a->Wo, d, ab, 0.0f, a->o, ab, d);   // do, over o
-  toHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->o, (T*)a->doh, Ttok, d, H, S, 0, d);
-  gemm_rm_batched_ex(hb, true, false, S, dh, S, 1.0f, a->p, S, sP, a->doh, dh, sQ, ab, 0.0f, a->dvh, ab, dh, sQ, B);   // dV = P^T dO
-  gemm_rm_batched_ex(hb, false, true, S, S, dh, 1.0f, a->doh, dh, sQ, a->vh, dh, sQ, ab, 0.0f, a->scores, HAPI_R_32F, S, sP, B); // dP = dO V^T
-  softmaxBackwardKernel<T><<<(unsigned)((size_t)B * S), 256, 0, g->stream>>>(a->scores, (T*)a->p, S, scale);  // dz over p
-  gemm_rm_batched_ex(hb, false, false, S, dh, S, 1.0f, a->p, S, sP, a->kh, dh, sQ, ab, 0.0f, a->dqh, ab, dh, sQ, B);   // dQ = dZ K
-  gemm_rm_batched_ex(hb, true, false, S, dh, S, 1.0f, a->p, S, sP, a->qh, dh, sQ, ab, 0.0f, a->dkh, ab, dh, sQ, B);    // dK = dZ^T Q
-  mergeHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->dqh, (T*)a->dqkv, Ttok, d, H, S, 0, 3 * d);
-  mergeHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->dkh, (T*)a->dqkv, Ttok, d, H, S, d, 3 * d);
-  mergeHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->dvh, (T*)a->dqkv, Ttok, d, H, S, 2 * d, 3 * d);
+#if MOE_CUDNN_ATTN
+  if (a->fused) {
+    // do = h Wo^T into doh (o stays: the backward reads it), then dqkv straight from the graph
+    gemm_rm_ex(hb, false, true, Ttok, d, d, 1.0f, a->h, d, a->Wo, d, ab, 0.0f, a->doh, ab, d);
+    attnFusedBackward(a);
+  } else
+#endif
+  {
+    gemm_rm_ex(hb, false, true, Ttok, d, d, 1.0f, a->h, d, a->Wo, d, ab, 0.0f, a->o, ab, d);   // do, over o
+    toHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->o, (T*)a->doh, Ttok, d, H, S, 0, d);
+    gemm_rm_batched_ex(hb, true, false, S, dh, S, 1.0f, a->p, S, sP, a->doh, dh, sQ, ab, 0.0f, a->dvh, ab, dh, sQ, B);   // dV = P^T dO
+    gemm_rm_batched_ex(hb, false, true, S, S, dh, 1.0f, a->doh, dh, sQ, a->vh, dh, sQ, ab, 0.0f, a->scores, HAPI_R_32F, S, sP, B); // dP = dO V^T
+    softmaxBackwardKernel<T><<<(unsigned)((size_t)B * S), 256, 0, g->stream>>>(a->scores, (T*)a->p, S, scale);  // dz over p
+    gemm_rm_batched_ex(hb, false, false, S, dh, S, 1.0f, a->p, S, sP, a->kh, dh, sQ, ab, 0.0f, a->dqh, ab, dh, sQ, B);   // dQ = dZ K
+    gemm_rm_batched_ex(hb, true, false, S, dh, S, 1.0f, a->p, S, sP, a->qh, dh, sQ, ab, 0.0f, a->dkh, ab, dh, sQ, B);    // dK = dZ^T Q
+    mergeHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->dqh, (T*)a->dqkv, Ttok, d, H, S, 0, 3 * d);
+    mergeHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->dkh, (T*)a->dqkv, Ttok, d, H, S, d, 3 * d);
+    mergeHeadsKernel<T><<<nblocks(nTd), BLOCK_1D, 0, g->stream>>>((const T*)a->dvh, (T*)a->dqkv, Ttok, d, H, S, 2 * d, 3 * d);
+  }
   gemm_rm_ex(hb, true, false, d, 3 * d, Ttok, 1.0f, x, d, a->dqkv, 3 * d, ab, 0.0f, a->gWqkv, HAPI_R_32F, 3 * d);
   sgdPlainKernel<T><<<nblocks((size_t)d * 3 * d), BLOCK_1D, 0, g->stream>>>((T*)a->Wqkv, a->gWqkv, (size_t)d * 3 * d, lr);
   sgdPlainKernel<T><<<nblocks((size_t)d * d), BLOCK_1D, 0, g->stream>>>((T*)a->Wo, a->gWo, (size_t)d * d, lr);

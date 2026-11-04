@@ -107,9 +107,12 @@ struct MoeAttn {
   void *doh, *dqh, *dkh, *dvh;     // head-major gradients
   void* dqkv;                      // [T x 3d]
   float *gWqkv, *gWo;              // fp32 gradients
+  void* fused;                     // the cuDNN fused-attention state (moe.cu), NULL on the unfused path
+  float* stats;                    // fused path: the softmax statistics [nseq*H x S] the backward reads
 };
 void moeAttnInit(MoeGpu* g, MoeAttn* a, int Ttok, int d, int H, int S, uint64_t seed);
 void moeAttnStep(MoeGpu* g, MoeAttn* a, const void* x, bool train, float lr_over_n);   // h = Attn(x); train: SGD on its own loss
+const char* moeAttnKernels(bool bf16);   // which attention kernels this build runs under -B / fp32
 
 // moe.cu. Buffers typed void* are fp32 or bf16 as the `bf16` argument (or
 // g->bf16) says; the element size is 4 or 2 bytes.
