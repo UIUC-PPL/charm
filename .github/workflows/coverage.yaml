@@ -19,6 +19,8 @@ on:
   pull_request:
     paths:
       - 'coverage/**'
+      # The backlog's statuses are data, not tooling (coverage-tests.yaml).
+      - '!coverage/backlog.tsv'
       - '.github/workflows/coverage.yaml'
 
 concurrency:

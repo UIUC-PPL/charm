@@ -20,4 +20,12 @@
 #include "conv-mach-opt.h"
 #include "conv-autoconfig.h"
 
+/* conv-mach.h, which defines CMK_64BIT for the classic layers, is not on
+   this include chain, so the files that size address-space heuristics by it
+   (isomalloc.C) saw the 32-bit values on every reconverse build. */
+#include <stdint.h>
+#if !defined(CMK_64BIT) && UINTPTR_MAX > 0xffffffffu
+#define CMK_64BIT 1
+#endif
+
 #endif

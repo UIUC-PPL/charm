@@ -73,7 +73,10 @@ Once the AMPI runtime system decides which ranks to send to which
 processors, it calls the specified pack subroutine for that rank, with
 the rank-specific data that was registered with the system using
 ``AMPI_Register_pup``. If an AMPI application uses Isomalloc, then the
-system will define the Pack/Unpack routines for the user. This section
+system will define the Pack/Unpack routines for the user. The memory of
+an ``MPI_Win`` has to keep its address when the rank moves: leave a
+window's buffer to Isomalloc, which moves it at the same address, and do
+not free and reallocate it in a pack subroutine. This section
 explains how a subroutine should be written for performing explicit
 pack/unpack.
 
@@ -437,7 +440,14 @@ directory name.) This directory is created, and the entire state of the
 program is checkpointed to this directory. One can restart the program
 from the checkpointed state (using the same, more, or fewer physical
 processors than were checkpointed with) by specifying
-``"+restart directory_name"`` on the command-line.
+``"+restart directory_name"`` on the command-line. The ranks' stacks and
+heaps return to the addresses they had, so the restart needs address
+space layout randomization off: on Linux, run it under
+``setarch $(uname -m) -R``, placed in front of the program, which with
+``srun`` or ``mpirun`` means inside the launch (``srun ... setarch
+$(uname -m) -R ./pgm +restart dir``). The restart must also run under
+the same stack size limit (``ulimit -s``) as the checkpoint; see the
+restarting section of the Charm++ manual.
 
 Checkpointing in memory allows applications to transparently tolerate
 failures online. The checkpointing scheme used here is a double
@@ -486,7 +496,10 @@ requested data arrives and runtime system takes care to allocate space,
 do appropriate unpacking based on data type, and return.
 ``AMPI_Iget_free`` lets the runtime system free the resources being used
 for this get request including the data buffer. Finally,
-``AMPI_Iget_data`` is the routine used to access the data.
+``AMPI_Iget_data`` is the routine used to access the data: it stores the
+address of the received data in ``*(void **)data``, so its first argument
+is the address of a pointer variable, not a buffer; the data stays valid
+until ``AMPI_Iget_free``.
 
 .. code-block:: c++
 

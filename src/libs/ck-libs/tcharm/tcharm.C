@@ -755,6 +755,12 @@ static CProxy_TCharm TCHARM_Build_threads(TCharmInitMsg *msg)
   opts.setStaticInsertion(true);
   opts.setAnytimeMigration(false);
   opts.setSectionAutoDelegate(false);
+  // Arrays bound to this one (AMPI's ampiParent and one ampi array per
+  // communicator) share its location manager and take its id layout, so the
+  // wide-collection layout set here gives each of them a number from the
+  // 24-bit wide range instead of the 12-bit standard range. The bounds the
+  // wide layout requires are the element count, set by the constructor above.
+  opts.setWideCollection();
   return CProxy_TCharm::ckNew(msg,opts);
 }
 

@@ -101,16 +101,18 @@ jobs:
           set -e
           B=$PWD/reconverse-linux-x86_64
           for d in $TEST_DIRS; do make -C $d CHARMC=$B/bin/charmc; done
+      # These steps ran with address space randomization on before testrun
+      # turned it off on Linux, and nothing here moves a thread between
+      # processes; keep them that way, so that one job still exercises the
+      # layout every program started by hand or under srun gets.
       - name: test (single process)
         run: |
           set -e
-          for d in $TEST_DIRS; do make -C $d test; done
+          for d in $TEST_DIRS; do TESTRUN_VA_RANDOMIZATION=1 make -C $d test; done
       - name: test (2 processes, lcrun)
         run: |
           set -e
-          # lcrun's file PMI backend shares one fixed rendezvous dir per host; a run that dies mid-bootstrap poisons it and the next launch aborts or hangs (charm #3987, uiuc-hpc/lci#202).
-          rm -rf "$HOME/.tmp/lct_pmi_file-"*
-          for d in $TEST_DIRS; do TESTRUN_PROCS=2 timeout 900 make -C $d test; done
+          for d in $TEST_DIRS; do TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 900 make -C $d test; done
 
   # ARM64 Linux (Grace-class systems). Replaces the coverage CircleCI's
   # arm.medium jobs provided on the classic line; -Werror=vla carried over
@@ -139,8 +141,6 @@ jobs:
       - name: test (2 processes, lcrun)
         run: |
           set -e
-          # lcrun's file PMI backend shares one fixed rendezvous dir per host; a run that dies mid-bootstrap poisons it and the next launch aborts or hangs (charm #3987, uiuc-hpc/lci#202).
-          rm -rf "$HOME/.tmp/lct_pmi_file-"*
           for d in $TEST_DIRS; do TESTRUN_PROCS=2 timeout 900 make -C $d test; done
 
   reconverse-darwin-arm64:
@@ -167,8 +167,6 @@ jobs:
       - name: test (2 processes, lcrun)
         run: |
           set -e
-          # lcrun's file PMI backend shares one fixed rendezvous dir per host; a run that dies mid-bootstrap poisons it and the next launch aborts or hangs (charm #3987, uiuc-hpc/lci#202).
-          rm -rf "$HOME/.tmp/lct_pmi_file-"*
           for d in $TEST_DIRS; do TESTRUN_PROCS=2 gtimeout 900 make -C $d test; done
 
   # Windows (NAMD's desktop users). MSVC driven from Cygwin through unix2nt_cc,
@@ -286,8 +284,6 @@ jobs:
       - name: anytime migration stress (2 processes)
         run: |
           set -e
-          # lcrun's file PMI backend shares one fixed rendezvous dir per host; a run that dies mid-bootstrap poisons it and the next launch aborts or hangs (charm #3987, uiuc-hpc/lci#202).
-          rm -rf "$HOME/.tmp/lct_pmi_file-"*
           cd tests/charm++/anytime_bcastred
           B=$PWD/../../../reconverse-linux-x86_64
           for S in 4 5; do
@@ -297,8 +293,6 @@ jobs:
       - name: qd + megatest multi-process
         run: |
           set -e
-          # lcrun's file PMI backend shares one fixed rendezvous dir per host; a run that dies mid-bootstrap poisons it and the next launch aborts or hangs (charm #3987, uiuc-hpc/lci#202).
-          rm -rf "$HOME/.tmp/lct_pmi_file-"*
           B=$PWD/reconverse-linux-x86_64
           cd tests/charm++/qd
           timeout 900 $B/_deps/lci-src/lcrun -n 2 ./qdbench +pe 4
@@ -343,10 +337,12 @@ jobs:
   # AMPI tier: TCharm and AMPI on reconverse, with migratable threads and
   # isomalloc. tests/ampi is driven by its own Makefile, which on reconverse
   # leaves out chkpt. A rank migrating between processes resumes on a stack
-  # holding return addresses into libreconverse, so the multi-process run
-  # disables ASLR (setarch -R; the launcher's children inherit it).
+  # holding return addresses into libreconverse, so testrun runs every test
+  # under setarch -R on Linux (randomization off; lcrun's children inherit
+  # it). The ampirun step covers its --procs launch through lcrun.
   # tests/campi runs AMPI ranks as C++20 coroutines from the same libampi.
-  # migratable_threads packs and unpacks threads in one process. megatest is
+  # migratable_threads packs and unpacks threads in one process, so it keeps
+  # randomization on. megatest is
   # run from the same build to show the AMPI build changes nothing for a
   # program that does not link TCharm.
   ampi-linux-x86_64:
@@ -364,11 +360,12 @@ jobs:
       - name: tests/ampi (single process)
         run: make -C tests/ampi test
       - name: tests/ampi (2 processes, lcrun)
+        run: TESTRUN_PROCS=2 timeout 1800 make -C tests/ampi test
+      - name: ampirun --procs (2 processes, lcrun)
         run: |
           set -e
-          # lcrun's file PMI backend shares one fixed rendezvous dir per host; a run that dies mid-bootstrap poisons it and the next launch aborts or hangs (charm #3987, uiuc-hpc/lci#202).
-          rm -rf "$HOME/.tmp/lct_pmi_file-"*
-          TESTRUN_PROCS=2 timeout 1800 setarch "$(uname -m)" -R make -C tests/ampi test
+          cd tests/ampi/megampi
+          timeout 600 ../../../reconverse-linux-x86_64/bin/ampirun -np 4 --procs 2 -vr ./megampi
       - name: tests/campi (single process)
         run: make -C tests/campi test
       - name: migratable_threads
@@ -376,7 +373,7 @@ jobs:
           set -e
           B=$PWD/reconverse-linux-x86_64
           make -C tests/charm++/migratable_threads CHARMC=$B/bin/charmc
-          make -C tests/charm++/migratable_threads test
+          TESTRUN_VA_RANDOMIZATION=1 make -C tests/charm++/migratable_threads test
       - name: megatest from the AMPI build
         run: |
           set -e
