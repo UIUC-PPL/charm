@@ -1,9 +1,10 @@
 -include ../../common.mk
 CHARMC=../../../bin/charmc $(OPTS)
 MPICXX ?= mpicxx
-# The launcher must start one process per MPI rank and give Charm++ the same
-# process numbering as MPI, e.g. LAUNCH="srun --mpi=pmi2 -n 2".
-LAUNCH ?= mpirun -np 2
+# LAUNCH must be the launcher the MPI library requires, starting NP
+# processes, e.g. LAUNCH="srun --mpi=cray_shasta -n 2" for Cray MPICH.
+NP ?= 2
+LAUNCH ?= mpirun -np $(NP)
 PES ?= 2
 
 all: mpi_interop
@@ -24,7 +25,7 @@ mpi_interop: mpi_interop.o libmodulephaselib.a
 	$(CHARMC) -ld++ $(MPICXX) -mpi -nomain-module -o $@ mpi_interop.o -L. -module phaselib
 
 test: all
-	$(LAUNCH) ./mpi_interop +pe $(PES)
+	$(LAUNCH) ./mpi_interop $(NP) +pe $(PES)
 
 clean:
 	rm -f mpi_interop *.o *.a *.decl.h *.def.h charmrun charm_all_libs.sh

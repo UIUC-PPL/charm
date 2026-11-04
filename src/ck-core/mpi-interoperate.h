@@ -14,6 +14,7 @@
 #define CMK_INTEROP_HAVE_MPI_H 1
 #include <mpi.h>
 #include <stdio.h>
+#include <stdlib.h>
 #endif
 
 #ifdef __cplusplus
@@ -58,6 +59,26 @@ static inline void CharmLibInit(MPI_Comm userComm, int argc, char **argv) {
             "is not supported.\n", rank);
     fflush(stderr);
     MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  // A launcher that does not match the MPI library makes every process a
+  // 1-rank MPI job; the launcher's own task count still says how many it
+  // started. Checked before Charm++ starts, so the warning comes first.
+  if (size == 1 && rank == 0) {
+    const char *vars[] = {"OMPI_COMM_WORLD_SIZE", "PMI_SIZE",
+                          "SLURM_STEP_NUM_TASKS"};
+    for (const char *var : vars) {
+      const char *val = getenv(var);
+      if (val == NULL) continue;
+      if (atoi(val) > 1) {
+        fprintf(stderr,
+                "Warning: CharmLibInit: MPI_COMM_WORLD has 1 rank, but %s=%s: "
+                "the launcher may have started %s processes, each its own MPI "
+                "job. Launch with the launcher your MPI requires (for Cray "
+                "MPICH under Slurm, srun --mpi=cray_shasta).\n", var, val, val);
+        fflush(stderr);
+      }
+      break;
+    }
   }
   // Bootstrap LCI over LCT's tcp backend, rendezvous at rank 0, so the
   // launcher's PMI is left to MPI.

@@ -1,8 +1,10 @@
 // MPI program that uses Charm++ as a library: MPI phases alternate with
 // Charm++ phases, then CharmLibExit returns and MPI continues until
-// MPI_Finalize.
+// MPI_Finalize. Usage: mpi_interop <processes started by the launcher>
+// [Charm++ args]; the test fails if MPI or Charm++ sees a different count.
 #include <mpi.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "mpi-interoperate.h"
 #include "phaselib.h"
 
@@ -20,7 +22,26 @@ int main(int argc, char **argv) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
 
+  int expected = argc > 1 ? atoi(argv[1]) : 0;
+  if (expected <= 0) {
+    fprintf(stderr, "usage: %s <number of processes> [Charm++ args]\n",
+            argv[0]);
+    MPI_Abort(MPI_COMM_WORLD, 2);
+  }
+  if (size != expected) {
+    fprintf(stderr,
+            "FAIL: MPI_COMM_WORLD has %d ranks, expected %d: the launcher "
+            "does not match the MPI library, so each process may be its own "
+            "MPI job\n", size, expected);
+    fflush(stderr);
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  // Drop the count so Charm++ sees only its own arguments.
+  for (int i = 1; i < argc; i++) argv[i] = argv[i + 1];
+  argc--;
+
   CharmLibInit(MPI_COMM_WORLD, argc, argv);
+  check(CkNumNodes() == size, rank, "Charm++ processes", CkNumNodes(), size);
   if (rank == 0)
     printf("CharmLibInit done: %d MPI ranks, %d Charm++ processes, %d PEs\n",
            size, CmiNumNodes(), CkNumPes());

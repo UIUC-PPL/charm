@@ -9846,7 +9846,7 @@ with a pure MPI program:
           CkPrintf("HelloStart - Starting lib by calling constructor of MainHello\n");
           CProxy_MainHello mainhello = CProxy_MainHello::ckNew(elems);
         }
-        StartCharmScheduler(-1);
+        StartCharmScheduler();
       }
 
    This function creates a new chare (``mainHello``) defined in the *hello*
@@ -9873,6 +9873,12 @@ times. In the end, one should call ``CharmLibExit`` to free resources
 reserved by Charm++. ``CharmLibExit`` returns; the program can continue to
 use MPI afterwards and must call ``MPI_Finalize`` itself.
 
+Charm++ makes no progress while control is in MPI. Messages still queued
+when ``CkExit`` returns control to MPI stay queued and are delivered when
+Charm++ is next entered (``StartCharmScheduler`` in the next interface
+function call). For a clean boundary between phases, end a Charm++ phase
+with ``CkStartQD`` and call ``CkExit`` from the quiescence callback.
+
 Compilation and Execution
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -9889,6 +9895,12 @@ pass ``-mpi`` as an argument because of which *charmc* performs the
 linking for interoperation. The charm libraries, which one wants to be
 linked, should be passed using ``-module`` option. Refer to
 ``examples/charm++/mpi-coexist/Makefile`` to view a working example.
+
+Launch the program with the launcher your MPI library requires (for
+example, ``srun --mpi=cray_shasta`` for Cray MPICH under Slurm). With a
+launcher that does not match the MPI library, each process becomes its
+own one-rank MPI job; ``CharmLibInit`` prints a warning when it detects
+this.
 
 User Driven Mode
 ~~~~~~~~~~~~~~~~
