@@ -16,5 +16,9 @@ test: threaded_redn
 testp: threaded_redn
 	$(call run, ./threaded_redn +p$(P))
 
+smptest: threaded_redn
+	$(call run, ./threaded_redn +p2 ++ppn 2)
+	$(call run, ./threaded_redn +p4 ++ppn 2)
+
 clean:
 	rm -f *.decl.h *.def.h *.o threaded_redn charmrun

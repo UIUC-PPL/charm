@@ -22,3 +22,8 @@ clean:
 
 test: all
 	$(call run, ./migthread +p1 )
+
+# The round trip does not depend on the PE count; ++ppn (several PEs in one
+# process) adds nothing to it beyond running on an SMP process.
+smptest: all
+	$(call run, ./migthread +p2 ++ppn 2 )
