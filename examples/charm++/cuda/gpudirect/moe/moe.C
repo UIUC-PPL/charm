@@ -423,7 +423,7 @@ public:
     }
     if (rep_init) {
       if (n_disp < 2)
-        CkAbort("-X needs at least two processes: a copy serves the odd dispatchers\n");
+        CkAbort("-X needs at least two processes: a copy serves the second half of the dispatcher partitions\n");
       std::vector<int> perm;
       hotSetPermutation(0, perm);
       rep_init_expert = trace_path.empty() ? perm[0] : trace_hot;
@@ -484,7 +484,7 @@ public:
           "dispatcher's tokens before the MoE, trained on its own loss%s\n", d_model, d_model,
           moeAttnKernels(use_bf16 != 0), serve_only ? " (forward only)" : "");
     if (rep_init_expert >= 0)
-      CkPrintf("Expert %d starts as two copies (-X): copy 1 on PE %d serves the odd dispatchers\n",
+      CkPrintf("Expert %d starts as two copies (-X): copy 1 on PE %d serves dispatcher partitions 2 and 3 of 4\n",
           rep_init_expert, CkNodeFirst(1 % CkNumNodes()));
     CkPrintf("Per expert: %.1f MB migratable state, %.1f MB slabs, "
         "%.1f GFLOP per step at average load\n", wbytes / 1048576.0,
@@ -1474,6 +1474,7 @@ class Expert : public CBase_Expert {
   bool step_ended = false;      // retiring: the last step is over (teardown waits for both)
   bool state_in = false;        // a new copy: the weights (and moments) have landed
   bool moments_in = false;
+  bool started = false;         // init() ran (an original) or the state is in (a new copy)
 
   float* W1;   // [d_model x d_ff], the master weights (fp32 always)
   float* W2;   // [d_ff x d_model]
@@ -1752,6 +1753,7 @@ class Expert : public CBase_Expert {
   }
 
   void init() {
+    started = true;
     allocate();
     createEvents();
     // -X: both copies of the chosen expert exist from the start.
@@ -1824,6 +1826,7 @@ class Expert : public CBase_Expert {
     // began, and this step's is produced after the join), so only their
     // existence travels; a partial's send still in flight is held by the
     // runtime (outstanding device sends) like any other.
+    p | started;
     p | replicated;
     p | nc;
     p | nc_next;
@@ -2496,10 +2499,21 @@ class Expert : public CBase_Expert {
   // landing buffers on the comm stream.
   void gradPartial(int ref, int from_rank, int n_mine, int pe, double gpu_s, int retiring_, int& n,
       float*& g1, float*& g2, CkDeviceBufferPost* devicePost) {
-    if (!replicated || from_rank == rank() || from_rank >= rep_max || dWpeer1[slotOf(from_rank)][ref & 1] == NULL)
+    // A new copy: the other copies' block sums for its first step can land before its state
+    // (their step ends while the state is still in flight from another PE; on Frontier the
+    // partial beat a 384 MB state). The landing buffers do not depend on the copy count, so
+    // they are made here; the count is set when the state is in (startAsCopy), and the SDAG
+    // loop takes the partial when its step comes. Nothing else can arrive early: a copy's
+    // next block sum waits for this copy's.
+    if (!started) {
+      if (W1 == NULL) { allocate(); createEvents(); }
+      allocateExchange();
+    }
+    if ((started && !replicated) || from_rank == rank() || from_rank >= rep_max ||
+        dWpeer1[slotOf(from_rank)][ref & 1] == NULL)
       CkAbort("Expert %d.%d on PE %d: a block sum from copy %d for step %d but this copy has %d copies\n",
           expert(), rank(), CkMyPe(), from_rank, ref, nc);
-    if (ref < my_step || ref > my_step + 1)
+    if (started && (ref < my_step || ref > my_step + 1))
       CkAbort("Expert %d.%d on PE %d: block sum for step %d arrived during step %d\n",
           expert(), rank(), CkMyPe(), ref, my_step);
     g1 = dWpeer1[slotOf(from_rank)][ref & 1];
@@ -2664,6 +2678,7 @@ class Expert : public CBase_Expert {
   }
   void startAsCopy() {
     if (!state_in || (use_adam && !moments_in)) return;
+    started = true;
     setCopies(nc_next);
     openChannels();
     self().runStep();

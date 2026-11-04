@@ -13,7 +13,8 @@
 // (names containing "Query", the error peeks and hipGetDevice) are excluded
 // from the API service as they are on CUDA.
 #include "hapi_portable.h"
-#include "converse.h"   // CMK_LBDB_ON comes from the machine configuration behind it
+#include "conv-config.h"   // CMK_LBDB_ON (charm-config.h): reconverse's converse.h does not carry the machine configuration
+#include "converse.h"
 #if CMK_HIP && CMK_LBDB_ON
 
 #include "hapi_trace_backend.h"

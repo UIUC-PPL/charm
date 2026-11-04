@@ -395,8 +395,17 @@ def expert_chunks(lane, W1, W2, x, y, chunk, grads, zero_first, serve=False):
         dh.masked_fill_(h <= 0, 0.0)
         first = zero_first and c0 == 0
         if bf16:
-            g2 = torch.mm(h.t(), yc, out_dtype=torch.float32)
-            g1 = torch.mm(xc.t(), dh, out_dtype=torch.float32)
+            if torch.version.hip:
+                # ROCm (hipBLASLt 7.1, MI250X): a bf16 GEMM with a transposed operand and an fp32 output
+                # is refused (HIPBLAS_STATUS_NOT_SUPPORTED, then a slow fallback with a warning per call),
+                # so the gradient is produced in bf16, the GEMM's internal accumulation still fp32, and
+                # widened before the add: the same FLOPs; the chunk gradient rounded once to bf16
+                # (throughput only).
+                g2 = torch.mm(h.t(), yc).float()
+                g1 = torch.mm(xc.t(), dh).float()
+            else:
+                g2 = torch.mm(h.t(), yc, out_dtype=torch.float32)
+                g1 = torch.mm(xc.t(), dh, out_dtype=torch.float32)
             if first:
                 grads[1].copy_(g2)
                 grads[0].copy_(g1)

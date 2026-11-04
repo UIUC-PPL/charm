@@ -304,7 +304,7 @@ CkpvExtern(int, CkSaveRestorePrefetch);
 
 #include "ckmigratable.h"
 
-#if CMK_CUDA
+#if CMK_GPU
 /// A device migration payload staged on the source, waiting for the
 /// destination to read it. The buffer is a copy of the element's device state,
 /// not the state itself, so the element can be destroyed as soon as the pack

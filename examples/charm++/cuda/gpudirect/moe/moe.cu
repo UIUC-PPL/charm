@@ -6,6 +6,7 @@
 // The block variant's attention under -B runs on cuDNN's fused attention graphs (the flash-attention
 // kernels PyTorch's scaled_dot_product_attention dispatches to): the scores never touch memory.
 // MOE_CUDNN_ATTN=0 (the Makefile) builds the unfused kernels instead; the fp32 path is always unfused.
+// The HIP build has the same through aotriton (MOE_AOTRITON_ATTN, below).
 #ifndef MOE_CUDNN_ATTN
 #define MOE_CUDNN_ATTN 0
 #endif
@@ -20,6 +21,23 @@
 #include <vector>
 namespace fe = cudnn_frontend;
 #endif
+// On HIP the same fused attention comes from aotriton, the library PyTorch's scaled_dot_product_attention
+// dispatches to on ROCm (its flash kernels): MOE_AOTRITON_ATTN=1 (the Makefile; the library and the gfx90a
+// kernel images come from the torch wheel). Either way the fp32 path is unfused.
+#ifndef MOE_AOTRITON_ATTN
+#define MOE_AOTRITON_ATTN 0
+#endif
+#if MOE_AOTRITON_ATTN
+#define AOTRITON_V2_API_FLASH_ATTN_H   // the deprecated v2 declarations are not wanted (the v3 API is used)
+#include <aotriton/flash.h>
+#include <aotriton/runtime.h>
+#include <aotriton/util.h>
+#include <aotriton/dtypes.h>
+#include <cmath>
+#include <cstring>
+#include <vector>
+#endif
+#define MOE_FUSED_ATTN (MOE_CUDNN_ATTN || MOE_AOTRITON_ATTN)
 
 #define BLOCK_1D 256
 
@@ -638,11 +656,122 @@ static void attnFusedBackward(MoeAttn* a) {
       {f->bdQ, dqkv}, {f->bdK, dqkv + d}, {f->bdV, dqkv + 2 * d}};
   feCheck(f->bwd->execute(f->handle, pack, f->ws));
 }
+static void attnFusedFree(MoeAttn* a) {
+  AttnFused* f = (AttnFused*)a->fused;
+  if (f->ws) hapiCheck(hapiFree(f->ws));
+  cudnnCheck(cudnnDestroy(f->handle));
+  delete f;
+}
+#endif
+
+#if MOE_AOTRITON_ATTN
+// ---- aotriton fused attention (the v3 API, as PyTorch 2.13 calls it): the forward writes O and, when
+// training, the softmax statistics L [B H x S]; the backward takes Q, K, V, O, dO and L and writes dQ, dK, dV,
+// with a delta row per query and an fp32 dQ accumulator as its workspaces. Q, K, V and dQ, dK, dV are the
+// same strided views of the packed [T x 3d] arrays as on the cuDNN path: no head copies on either side.
+struct AttnFused {
+  hipStream_t stream = nullptr;
+  int32_t* counter = nullptr;    // the causal forward's persistent atomic counter, zeroed before each call
+  uint64_t* philox = nullptr;    // the seed and offset the dropout-free kernels never read
+  float* delta = nullptr;        // [B H x S] fp32, the backward's D
+  float* dq_acc = nullptr;       // [B, H, S, dh] fp32, the backward's dQ accumulator, zeroed before each call
+  size_t dq_acc_bytes = 0;
+};
+namespace aof = aotriton::v3::flash;
+#define aoCheck(call) do { hipError_t _e = (call); if (_e != hipSuccess) { \
+    fprintf(stderr, "aotriton: %s (%s:%d)\n", hipGetErrorString(_e), __FILE__, __LINE__); abort(); } } while (0)
+// A [B, H, S, dh] bf16 view of a row-major [T x w] array (row t = b S + s, column h dh + i).
+static aotriton::TensorView<4> aoView(const void* base, int64_t b, int64_t h, int64_t s, int64_t dh, int64_t w) {
+  return aotriton::TensorView<4>((intptr_t)base, {(uint64_t)b, (uint64_t)h, (uint64_t)s, (uint64_t)dh},
+      {(uint64_t)(s * w), (uint64_t)dh, (uint64_t)w, (uint64_t)1}, aotriton::DType::kBFloat16);
+}
+static aotriton::TensorView<2> aoRows(const float* base, int64_t rows, int64_t s) {
+  return aotriton::TensorView<2>((intptr_t)base, {(uint64_t)rows, (uint64_t)s}, {(uint64_t)s, (uint64_t)1},
+      aotriton::DType::kFloat32);
+}
+static void attnFusedInit(MoeGpu* g, MoeAttn* a) {
+  AttnFused* f = new AttnFused;
+  f->stream = g->stream;
+  const size_t rows = (size_t)a->nseq * a->H;
+  f->counter = (int32_t*)attnAlloc(sizeof(int32_t));
+  f->philox = (uint64_t*)attnAlloc(2 * sizeof(uint64_t));
+  aoCheck(hipMemset(f->philox, 0, 2 * sizeof(uint64_t)));
+  f->delta = (float*)attnAlloc(sizeof(float) * rows * a->S);
+  f->dq_acc_bytes = sizeof(float) * (size_t)a->T * a->d;
+  f->dq_acc = (float*)attnAlloc(f->dq_acc_bytes);
+  a->fused = f;
+}
+static void attnFusedFree(MoeAttn* a) {
+  AttnFused* f = (AttnFused*)a->fused;
+  hapiCheck(hapiFree(f->counter)); hapiCheck(hapiFree(f->philox));
+  hapiCheck(hapiFree(f->delta)); hapiCheck(hapiFree(f->dq_acc));
+  delete f;
+}
+template <class P>
+static void aoCommon(P& p, const AttnFused* f, int64_t s) {
+  p.B = aotriton::TensorView<4>::get_null_tensor(aotriton::DType::kBFloat16);
+  p.Max_seqlen_q = (int32_t)s; p.Max_seqlen_k = (int32_t)s;
+  p.dropout_p = 0.0f;
+  p.philox_seed_ptr = aotriton::TensorView<0>((intptr_t)f->philox, aotriton::DType::kUInt64);
+  p.philox_offset1 = aotriton::TensorView<0>((intptr_t)(f->philox + 1), aotriton::DType::kUInt64);
+  p.philox_offset2 = 0;
+  p.causal_type = aof::CausalType::WindowedAttention;   // causal, as PyTorch passes is_causal
+  p.varlen_type = aof::VarlenType::None;
+  p.window_left = aof::WindowValue::BottomRightAligned;
+  p.window_right = aof::WindowValue::BottomRightAligned;
+}
+// o = Attn(qkv) (and the statistics when training).
+static void attnFusedForward(MoeAttn* a, bool train) {
+  AttnFused* f = (AttnFused*)a->fused;
+  const moe_bf16* qkv = (const moe_bf16*)a->qkv;
+  const int64_t b = a->nseq, h = a->H, s = a->S, d = a->d, dh = d / h;
+  aoCheck(hipMemsetAsync(f->counter, 0, sizeof(int32_t), f->stream));
+  aof::attn_fwd_params p;
+  p.Q = aoView(qkv, b, h, s, dh, 3 * d);
+  p.K = aoView(qkv + d, b, h, s, dh, 3 * d);
+  p.V = aoView(qkv + 2 * d, b, h, s, dh, 3 * d);
+  p.Sm_scale = 1.0f / sqrtf((float)dh);
+  p.L = train ? aoRows(a->stats, b * h, s) : aotriton::TensorView<2>::get_null_tensor(aotriton::DType::kFloat32);
+  p.Out = aoView(a->o, b, h, s, dh, d);
+  p.philox_seed_output = aotriton::TensorView<0>::get_null_tensor(aotriton::DType::kUInt64);
+  p.philox_offset_output = aotriton::TensorView<0>::get_null_tensor(aotriton::DType::kUInt64);
+  p.encoded_softmax = aotriton::TensorView<4>::get_null_tensor(aotriton::DType::kBFloat16);
+  p.persistent_atomic_counter = aotriton::TensorView<0>((intptr_t)f->counter, aotriton::DType::kInt32);
+  aoCommon(p, f, s);
+  aoCheck(aof::attn_fwd(p, aof::attn_fwd_params::kVersion, aotriton::Stream(f->stream)));
+}
+// dqkv = the gradients over q, k, v from dO (in a->doh), with o and the statistics of the forward.
+static void attnFusedBackward(MoeAttn* a) {
+  AttnFused* f = (AttnFused*)a->fused;
+  const moe_bf16* qkv = (const moe_bf16*)a->qkv;
+  moe_bf16* dqkv = (moe_bf16*)a->dqkv;
+  const int64_t b = a->nseq, h = a->H, s = a->S, d = a->d, dh = d / h;
+  aoCheck(hipMemsetAsync(f->dq_acc, 0, f->dq_acc_bytes, f->stream));
+  aof::attn_bwd_params p;
+  p.Q = aoView(qkv, b, h, s, dh, 3 * d);
+  p.K = aoView(qkv + d, b, h, s, dh, 3 * d);
+  p.V = aoView(qkv + 2 * d, b, h, s, dh, 3 * d);
+  p.Sm_scale = 1.0f / sqrtf((float)dh);
+  p.Out = aoView(a->o, b, h, s, dh, d);
+  p.DO = aoView(a->doh, b, h, s, dh, d);
+  p.DQ = aoView(dqkv, b, h, s, dh, 3 * d);
+  p.DK = aoView(dqkv + d, b, h, s, dh, 3 * d);
+  p.DV = aoView(dqkv + 2 * d, b, h, s, dh, 3 * d);
+  p.DB = aotriton::TensorView<4>::get_null_tensor(aotriton::DType::kBFloat16);
+  p.L = aoRows(a->stats, b * h, s);
+  p.D.eager = aoRows(f->delta, b * h, s);
+  p.DQ_ACC.eager = aotriton::TensorView<4>((intptr_t)f->dq_acc, {(uint64_t)b, (uint64_t)h, (uint64_t)s, (uint64_t)dh},
+      {(uint64_t)(h * s * dh), (uint64_t)(s * dh), (uint64_t)dh, (uint64_t)1}, aotriton::DType::kFloat32);
+  aoCommon(p, f, s);
+  aoCheck(aof::attn_bwd(p, aof::attn_bwd_params::kVersion, aotriton::Stream(f->stream)));
+}
 #endif
 
 const char* moeAttnKernels(bool bf16) {
 #if MOE_CUDNN_ATTN
   return bf16 ? "cuDNN fused attention (the flash kernels)" : "unfused cuBLAS and softmax kernels (fp32)";
+#elif MOE_AOTRITON_ATTN
+  return bf16 ? "aotriton fused attention (the flash kernels PyTorch runs on ROCm)" : "unfused hipBLAS and softmax kernels (fp32)";
 #else
   (void)bf16;
   return "unfused cuBLAS and softmax kernels";
@@ -652,7 +781,8 @@ const char* moeAttnKernels(bool bf16) {
 template <class T>
 static void attnStepT(MoeGpu* g, MoeAttn* a, const void* x, bool train, float lr);
 
-// want_fused: the cuDNN path when this build has it and the operands are bf16; else the unfused kernels.
+// want_fused: the fused path (cuDNN or aotriton) when this build has one and the operands are bf16; else the
+// unfused kernels.
 static void attnInit(MoeGpu* g, MoeAttn* a, int Ttok, int d, int H, int S, uint64_t seed, bool want_fused) {
   a->T = Ttok; a->d = d; a->H = H; a->S = S; a->nseq = Ttok / S; a->bf16 = g->bf16;
   const size_t esz = g->bf16 ? sizeof(moe_bf16) : sizeof(float);
@@ -666,7 +796,7 @@ static void attnInit(MoeGpu* g, MoeAttn* a, int Ttok, int d, int H, int S, uint6
   a->h = attnAlloc(esz * Ttok * d);
   a->doh = attnAlloc(esz * Ttok * d);
   a->dqkv = attnAlloc(esz * Ttok * 3 * d);
-#if MOE_CUDNN_ATTN
+#if MOE_FUSED_ATTN
   if (g->bf16 && want_fused) {
     a->stats = (float*)attnAlloc(sizeof(float) * B * S);
     attnFusedInit(g, a);
@@ -700,18 +830,13 @@ static void attnFree(MoeAttn* a) {
   void* bufs[] = {a->Wqkv, a->Wo, a->qkv, a->qh, a->kh, a->vh, a->oh, a->o, a->h, a->scores, a->p, a->doh,
                   a->dqh, a->dkh, a->dvh, a->dqkv, a->gWqkv, a->gWo, a->stats};
   for (void* b : bufs) if (b) hapiCheck(hapiFree(b));
-#if MOE_CUDNN_ATTN
-  if (a->fused) {
-    AttnFused* f = (AttnFused*)a->fused;
-    if (f->ws) hapiCheck(hapiFree(f->ws));
-    cudnnCheck(cudnnDestroy(f->handle));
-    delete f;
-  }
+#if MOE_FUSED_ATTN
+  if (a->fused) attnFusedFree(a);
 #endif
   memset(a, 0, sizeof(*a));
 }
 
-#if MOE_CUDNN_ATTN
+#if MOE_FUSED_ATTN
 static double relL2(const float* x, const float* ref, size_t n) {
   double dd = 0.0, rr = 0.0;
   for (size_t i = 0; i < n; i++) { const double e = (double)x[i] - ref[i]; dd += e * e; rr += (double)ref[i] * ref[i]; }
@@ -758,7 +883,7 @@ static void attnSelfCheck(MoeGpu* g, MoeAttn* a, uint64_t seed) {
 void moeAttnInit(MoeGpu* g, MoeAttn* a, int Ttok, int d, int H, int S, uint64_t seed) {
   attnInit(g, a, Ttok, d, H, S, seed, true);
   printf("Attention: %s\n", moeAttnKernels(g->bf16));
-#if MOE_CUDNN_ATTN
+#if MOE_FUSED_ATTN
   if (a->fused) attnSelfCheck(g, a, seed);
 #endif
 }
@@ -774,7 +899,7 @@ static void attnStepT(MoeGpu* g, MoeAttn* a, const void* x, bool train, float lr
   const float scale = 1.0f / sqrtf((float)dh);
   // forward: qkv = x Wqkv, o = Attn(q, k, v), h = o Wo
   gemm_rm_ex(hb, false, false, Ttok, 3 * d, d, 1.0f, x, d, a->Wqkv, 3 * d, ab, 0.0f, a->qkv, ab, 3 * d);
-#if MOE_CUDNN_ATTN
+#if MOE_FUSED_ATTN
   if (a->fused) {
     attnFusedForward(a, train);
   } else
@@ -793,7 +918,7 @@ static void attnStepT(MoeGpu* g, MoeAttn* a, const void* x, bool train, float lr
   if (!train) return;
   // backward of 1/2 |h|^2: dh = h
   gemm_rm_ex(hb, true, false, d, d, Ttok, 1.0f, a->o, d, a->h, d, ab, 0.0f, a->gWo, HAPI_R_32F, d);
-#if MOE_CUDNN_ATTN
+#if MOE_FUSED_ATTN
   if (a->fused) {
     // do = h Wo^T into doh (o stays: the backward reads it), then dqkv straight from the graph
     gemm_rm_ex(hb, false, true, Ttok, d, d, 1.0f, a->h, d, a->Wo, d, ab, 0.0f, a->doh, ab, d);

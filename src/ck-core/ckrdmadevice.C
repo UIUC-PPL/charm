@@ -1316,6 +1316,23 @@ static void* persistentImport(CkDevicePersistent& e) {
   return e.ipc_ptr;
 }
 
+// A copy with a peer's imported buffer on one side. On HIP it goes through the batch API with one
+// entry: hipMemcpyAsync on a pointer into a peer's imported vmm heap (hipMemImportFromShareableHandle +
+// hipMemMap) crashes in ROCr's pointer lookup (Runtime::VMemoryPtrInfo, ROCm 7.14.1 on MI250X), whatever
+// the kind, and hipMemcpyBatchAsync takes the same pointers (Frontier job 5833510; the two batch
+// flushes below use it for every size for the same reason). CUDA keeps the plain copy.
+static inline void deviceImportedCopyAsync(void* dst, const void* src, size_t bytes, hapiStream_t st) {
+#if CMK_HIP
+  hipMemcpyAttributes attr{};
+  attr.srcAccessOrder = hipMemcpySrcAccessOrderStream;
+  size_t attr_idx = 0, fail_idx = 0;
+  void* d = dst; const void* s = src; size_t n = bytes;
+  if (hipMemcpyBatchAsync(&d, const_cast<void**>(&s), &n, 1, &attr, &attr_idx, 1, &fail_idx, st) == hipSuccess) return;
+  hapiGetLastError();
+#endif
+  hapiCheck(hapiMemcpyAsync(dst, src, bytes, hapiMemcpyDefault, st));
+}
+
 // Both endpoints' callbacks, behind the copy on the initiator's stream.
 static void persistentStreamCallbacks(hapiStream_t stream, CkDevicePersistent& a,
                                       CkDevicePersistent& b) {
@@ -1397,8 +1414,7 @@ CkDeviceStatus CkDevicePersistent::get(CkDevicePersistent& src) {
     hapiMemcpyAsync((void*)ptr, src.ptr, src.cnt, hapiMemcpyDefault, hapi_stream);
     persistentStreamCallbacks(hapi_stream, src, *this);
   } else if (mode == CkNcpyModeDevice::IPC) {
-    hapiMemcpyAsync((void*)ptr, persistentImport(src), src.cnt, hapiMemcpyDeviceToDevice,
-                    hapi_stream);
+    deviceImportedCopyAsync((void*)ptr, persistentImport(src), src.cnt, hapi_stream);
     persistentStreamCallbacks(hapi_stream, src, *this);
   } else {
     // One-sided read of the peer's registered buffer into this one. The peer's
@@ -1436,7 +1452,7 @@ CkDeviceStatus CkDevicePersistent::put(CkDevicePersistent& dst) {
     hapiMemcpyAsync((void*)dst.ptr, ptr, cnt, hapiMemcpyDefault, hapi_stream);
     persistentStreamCallbacks(hapi_stream, *this, dst);
   } else if (mode == CkNcpyModeDevice::IPC) {
-    hapiMemcpyAsync(persistentImport(dst), ptr, cnt, hapiMemcpyDeviceToDevice, hapi_stream);
+    deviceImportedCopyAsync(persistentImport(dst), ptr, cnt, hapi_stream);
     persistentStreamCallbacks(hapi_stream, *this, dst);
   } else {
     // One-sided write into the peer's registered buffer. The NIC reads the
@@ -2328,12 +2344,17 @@ static void deviceChannelBatchFlush() {
     }
 #elif CMK_HIP
     // hipMemcpyBatchAsync (ROCm 7.14): the 12.8 signature, with the failure index; its per-copy
-    // attributes are not supported, one attribute for the batch is.
-    if (n > 1) {
+    // attributes are not supported, one attribute for the batch is. A single copy goes through it
+    // too: hipMemcpyAsync into a peer's imported vmm heap (hipMemImportFromShareableHandle +
+    // hipMemMap) crashes in ROCr's pointer lookup (Runtime::VMemoryPtrInfo, ROCm 7.14.1 on MI250X),
+    // whatever the kind; the batch API takes the same pointers (Frontier job 5833510).
+    {
       hipMemcpyAttributes attr{};
       attr.srcAccessOrder = hipMemcpySrcAccessOrderStream;
       size_t attr_idx = 0, fail_idx = 0;
       err = hipMemcpyBatchAsync(b->dsts.data(), const_cast<void**>(b->srcs.data()), b->sizes.data(), n, &attr, &attr_idx, 1, &fail_idx, st);
+      if (err != hipSuccess)
+        fprintf(stderr, "[chan-batch] pe %d: hipMemcpyBatchAsync(n=%zu) failed at %zu: %s\n", CkMyPe(), n, fail_idx, hipGetErrorString(err));
     }
 #endif
     if (err != hapiSuccess) {
@@ -4068,7 +4089,10 @@ static void deviceIpcReceive(CkDeviceBuffer& source, CkDeviceBuffer& dest,
   // complete on the host, so nothing on recv_stream can block behind a sender.
   // The slot is released when this copy completes: the caller recorded it in
   // the op, and CkRdmaDeviceRecvHandler raises its dst_flag then.
-  hapiSubmitMemcpyAsync((void*)dest.ptr, src_addr, dest.cnt, hapiMemcpyDefault, recv_stream);
+  {
+    void* const dp = (void*)dest.ptr; const size_t cnt = dest.cnt;
+    hapiSubmit(recv_stream, [=]() { deviceImportedCopyAsync(dp, src_addr, cnt, recv_stream); });
+  }
 }
 
 
@@ -4326,12 +4350,15 @@ static void deviceRecvBatchFlush()
 #endif
     }
 #elif CMK_HIP
-    if (n > 1) {   // as above: one attribute for the batch, the failure index reported
+    {   // as above: one attribute for the batch, the failure index reported; every size, for the
+        // single copy out of a peer's imported vmm heap (deviceChannelBatchFlush has the ROCr crash)
       hipMemcpyAttributes attr{};
       attr.srcAccessOrder = hipMemcpySrcAccessOrderStream;
       size_t attr_idx = 0, fail_idx = 0;
       err = hipMemcpyBatchAsync(b->dsts.data(), const_cast<void**>(b->srcs.data()), b->sizes.data(), n,
                                 &attr, &attr_idx, 1, &fail_idx, rs);
+      if (err != hipSuccess)
+        fprintf(stderr, "[recv-batch] pe %d: hipMemcpyBatchAsync(n=%zu) failed at %zu: %s\n", CkMyPe(), n, fail_idx, hipGetErrorString(err));
     }
 #endif
     if (err != hapiSuccess) {

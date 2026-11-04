@@ -217,10 +217,89 @@ serving `-G`; the transformer block `-w`; checksums `-C 4`. The per-rank log `ra
 
 ## The first job: the validation ladder
 
+*Done 2026-11-02 (job 5833510, interactive): Parts 0-2 pass after three fixes (the runtime's
+imported-pointer copies through the batch API on HIP, a new copy's landing buffers made before its state,
+the serving branch over all four partitions); the rows are in the README's "Measured 2026-11-02:
+Frontier" section. Open: one of seven `-R 4` runs of the fixed app still aborted at a new copy's first step
+("a block sum from copy 1 for step 24 but this copy has 1 copies", logs/moe/sm_R4 of job 5833510); the six others,
+five of them traced (`CHARM_MOE_TRACE=1`), passed bit-identical to plain. Part 3 waits on the baselines. The scripts: `moe_run.sh`, `moe_diag.sh`,
+`ladder_int.sh <1|2>` under the scratch root, `JID=` the interactive allocation.*
+
+*Done 2026-11-02, later (job 5837505, two nodes, frontier02930+03188, one hour): the three-way comparison
+on 16 GCDs, every shape, training and serving, plus the `-w` rows: the README's "Measured 2026-11-02, later:
+Frontier, two nodes" section. Scripts: `two_node2.sh` (the chain that ran: arms, checksum pairs, `scancel` at
+the end; `two_node.sh` is its first draft), `n2_table.sh` (the README rows from `logs/moe/two_node.txt` and
+`logs/ref/results_2n.txt`), `node_clean.sh` (leftover ranks and `/dev/shm` segments after a kill),
+`moe_run.sh`/`ref_run.sh` take `NODES=`. The baselines' RCCL across nodes needs OLCF's aws-ofi-nccl plugin
+(`/sw/frontier/rccl-plugins/aws-ofi-nccl/1.19.2/rocm/7.1.1/lib`, the `rccl-net-plugin` module's variables), set by
+`ref_wrap.sh` when the step spans nodes; the test is `SLURM_STEP_NUM_NODES`, because `SLURM_JOB_NUM_NODES` is
+unset in a step of a `--no-shell` allocation (the first three baseline runs went over TCP sockets for that and are
+kept under `_socket` tags). A two-hour two-node debug request had a next-morning estimate; cut to one hour it
+started in 35 minutes. Open from the run: (1) the reference's EPLB arm hangs in RCCL's channel setup before its
+fourth step on 16 ranks (twice, both transports; `logs/ref/n2_sm_ref_eplb`); (2) three of four Mixtral ShedLB arms
+segfault on PE 14 at exit, a device-channel receive completing inside the LCI backend's exit drain whose handler
+sends (`logs/moe/n2_mix_train_R2/rank_14.log`; steps and checksums complete); (3) OLMoE's exchange crosses the
+link at one NIC's bandwidth where RCCL's plugin uses four: whether LCI's endpoints spread over a node's NICs;
+(4) ShedLB's one-copy-per-round rule cannot use an empty node when eight bins are loaded alike (Mixtral, 8
+experts on 16 GCDs).*
+
+*Pulled 2026-11-04 (five commits, d7a4ad9d4..e6f9b8aa9, the corrections section above; the nested reconverse is
+unchanged at 038893f; the local changes were stashed, fast-forwarded and reapplied, two conflicts resolved by hand:
+the serving loop of `moe.C` is upstream's, the README's Frontier sections sit before the Delta "Measured
+2026-11-02" section). The merged tree's HIP `moe` builds (16 s; the attention unfused, which the "Block:" line now
+names). What the corrections mean for the Frontier rows: (1) the two-node baselines already ran on the RCCL plugin
+and the one-node ones cross no link; `ref_wrap.sh` now logs the transport by default (`NCCL_DEBUG=INFO`,
+`INIT,NET`); (2) every Frontier serving row came from the fixed binary (built 14:54 on 11-02, "fixed app" in
+`logs/moe/ladder_serve.txt`; the two-node job ran it), so none is invalid; (3) the Megatron rows say "sequential
+experts" in the log header and in the tables, and Transformer Engine does not reach MI250X: AMD's prebuilt
+`transformer_engine_rocm` 2.1.0 (repo.radeon.com, rocm-rel-7.0) carries gfx942 and gfx950 code only, a source
+build of ROCm/TransformerEngine would need `NVTE_ROCM_ARCH=gfx90a` against the venv's torch, and its
+single-launch grouped-GEMM backends are gfx942/gfx950 only, so TE's grouped experts on MI250X would be one
+hipBLASLt GEMM per expert in any case; (4) no FasterMoE here; (5) the seven Megatron training rows (one node:
+SmartMoE, SmartMoE cap 1.25, Mixtral, OLMoE; two nodes: SmartMoE, SmartMoE cap 1.25, OLMoE) ran without fp32
+masters and were re-measured with `--master` on job 5847934 (`mg_master.sh`, tags `mgm_*`, `n2_mgm_*`; masters
+cost 0 to 5 ms a step: SmartMoE 76.9 against 73.8 on one node, 142.0 against 137.4 on two); the serving rows do
+not update weights and stand; (6) the HIP
+build's attention is unfused and no baseline block row exists on Frontier, so nothing measured is affected, but a
+block comparison here waits for a fused HIP attention (open item 9). The README's one-node section now compares
+against the corrected A40 rows, and the two-node section's OLMoE paragraph no longer calls the Delta order
+"the opposite": with the plugin the baselines are ahead on OLMoE there too.*
+
+*2026-11-04, the fused attention on Frontier (correction 6 above, open item 9). The HIP build has it now:
+aotriton, the library PyTorch's `scaled_dot_product_attention` dispatches to on ROCm, ships inside the torch
+2.13+rocm7.1 wheel (`torch/lib/libaotriton_v2.so.0.12.0`, the kernel images under
+`torch/lib/aotriton.images/amd-gfx90a`, the headers under `torch/include/aotriton`; the library exports the v3
+API only, the params structs). `$W/aotriton/{lib,include}` holds copies, because the library's `NEEDED
+libamdhip64.so` with `RPATH $ORIGIN` would, used in place, load the wheel's HIP runtime beside the runtime's
+/opt/rocm-7.14.1 one; staged without it, the name resolves through the library path to
+`/opt/rocm-7.14.1/lib/libamdhip64.so`, the same file as the already loaded `libamdhip64.so.7` (ldd shows one).
+`moe.cu`: `MOE_AOTRITON_ATTN`, the same strided views of the packed qkv and dqkv arrays as the cuDNN path, the
+causal forward with its persistent atomic counter zeroed per call, the backward with eager delta rows and an
+fp32 dQ accumulator (zeroed per call), dropout off, as PyTorch 2.13's `mha_all_aot.hip` calls it. The Makefile's
+HIP branch sets it when `$(AOTRITON_DIR)/include/aotriton/flash.h` exists (`AOTRITON_DIR`, default
+`$W/aotriton`; `MOE_AOTRITON_ATTN=0` builds the unfused kernels). The startup self-check (one training step,
+fused against unfused, abort past a relative L2 error of 5e-2) runs here as on CUDA, and the "Block:" line
+names the kernels. Binaries: `apps/moe/moe` (fused), `apps/moe/moe.attn_unfused` (the merged tree's unfused
+build, kept under its own name); `moe_run.sh` takes `BIN=`. The chain `fused_attn.sh` (the block rows plain
+and ShedLB, training and serving, one node and two, the unfused build's plain arms on the same nodes, then
+`mg_master.sh` with its `scancel`): job 5847934 (frontier04265 and 04266, 01:03 to 01:29), results
+`logs/moe/fused_attn.txt`, the README section "Measured 2026-11-04: Frontier, the block rows with the fused
+attention". Outcome: aotriton 0.12 (built for ROCm 7.1) runs under the 7.14.1 runtime; the self-check error is
+the A40 value (3.6e-3 on the output, 1.1e-3 to 2.1e-3 on the weight gradients, both head sizes); the
+attention's cost in training halves on one node (SmartMoE 13.3 to 6.4 ms, Mixtral 40.1 to 29.5), the serving
+step on two nodes is exchange-bound either way; the Mixtral ShedLB two-node arms still take the exit segfault
+(open item 2, PE 10 this time). The baselines' block rows then ran on the same allocation (`block_ref.sh`,
+`--attn`, tags `smb_ref_*`, `mixb_ref_*`, `mgm_smb_*`, `mgm_mixb_*`, `n2_*`; every two-node log says "Using
+network Libfabric", every Megatron header "SequentialMLP (local spec)" with the masters line), so the block
+comparison exists on Frontier now, the same fixture on both sides: the README section has the tables.
+Transformer Engine does not reach MI250X (the pull note above), so the Megatron rows stay the sequential ones.*
+
 This is the job cancelled unrun on Delta (`/scratch/mzu/bhosale/moe_runs/v4b_fix.sbatch`), the one the
 kernel-bound fix of 2026-11-02 still owes (the README's "A kernel bound, found and removed").
 
-- **Part 0.** `replica_test +p4`: expect its PASS lines.
+- **Part 0.** `replica_test +p4 +balancer ShedLB +LBDebug 1` (the flags its Makefile runs it with; without the
+  balancer it aborts "expected the balancer to replicate worker 0"). It prints no PASS line: it passes when it
+  exits 0 after `worker 0 cloned at step 10` and `retire decision at step 40`, and aborts otherwise.
 - **Part 1, the kill criterion** (the last step's `out2 w2` checksums must be one set per shape):
 
   | Tag | Arguments |
@@ -264,8 +343,9 @@ kernel-bound fix of 2026-11-02 still owes (the README's "A kernel bound, found a
    hold under the balancer.
 8. FasterMoE's bf16 numerics (NaN from step 3 to 8; its harness, documented in `ref/README.md`), A40-only
    until FastMoE builds on ROCm.
-9. A fused attention for the HIP build (correction 6 above), so the block rows on Frontier compare the
-   same fixture on both sides; and the transport line of the RCCL harnesses (correction 1).
+9. Done 2026-11-04: the fused attention for the HIP build is aotriton (the paragraph under the ladder), and
+   `ref_wrap.sh` logs the RCCL transport by default (correction 1). Left: the fp32 path is unfused on both
+   vendors by design.
 
 ## Delta artefacts and where they are
 

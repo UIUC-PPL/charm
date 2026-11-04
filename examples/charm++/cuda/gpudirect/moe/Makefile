@@ -16,6 +16,17 @@ ifeq ($(BUILD_HIP),1)
 NVCC = hipcc
 NVCC_FLAGS = -x hip -c -std=c++17 -ffast-math $(OPTS) $(patsubst %,--offload-arch=%,$(subst ;, ,$(HIP_ARCHS)))
 LD_LIBS = -balancer ShedLB -module EveryLB -module DiffusionLB -L$(ROCM_PATH)/lib -lhipblas -Wl,-rpath,$(ROCM_PATH)/lib
+# The block variant's attention (-w) under -B runs on aotriton's fused attention kernels, the flash kernels
+# PyTorch's attention dispatches to on ROCm: the library, its gfx90a kernel images and headers of the torch
+# 2.13+rocm7.1 wheel, staged in a directory of their own so that the library's libamdhip64.so resolves to the
+# runtime's HIP and not the wheel's (FRONTIER_START.md). Found there by default; MOE_AOTRITON_ATTN=0 on the make
+# line builds the unfused kernels. The fp32 path is always unfused.
+AOTRITON_DIR ?= /lustre/orion/csc710/scratch/adityapb/hip/aotriton
+MOE_AOTRITON_ATTN ?= $(if $(wildcard $(AOTRITON_DIR)/include/aotriton/flash.h),1,0)
+ifeq ($(MOE_AOTRITON_ATTN),1)
+NVCC_FLAGS += -DMOE_AOTRITON_ATTN=1 -I$(AOTRITON_DIR)/include
+LD_LIBS += -L$(AOTRITON_DIR)/lib -laotriton_v2 -Wl,-rpath,$(AOTRITON_DIR)/lib
+endif
 else
 NVCC = nvcc
 NVCC_FLAGS = -c -std=c++17 -use_fast_math -gencode arch=compute_86,code=sm_86 $(OPTS) -I$(MATHLIBS)/include

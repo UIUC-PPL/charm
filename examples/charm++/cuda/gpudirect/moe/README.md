@@ -576,6 +576,11 @@ FasterMoE (smart schedule and shadowing, the patched build). Steady state
 steps 23-43 of 40 + 3 warmup; repeats where a band is given. Scale is 4 and
 8 GPUs: the experiments are capped at two nodes.
 
+*Serving rows of this section (every `-G` column below): measured with the
+serving branch running two of the four dispatcher partitions, so half the
+dispatchers' tokens were never served. Found on Frontier on 2026-11-02 and fixed
+("Measured 2026-11-02: Frontier" below); these columns are to be re-measured.*
+
 **Results, MoE layer alone** (job 23411075, gpub092+094, 2026-11-01, bf16,
 8 GPUs, ms/step, steady state steps 23-43; "ShedLB" is the balancer as of
 the morning, "ShedLB, critical path" the rule described below; checksums
@@ -793,6 +798,340 @@ nothing: every PE learns the round's job-wide decision count
 (`LBManager::LastRoundDecisions`) and the dispatchers resume the lookahead
 inside the round's window when it is zero. Rule and plumbing:
 `doc/internals/lb-multiplicity.md`.
+
+## Measured 2026-11-02: Frontier, one node, eight MI250X GCDs
+
+The validation ladder of `FRONTIER_START.md`, run on one Frontier node (job
+5833510): eight processes of one PE, one GCD each, ROCm 7.14.1, the
+reconverse/LCI build over libfabric, same-host channels through shared memory,
+the vmm device pool (`+gpupoolalloc vmm +gpupoolsize 16384 +gpupoolchunk 2046
++gpushm`), the same traces and arguments as the A40 rows (`-i 40 -u 3 -B -C 4`,
+ShedLB `-R 2 -f 20 -b 20 -a`, steady state steps 23-43). Part 0 (`replica_test`)
+passes; in Part 1 the last step's `out2 w2` are one set per shape across plain,
+`-X`, `-R 3` and `-R 4`, and in Part 2 the checksums are identical within every
+pair below, training and serving.
+
+Three bugs stood in the way, all fixed in this commit: on HIP a `hipMemcpyAsync`
+with a peer's imported vmm heap on either side crashes inside ROCr's pointer
+lookup, so the runtime's copies with an imported side go through
+`hipMemcpyBatchAsync` (the two batch flushes for every size, and the persistent
+get/put and parked-payload pull through one helper); a new copy received the
+other copies' first block sums before its state had landed (the state comes from
+another PE and lost the race here where it did not on the A40s), so the copy now
+makes its landing buffers on first contact; and the serving branch of the
+expert's step still ran partitions 0 and 1 of the four, a copy running partition
+`rank()` instead of its block, so plain serving skipped half the dispatchers
+and a serving copy served nothing (the `-X` copy issued 0 chunks all run). The
+third is why the A40 serving columns of the 2026-11-01 section were re-measured
+(the "Measured 2026-11-02: the same matrix with NCCL on Slingshot" section
+below).
+
+ms/step, 8 GCDs, SmartMoE L2 / Mixtral-8x7B L12 / OLMoE-1B-7B L12 routing:
+
+| MoE layer alone                      | training | serving |
+|--------------------------------------|---------:|--------:|
+| SmartMoE, example plain              |     79.4 |    28.7 |
+| SmartMoE, ShedLB `-R 2` (1 copy)     |     44.4 |    15.5 |
+| SmartMoE, ShedLB `-R 4`              |     44.5 |    17.4 |
+| SmartMoE, `-X` (1 copy from the start) |   72.0 |    26.4 |
+| Mixtral, example plain               |    139.7 |    55.9 |
+| Mixtral, ShedLB `-R 2` (no copy)     |    138.0 |    55.9 |
+| Mixtral, `-X`                        |    133.7 |         |
+| OLMoE, example plain                 |     33.4 |    21.0 |
+| OLMoE, ShedLB `-R 2` (nothing to decide) | 35.1 |    21.8 |
+
+| Transformer block (`-w`), unfused attention (fused: the 2026-11-04 section) | training | serving |
+|--------------------------------------|---------:|--------:|
+| SmartMoE, example plain              |     92.1 |    35.8 |
+| SmartMoE, ShedLB `-R 2` (1 copy)     |     63.9 |    22.3 |
+| Mixtral, example plain               |    176.1 |    71.8 |
+| Mixtral, ShedLB `-R 2` (no copy)     |    175.6 |    72.0 |
+
+**The baselines on the same node** (the PyTorch reference and Megatron-Core
+0.20.0, same arguments and traces; the ROCm 7.1 PyTorch 2.13 wheel in a venv,
+one rank per GCD over RCCL, the launcher `ref_run.sh` beside the example's
+Frontier scripts). Two ROCm accommodations in `ref/moe_ref.py`: the
+rendezvous master is given as an IPv4 literal on `hsn0` (by name, c10d first
+tries an address family the node lacks and the ranks never meet), and
+hipBLASLt refuses a bf16 GEMM with a transposed operand and an fp32 output
+(`torch.mm(..., out_dtype=float32)`, then a 30x slower fallback with a warning
+per call), so on ROCm each chunk's gradient leaves the GEMM in bf16 and is
+widened before the fp32 accumulation: the same FLOPs, one more bf16 rounding
+per chunk, checksums within 4e-7 of the example's. Megatron's experts here are
+its `SequentialMLP` (the header line says so): the grouped path is Transformer
+Engine's, which has no MI250X build (AMD's wheel carries gfx942 and gfx950 code
+only, and its grouped-GEMM backends are for those parts), and the A40 rows
+labelled "grouped GEMM" before 2026-11-03 were sequential too (the 2026-11-03
+section). Its training rows carry fp32 master weights since 2026-11-04 (job
+5847934; the 2026-11-02 values, the bf16 parameters updated in place, in
+parentheses: masters cost 0 to 5 ms a step). FastMoE/FasterMoE need a HIP port
+of their extension and are not run.
+
+| MoE layer alone, ms/step                 | training | serving |
+|------------------------------------------|---------:|--------:|
+| SmartMoE: example plain                  |     79.4 |    28.7 |
+| SmartMoE: example ShedLB `-R 2`          |     44.4 |    15.5 |
+| SmartMoE: PyTorch reference, static      |     93.0 |    33.4 |
+| SmartMoE: PyTorch reference, EPLB packing every 10 steps |  102.7 | |
+| SmartMoE: PyTorch reference, one static copy |  80.8 |         |
+| SmartMoE: Megatron-Core, sequential experts, masters | 76.9 (73.8) | 26.8 |
+| SmartMoE: Megatron-Core, capacity factor 1.25 | 75.0 (74.2) |         |
+| Mixtral: example plain                   |    139.7 |    55.9 |
+| Mixtral: PyTorch reference, static       |    170.7 |    58.5 |
+| Mixtral: Megatron-Core, masters          | 145.4 (144.7) | 50.0 |
+| OLMoE: example plain                     |     33.4 |    21.0 |
+| OLMoE: PyTorch reference, static         |     47.1 |    27.3 |
+| OLMoE: Megatron-Core, masters            | 44.8 (45.2) |  22.3 |
+
+What one node changes. The reference's dispatch all-to-all moves 169 MB in
+and out of the busiest rank in 1.7 ms here (92 GB/s over Infinity Fabric)
+against 18 ms on one A40 node (10.5 GB/s over PCIe) and worse across the
+Delta node link, so the baselines lose the exchange cost that put them 2x
+behind the example's plain arm on the A40 pair: on SmartMoE the reference's
+step is now the hot rank's 84 ms of GEMMs plus 3 ms of combine, and
+Megatron's lock-step structure is 3% under the example's plain arm. The
+example did not gain, because its exchange overlaps the step's compute on
+either machine. What remains is the balancer: on SmartMoE the example with
+ShedLB is 1.73x faster than Megatron and 2.1x faster than the reference in
+training, 1.7x and 2.2x in serving, with a copy that halves the hot GPU's
+work, which no re-placement can do with one expert per hot GPU (EPLB's packing
+costs the reference 10%; its static copy of the hottest expert, 2x slower on
+the A40 pair for its cross-link partial all-reduce, gains 13% here and still
+trails the example's copy by 1.8x). On Mixtral and OLMoE, where there is nothing to
+balance, the three are within 1.2x of each other, the example's plain arm
+fastest in training. The cross-node regime of the Delta tables is the next
+section.
+
+Against the two-node A40 rows (the corrected ones, "Measured 2026-11-02: the
+same matrix with NCCL on Slingshot" below): SmartMoE training is the same step
+(79.4 against 81.1) and the balancer's gain is larger (1.79x against 1.56x, the
+copy's exchange crossing a GCD pair instead of a node link); Mixtral training is
+1.16x faster and the balancer is correctly idle; OLMoE, whose step is the token
+exchange, is 7x faster on one node than across the Delta node link. In serving,
+SmartMoE is 28.7/15.5 here against 35.3/27.4 there (plain/ShedLB: the copy's
+serving gain is 1.85x against 1.3x), Mixtral 55.9 against 112 to 130, OLMoE 21.0
+against 249.9.
+
+## Measured 2026-11-02, later: Frontier, two nodes, sixteen MI250X GCDs
+
+The three-way comparison again on two Frontier nodes (job 5837505, frontier02930
+and frontier03188, one hour): 16 processes of one PE, one GCD each, eight per
+node. Every dispatcher still sends 8192 tokens, so a step carries twice the
+tokens of the one-node rows and the skew doubles with it (SmartMoE's hottest
+expert takes 48% of twice the tokens: 7.7x a GCD's share with two experts per
+GCD). The example runs the buddy pool (`+gpupoolalloc buddy +gpupoolsize 2048
++gpupoolarenas 8`: across nodes ROCr cannot dma-buf-export vmm memory; on one
+node of this pair the buddy pool measures 78.5 plain and 47.4 ShedLB against
+the vmm pool's 79.4 and 44.4 above, so the pool is not a variable). The
+baselines run RCCL over Slingshot through OLCF's aws-ofi-nccl 1.19.2 plugin
+(the `rccl-net-plugin` module's ROCm 7.1.1 build and its CXI variables, set by
+`ref_wrap.sh` when the step spans nodes); without it RCCL falls back to TCP
+sockets on `hsn0`, which put the reference's SmartMoE step at 254 ms, its static
+copy at 276 and Megatron at 291 (kept under `_socket` tags in the logs, not
+rows). Megatron-Core does not run Mixtral on 16 ranks (eight experts must divide
+the expert-parallel size). The Mixtral and OLMoE traces hold 21 steps of 16 x
+8192 tokens, so every implementation wraps them twice by the same rule.
+Checksums: identical within every example pair; the reference within bf16
+noise of the example at every shape; Megatron prints none.
+
+| MoE layer alone, ms/step, 16 GCDs              | training | serving |
+|------------------------------------------------|---------:|--------:|
+| SmartMoE: example plain                        |    132.6 |    58.8 |
+| SmartMoE: example ShedLB `-R 2` (1 copy)       |     90.8 |    32.7 |
+| SmartMoE: example ShedLB `-R 4` (2 copies from step 40) | 92.4 | 32.2 |
+| SmartMoE: example ShedLB `-R 4 -f 10 -b 10` (3 copies by step 30) | 88.1 | 30.9 |
+| SmartMoE: example `-X` (1 copy from the start) |     96.6 |    36.9 |
+| SmartMoE: PyTorch reference, static            |    162.5 |    60.0 |
+| SmartMoE: PyTorch reference, EPLB packing every 10 steps | hung (below) | |
+| SmartMoE: PyTorch reference, one static copy   |    106.7 |         |
+| SmartMoE: Megatron-Core, sequential experts, masters | 142.0 (137.4) | 53.8 |
+| SmartMoE: Megatron-Core, capacity factor 1.25  | 141.7 (139.2) |     |
+| Mixtral: example plain                         |    305.1 |   164.6 |
+| Mixtral: example ShedLB `-R 2` (no copy; exit crash below) | 306.9 | 160.0 |
+| Mixtral: PyTorch reference, static             |    328.9 |   115.6 |
+| OLMoE: example plain                           |    159.2 |   163.1 |
+| OLMoE: example ShedLB `-R 2` (nothing to decide) | 163.4 |   161.9 |
+| OLMoE: PyTorch reference, static               |     74.6 |    50.5 |
+| OLMoE: Megatron-Core, masters                  | 82.6 (83.6) | 50.5 |
+
+| Transformer block (`-w`), 16 GCDs, unfused attention (fused: the 2026-11-04 section) | training | serving |
+|------------------------------------------------|---------:|--------:|
+| SmartMoE: example plain                        |    145.1 |    56.2 |
+| SmartMoE: example ShedLB `-R 2` (1 copy)       |     96.1 |    38.6 |
+| Mixtral: example plain                         |    307.0 |   126.7 |
+| Mixtral: example ShedLB `-R 2` (no copy)       |    312.2 |   134.9 |
+
+What two nodes change, shape by shape.
+
+**SmartMoE.** The balancer's gain holds across the node link: ShedLB is 1.46x
+faster than plain in training (1.79x on one node) and 1.8-1.9x in serving.
+Per 8 x 8192 tokens the balanced step is flat (44.4 ms on one node, 45.4 on two)
+while the reference's static step only falls from 93 to 81 and Megatron's from
+77 to 71 (with masters, re-measured 2026-11-04; the 2026-11-02 values in
+parentheses in the table), so against the baselines the balanced example is
+1.6x faster than Megatron and 1.8x faster than the reference in training, 1.7x
+and 1.9x in serving (30.9 against 53.8 and 60.0). The reference's static copy is now its
+best training arm (106.7, 1.5x over its static; 13% over on one node): the
+copy halves the hot rank where the one-node step was already compute-bound.
+The balancer's step stops near 88-91 ms whatever the copy count: with a round
+every 10 steps it makes three copies by step 30 (the hot GCD's tokens fall to
+1.95x the mean, from 7.7x), but the hot GCD's time rises from 88 to 92-107 ms
+because every copy adds a partial exchange that now crosses the node link, so
+one copy buys most of the gain and the rest is paid back in exchange. The
+EPLB arm of the reference hung twice before its fourth step, inside RCCL's
+channel setup (38 proxy connections against the 48 of the arms that passed),
+once over sockets and once over the plugin, while the five other baseline arms
+set up in seconds; it hangs before any balancing code runs and is not
+root-caused.
+
+**Mixtral, eight experts on sixteen GCDs.** The example's block map lands
+expert e on PE e: all eight on node 0, each with twice the tokens, node 1
+dispatching only, hence 2.2x the one-node step. ShedLB makes no copy: every
+expert's load (4.3-5.3) exceeds the target (2.4), but the rule copies only
+when the fullest bin falls, and with eight bins loaded alike one copy leaves
+another at the top ("would leave the fullest bin at 5.285 of 5.285: no copy");
+using the empty node needs a round that copies every expert, which the
+one-copy-per-round rule cannot express. The reference's block map (`e * P / E`)
+spreads the experts over the even ranks of both nodes: its static training step
+is level with the example's (328.9 against 305.1) and its serving step 1.4x
+faster (115.6 against 164.6), a placement effect, not a compute one.
+
+**OLMoE, where the step is the top-8 exchange.** The example's step grows from
+33 to 159 ms (4.8x for twice the tokens) while the reference's grows from 47 to
+75 and Megatron's from 45 to 83, and in serving the reference's 50.5 is 3.2x
+under the example's 163.1. A step moves 4.3 GB of tokens and outputs across
+the link in each direction (16 x 8192 x 8 slots x 4 KB, half of it crossing,
+dispatch and combine): the reference's serving step moves it at 85 GB/s per
+direction, close to the node's four NICs, the example's at 26 GB/s, one NIC's
+worth. On the Delta pair the corrected rows ("Measured 2026-11-04" below) put
+the baselines ahead of the example there too (reference 194.7 and Megatron
+248.1 against 243.1 in training, 172.8 and 169.6 against 249.9 in serving);
+only the socket-transport rows of 2026-11-01 (example 238, reference 333,
+Megatron 456) had it the other way. Whether the example's sixteen LCI endpoints spread over the
+four NICs of a node, as the baselines' plugin does ("found 4 nics",
+`NCCL_CROSS_NIC=1`), is the open performance item of this section; nothing in
+the runtime chooses a NIC today.
+
+**Exit crash.** Three of the four Mixtral ShedLB arms (no copy made) ended in a
+segfault on PE 14 after their last step, with the checksums already printed:
+`ConverseExit` -> `CommBackendLCI::exit` -> LCI `free_device` ->
+`wait_drained` -> `progress` delivers a device-channel receive completion ->
+`CkRdmaDeviceRecvHandler` -> `CkCallback::send` -> `CkSendMsgBranch` ->
+`issueAm` on the backend being torn down. A posted device receive (a dispatcher
+PE's landing buffer for a step that never comes) completes during the exit
+drain and its handler sends; the fix belongs in the exit sequence (drain
+without delivering, or cancel the posted receives before the backend exits).
+Open; the rows above are unaffected.
+
+## Measured 2026-11-04: Frontier, the block rows with the fused attention
+
+The HIP build's attention sublayer was unfused (the score GEMM, a softmax
+kernel, the PV GEMM and their backward) while the references' attention on
+MI250X is PyTorch's fused flash kernel, the mismatch the Delta correction of
+2026-11-03 found on the A40s and cuDNN removed there. On ROCm the same kernels
+are aotriton's, the library PyTorch's `scaled_dot_product_attention` dispatches
+to, and the torch 2.13+rocm7.1 wheel ships it with its gfx90a kernel images and
+headers; `moe.cu` calls its v3 API as PyTorch 2.13 does (`MOE_AOTRITON_ATTN`,
+the Makefile's HIP branch; the library is staged beside the runtime's HIP rather
+than the wheel's, `FRONTIER_START.md`). Q, K, V and dQ, dK, dV are the same
+strided views of the packed arrays as on the cuDNN path, the causal forward
+keeps the softmax statistics for the backward, and nothing is copied per head.
+The startup self-check (one training step on the same weights, fused against
+unfused) measured 3.6e-3 on the output and 2.0e-3 and 1.1e-3 on the weight
+gradients at head size 64 (SmartMoE), 3.5e-3, 2.1e-3 and 1.1e-3 at 128
+(Mixtral), the A40 values, in every run. Job 5847934, frontier04265 and
+04266: the twelve block arms on both builds (the fused `moe`, the unfused
+`moe.attn_unfused` from the same tree), the unfused build's plain arms on the
+same nodes, one node and two. Within each build the plain and ShedLB arms agree
+to the last digit, training and serving, both routings, both node counts; the
+two builds differ in the fifth digit of `out2` after forty training steps, the
+rounding of the self-check carried through the run. Steady state steps 23-43.
+
+| transformer block, 8 GCDs, ms/step               | SmartMoE train | SmartMoE serve | Mixtral train | Mixtral serve |
+|--------------------------------------------------|---------------:|---------------:|--------------:|--------------:|
+| example plain, fused attention                   |           85.8 |           32.3 |         169.2 |          68.6 |
+| example ShedLB, fused attention                  |           53.6 |           18.7 |         169.3 |          68.6 |
+| example plain, unfused attention, same node      |           92.7 |           36.1 |         179.8 |          75.4 |
+| MoE layer alone, plain (2026-11-02)              |           79.4 |           28.7 |         139.7 |          55.9 |
+
+| transformer block, 16 GCDs, ms/step              | SmartMoE train | SmartMoE serve | Mixtral train | Mixtral serve |
+|--------------------------------------------------|---------------:|---------------:|--------------:|--------------:|
+| example plain, fused attention                   |          141.4 |           57.2 |         299.8 |         127.8 |
+| example ShedLB, fused attention                  |           90.8 |           34.2 |   303.3 (a)   |   134.7 (a)   |
+| example plain, unfused attention, same nodes     |          148.4 |           57.7 |         311.9 |         128.3 |
+| MoE layer alone, plain (2026-11-02, later)       |          132.6 |           58.8 |         305.1 |         164.6 |
+
+(a) all forty steps and the checksums complete, then the exit segfault of the
+2026-11-02 two-node section (the LCI backend's exit drain delivering a device
+receive, here on PE 10); the row stands, the crash is the open item.
+
+What the fused attention changes. On one node the attention sublayer's
+increment over the MoE-only training step falls from 13.3 to 6.4 ms on
+SmartMoE's routing and from 40.1 to 29.5 on Mixtral's (head size 128, where
+the unfused scores were 4 MB per head and sequence); in serving from 7.4 to
+3.6 and from 19.5 to 12.7. The balancer's gain in the block grows with it,
+because the attention runs on the dispatcher's lane in both arms and shrinking
+it leaves more of the step to the experts: 1.60x in training (85.8 against
+53.6; 1.44x unfused) and 1.73x in serving (32.3 against 18.7; 1.61x unfused).
+On two nodes the training step gains the same 7 to 12 ms (141.4 against
+148.4, 299.8 against 311.9) and the serving step nothing: at 57 and 128 ms it
+is the cross-node exchange, which the attention overlaps either way (on
+SmartMoE's routing the block serves in the MoE-only step's time, 57.2 against
+58.8). The Mixtral serving step with the block is 37 ms under the MoE-only one
+on two nodes (127.8 and 128.3 against 164.6), as it was on 2026-11-02 (126.7):
+the attention's compute spaces the dispatchers' sends out, and the exchange
+that bounds the MoE-only step runs with less contention. The mechanism is not
+measured; it is an open item of this section. Against the A40 pair's fused
+block rows (the 2026-11-04 Delta section, eight A40s over two nodes against
+eight GCDs in one): SmartMoE training is the same step (85.8 against 89.3
+plain, 53.6 against 57.8 with ShedLB) and serving gains more from the copy here
+(18.7 against 27.0, the exchange crossing a GCD pair instead of a node link);
+Mixtral training is the same (169.2 against 170.1) and its serving 1.7x faster
+(68.6 against 118.3), the one-node exchange again.
+
+**The baselines' block rows** (the same allocation: the PyTorch reference and
+Megatron-Core with `--attn`, 32 heads and sequences of 1024; the harness's
+attention is PyTorch's `scaled_dot_product_attention`, on MI250X the aotriton
+flash kernel the example now runs, so the fixture is the same on both sides;
+Megatron with fp32 masters; every two-node log names the Libfabric transport;
+Megatron does not run Mixtral on 16 ranks). The example's rows are those above.
+
+| transformer block, 8 GCDs, ms/step               | SmartMoE train | SmartMoE serve | Mixtral train | Mixtral serve |
+|--------------------------------------------------|---------------:|---------------:|--------------:|--------------:|
+| example plain, fused attention                   |           85.8 |           32.3 |         169.2 |          68.6 |
+| example ShedLB, fused attention                  |           53.6 |           18.7 |         169.3 |          68.6 |
+| PyTorch reference, static                        |          102.3 |           33.5 |         198.5 |          65.2 |
+| Megatron-Core, sequential experts, masters       |           87.3 |           30.4 |         177.7 |          61.3 |
+
+| transformer block, 16 GCDs, ms/step              | SmartMoE train | SmartMoE serve | Mixtral train | Mixtral serve |
+|--------------------------------------------------|---------------:|---------------:|--------------:|--------------:|
+| example plain, fused attention                   |          141.4 |           57.2 |         299.8 |         127.8 |
+| example ShedLB, fused attention                  |           90.8 |           34.2 |   303.3 (a)   |   134.7 (a)   |
+| PyTorch reference, static                        |          174.5 |           63.9 |         360.8 |         125.6 |
+| Megatron-Core, sequential experts, masters       |          150.6 |           58.1 |               |               |
+
+The attention costs the baselines what it costs the example now. Over their
+MoE-only steps on one node the reference pays 9.3 ms in SmartMoE training
+(102.3 against 93.0) and 28 in Mixtral's (198.5 against 170.7), Megatron 10.4
+(87.3 against 76.9) and 32 (177.7 against 145.4), the example 6.4 and 29.5; in
+serving the baselines pay 0 to 11 ms and the example 3.6 and 12.7. The block
+ratios, the same fixture on both sides: on SmartMoE's routing the example
+with ShedLB trains 1.6x faster than Megatron-Core and 1.9x faster than the
+reference on one node (1.7x and 1.9x on two) and serves 1.6x and 1.8x faster
+(1.7x and 1.9x on two); the plain example is level with Megatron in training
+and serving at either node count (85.8 against 87.3 and 32.3 against 30.4;
+141.4 against 150.6 and 57.2 against 58.1) and 1.2x ahead of the reference in
+training. On Mixtral's routing, where there is nothing to balance, the example
+trains 1.05x faster than Megatron and 1.17x faster than the reference on one
+node (1.2x over the reference on two), and in serving both baselines are ahead
+of it on one node (61.3 and 65.2 against 68.6: one all-to-all against one
+message per expert on an exchange-bound step, as in the MoE-only rows) and the
+reference level with it on two (125.6 against 127.8). The ratios sit a little
+under the MoE-only ones (1.73x over Megatron and 2.1x over the reference in
+one-node training), the attention being a fixed cost on every side. On the
+A40 pair the balanced example's block margin over Megatron is 2.2x in
+training; on the Frontier pair 1.7x, the balanced step there being the copy
+exchange's floor of the 2026-11-02 two-node section.
 
 ## Measured 2026-11-02: the same matrix with NCCL on Slingshot, and a serving fix
 
