@@ -229,7 +229,7 @@ first violation.
 | `MC_death_liveness_fix` | 1 | 1 | 1 | 1 | `Inv` + 3 liveness properties | 1,541,300 | 31m56s | pass |
 | `MC_death_liveness_fix_noinv` | 1 | 1 | 1 | 1 | 3 liveness properties | 1,541,300 | 31m22s | pass |
 | `MC_death_3proc_fix` (3 procs x 1 PE) | 0 | 1 | 1 | 1 | `EventuallyDelivered`, `Quiesces` | 210,446 | 2m06s | pass |
-| `MC_death_safety_2msg_fix` | 1 | 1 | 2 | 1 | `Inv`, `TableMonotone` | running (started 16:21, 2026-11-03; 2.3M states after 1 min) | | result to be appended to this line |
+| `MC_death_safety_2msg_fix` | 1 | 1 | 2 | 1 | `Inv`, `TableMonotone` | incomplete: no violation in 455,443,965 distinct states (depth 24, 71.7M states still queued) when TLC stopped after 6 h 00 min with `java.io.IOException: File too large` from its disk-backed state queue (2026-11-03 16:21 to 22:21) | 6 h 00 min | the one-message variant above covers the same deletions with one message in flight; this run is the only one not completed |
 
 ### Reduced protocols, with and without the contract (`Rec = FALSE`)
 
