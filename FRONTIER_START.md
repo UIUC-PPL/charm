@@ -16,7 +16,12 @@ Commits of 2026-11-02 on `rate-aware-gpu-lb`, made in the Delta clone `/u/bhosal
 | bfcdc743e | replication as a balancing decision: `setLBReplica`, the clone and retire decision kinds, `ckClone`/`ckRetire` and the notices to the other copies, ShedLB's group pass with the critical-path rule and the declared exchange cost, the memory contract's clone accounting, `LBManager::LastRoundDecisions`; `tests/charm++/load_balancing/replica_test`; `doc/internals/lb-multiplicity.md`; the manual |
 | 5488fde06 | hapi: a vmm chunk of exactly 2048 MB is refused off-node (the registration ceiling is 2^31 bytes) |
 | 07abb5815 | moe: experts as balancer-made copies (up to four), bf16, serving, real-routing replay, the transformer block, checksums every n steps, ShedLB linked by the Makefile; the FastMoE and Megatron-Core harnesses; the kernel bound found on 2026-11-02 and its fix |
-| the one after | this file |
+| a4ab7a902 | this file |
+| 778631db3, d7a4ad9d4 | the routing traces as a GitHub release; the FastMoE patch and build script |
+| 7f3a67e46 | moe/ref: NCCL on Slingshot through the aws-ofi-nccl plugin, and the transport logged (correction 1 below) |
+| a2c2a1b23 | moe: serving ran two of four partitions (correction 2); the matrix re-measured; `-DMOE_K_PART` |
+| 3bfecb852 | moe/ref: Transformer Engine grouped experts, FasterMoE serving without the per-step collection, fp32 masters (corrections 3 to 5); not pushed at the time of writing |
+| uncommitted | moe: cuDNN fused attention for the block variant, with a startup self-check (item 6); committed once job I below has validated it |
 
 Everything in them was measured on A40s only, one and two nodes (the tables in
 `examples/charm++/cuda/gpudirect/moe/README.md`). On AMD nothing has run since 2026-10-22, when leanmd,
@@ -24,6 +29,71 @@ jacobi3d, chantest and sph3d ran on Frontier and moe only built. The replication
 never `CMK_CUDA`, the MoE example calls only `hapi*` names, its bf16 values are raw 16-bit words with
 hand-written conversions, and `hapi_blas.h` has both vendors' GEMMs, so the port is expected to be a build,
 not a rewrite.
+
+## Corrections since 2026-11-02, and the mistakes behind them (written 2026-11-03)
+
+Read this before trusting any number in the README or in memory. Between 2026-11-02 and 11-03 the user
+asked what a fair comparison must match, and the audit that followed found that several published
+numbers were artefacts of how I had run the baselines or the example, every one of them in the example's
+favour. The pattern was the same each time: a baseline came out slow, and I wrote the number down without
+checking that the baseline had been run the way its authors run it. The README's sections "Measured
+2026-11-02" and "Measured 2026-11-03" hold the corrected tables; the earlier sections carry "superseded"
+notes. Dated, with the cause and what now prevents it:
+
+1. **The NCCL baselines ran without the Slingshot plugin** (every two-node baseline before 2026-11-02).
+   `NCCL_DEBUG=INFO` showed `NET/IB : No device found`: socket transport across the nodes. The baselines
+   gained 11 to 48% on the plugin and every published ratio shrank. `ref/refwrap.sh` now sets what
+   `module load aws-ofi-nccl` sets and logs NCCL's INIT and NET lines, so a rank log without `Using
+   network Libfabric` is known to have run without it. On Frontier the equivalent is RCCL with the
+   `aws-ofi-rccl` plugin: make the harness log the transport there too, and read the line before the
+   number.
+2. **The example served two of its four partitions** (from the four-partition change of 2026-11-01
+   17:20 until a2c2a1b23): the serving branch still looped over partitions 0 and 1, half the
+   dispatchers got unwritten outputs, the serving step looked 30% slower and the serving checksums of the
+   "Copies up to four" paragraph were wrong. Training was right. Now every partition is served and every
+   plain-against-copy serving checksum pair agrees. `-DMOE_K_PART=2` builds the two-partition variant.
+3. **The Megatron-Core arm never ran grouped GEMM.** Megatron-Core 0.20's local layer spec builds
+   `SequentialMLP` whatever `moe_grouped_gemm` says (there is no `GroupedMLP` in 0.20); the grouped path
+   is the Transformer Engine spec, Megatron-LM's default. The harness printed "grouped GEMM" from its flag.
+   `ref/megatron_moe.py --te` runs TE's grouped experts (7 to 10% faster on SmartMoE and Mixtral, nothing
+   on OLMoE) and the header line prints the expert module that ran. On ROCm, Transformer Engine is a
+   separate fork; without it the Megatron arm is the sequential one, and the row must say so.
+4. **FasterMoE's serving step paid a full garbage collection every step** (every FasterMoE serving row
+   before 2026-11-03): my harness collected the autograd graphs FastMoE's fused forward records, and the
+   collection walked every long-lived object, about 55 ms a step. `gc.freeze()` before the loop. With
+   it FasterMoE serves SmartMoE's routing on four GPUs in 27.0 ms/step, equal to the example with ShedLB
+   and ahead of the plain example: its shadow of the hottest expert does in serving what ShedLB's copy
+   does. The published "3.6x over FasterMoE in serving" is void; job G (below) re-measures eight GPUs.
+5. **The baseline harnesses updated bf16 parameters in place**, less work than Megatron-LM's bf16
+   optimizer, which keeps fp32 master weights as the example does. `--master` on both harnesses; job G
+   runs every training arm with it and one arm without, for its cost.
+6. **The example's attention was unfused** (score GEMM, softmax kernel, PV GEMM, and their backward)
+   while the references' attention is PyTorch's fused flash kernel. On SmartMoE's routing the example's
+   attention cost twice the references' (21.6 against 10.4 ms a step in training on eight GPUs). The
+   fused path is cuDNN's attention graphs (`MOE_CUDNN_ATTN`, the Makefile; bf16 only, the fp32 path and
+   the HIP build stay unfused), with a startup self-check that runs one training step on both paths and
+   aborts past a relative L2 error of 5e-2. On Frontier there is no cuDNN: the block rows there carry the
+   mismatch until a fused HIP attention exists (composable kernels' FMHA is the candidate), and the
+   "Block:" header line names the kernels so a row cannot hide it.
+7. **Process mistakes**, each now a rule: I submitted one job to two partitions to race the queue (never;
+   one job in one partition, and the partition the user names is the standing choice: on Delta that is
+   now `gpuA40x4-interactive` by sbatch, after a batch job sat 13 hours); I rebuilt the `moe` binary while
+   a job was running it (an arm died with rc=127; build variants under another name or after the job);
+   and I passed an unparsed flag to a script and lost a job's first 20 seconds (dry-run the arms' argument
+   lines against the scripts' parsers before submitting).
+
+What I check before a baseline number enters a table, from now on: the log names the module and the
+transport that ran, never the flag; a serving step is not slower than the same system's training
+forward; a system's enhanced variant does not lose to its plain one without a written explanation. The
+harness options that make the baselines what their authors run: Megatron `--te --grouped --master`,
+FastMoE training `--master`, FasterMoE serving with the freeze (automatic).
+
+**Pending at the time of writing.** Job G (23497275, two A40 nodes): the Megatron arms with TE experts and
+masters, FastMoE and FasterMoE training with masters, FasterMoE serving fixed, on the three routings and
+the two block variants. Job I (to follow, two nodes): the example's block rows with the fused attention
+against the unfused build, plain and ShedLB, training and serving. Their tables go into a "Measured
+2026-11-04" section of the README; the headline ratios change again, and the Frontier ladder (below)
+should take its A40 reference rows from that section, not from 2026-11-01.
 
 ## What Frontier changes for the experiments
 
@@ -194,6 +264,8 @@ kernel-bound fix of 2026-11-02 still owes (the README's "A kernel bound, found a
    hold under the balancer.
 8. FasterMoE's bf16 numerics (NaN from step 3 to 8; its harness, documented in `ref/README.md`), A40-only
    until FastMoE builds on ROCm.
+9. A fused attention for the HIP build (correction 6 above), so the block rows on Frontier compare the
+   same fixture on both sides; and the transport line of the RCCL harnesses (correction 1).
 
 ## Delta artefacts and where they are
 
@@ -220,3 +292,6 @@ kernel-bound fix of 2026-11-02 still owes (the README's "A kernel bound, found a
 - A hang is a bug to root-cause (stacks; `wrun.sh`'s catcher), never run past; a mitigation is not a fix.
 - Every run: `CHARM_LB_HELPER=near`, `+gpushm +gpupool`, `ulimit -c 0`; no new environment variables for
   one-off experiments; no balancer flags (the runtime self-configures), `+LBShedEps` only for item 4.
+- One job in one partition, the partition the user named; never rebuild a binary a running job uses; a
+  baseline row is written only after its log names what ran (module, transport, attention kernels) and
+  its serving step is no slower than its training forward (the section above).
