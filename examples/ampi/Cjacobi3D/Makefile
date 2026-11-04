@@ -96,24 +96,26 @@ ifeq (1,$(CMK_SUPPORTS_MEMORY_ISOMALLOC))
 endif
 	# Checkpoint after iteration 20 of 40 to log/ (the load balancer keeps
 	# moving ranks at iterations 5, 15, 25, 35), then restart from it on the
-	# same, fewer and more PEs; with TESTRUN_PROCS=2 the restarts use two
-	# processes. The Isomalloc build (jacobi) restores the stack and heap,
-	# the -memory default build (jacobi.pup) restores the chunk with chunk_pup.
+	# same, fewer and more PEs; with TESTRUN_PROCS=2 the runs use two
+	# processes, so the PE counts are even (testrun skips a PE count the
+	# process count does not divide). The Isomalloc build (jacobi) restores
+	# the stack and heap, the -memory default build (jacobi.pup) restores the
+	# chunk with chunk_pup.
 	rm -rf log log.pup
-	$(call run, +p3 ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +balancer RotateLB ) 2>&1 | tee chkpt.log
+	$(call run, +p4 ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +balancer RotateLB ) 2>&1 | tee chkpt.log
 	grep "^jacobi: 40 iterations" chkpt.log
-	$(call run, +p3 ./jacobi.pup 2 2 2 40 -chkpt 20 log.pup +vp8 +balancer RotateLB ) 2>&1 | tee chkpt.pup.log
+	$(call run, +p4 ./jacobi.pup 2 2 2 40 -chkpt 20 log.pup +vp8 +balancer RotateLB ) 2>&1 | tee chkpt.pup.log
 	grep "^jacobi: 40 iterations" chkpt.pup.log
 ifneq ($(RECONVERSE_VA_RANDOMIZED),1)
 	-sync
-	$(call run, +p3 ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +balancer RotateLB +restart log ) 2>&1 | tee restart3.log
-	$(call check_restart,restart3.log,chkpt.log)
-	$(call run, +p2 ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +balancer RotateLB +restart log ) 2>&1 | tee restart2.log
-	$(call check_restart,restart2.log,chkpt.log)
 	$(call run, +p4 ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +balancer RotateLB +restart log ) 2>&1 | tee restart4.log
 	$(call check_restart,restart4.log,chkpt.log)
-	$(call run, +p4 ./jacobi.pup 2 2 2 40 -chkpt 20 log.pup +vp8 +balancer RotateLB +restart log.pup ) 2>&1 | tee restart4.pup.log
-	$(call check_restart,restart4.pup.log,chkpt.pup.log)
+	$(call run, +p2 ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +balancer RotateLB +restart log ) 2>&1 | tee restart2.log
+	$(call check_restart,restart2.log,chkpt.log)
+	$(call run, +p6 ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +balancer RotateLB +restart log ) 2>&1 | tee restart6.log
+	$(call check_restart,restart6.log,chkpt.log)
+	$(call run, +p6 ./jacobi.pup 2 2 2 40 -chkpt 20 log.pup +vp8 +balancer RotateLB +restart log.pup ) 2>&1 | tee restart6.pup.log
+	$(call check_restart,restart6.pup.log,chkpt.pup.log)
 endif
 
 testp: ampi
