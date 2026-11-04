@@ -2,11 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32)
 #include <unistd.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#endif
 //#define PERFORM_DEBUG 1
 #if PERFORM_DEBUG
 #define DEBUG(a) a
@@ -158,8 +160,12 @@ void CharmLibInitWorld(int argc, char **argv) {
 // address (the IPv4 address its hostname resolves to, or the hostname itself)
 // and a port the kernel reports free. The probe socket is closed before
 // returning, so another process can take the port before LCT binds it.
-// Returns the port, or -1 on failure.
+// Returns the port, or -1 on failure (always on Windows, where MPI interop is
+// not supported).
 int CharmInteropPickRendezvous(char *host, int hostlen) {
+#if defined(_WIN32)
+  return -1;
+#else
   char name[256];
   if (gethostname(name, sizeof(name)) != 0) return -1;
   name[sizeof(name) - 1] = '\0';
@@ -190,6 +196,7 @@ int CharmInteropPickRendezvous(char *host, int hostlen) {
     port = ntohs(addr.sin_port);
   close(fd);
   return port;
+#endif
 }
 
 // MPI interop with LCT's tcp bootstrap, which needs no PMI client and no MPI
@@ -197,6 +204,9 @@ int CharmInteropPickRendezvous(char *host, int hostlen) {
 // listens there). An LCT_PMI_BACKEND set by the user is left alone.
 void CharmLibInitWorldTcp(int rank, int size, int local_rank, int local_size,
                           const char *host, int port, int argc, char **argv) {
+#if defined(_WIN32)
+  CmiAbort("CharmLibInit: MPI interop is not supported on Windows");
+#else
   if (getenv("LCT_PMI_BACKEND") == nullptr) {
     char buf[32];
     setenv("LCT_PMI_BACKEND", "tcp", 1);
@@ -213,6 +223,7 @@ void CharmLibInitWorldTcp(int rank, int size, int local_rank, int local_size,
     setenv("LCT_MASTER_PORT", buf, 1);
   }
   CharmLibInitWorld(argc, argv);
+#endif
 }
 
 // CharmLibExit is called for both forms of interop when the application is

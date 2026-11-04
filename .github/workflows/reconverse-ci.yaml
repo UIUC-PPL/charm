@@ -128,6 +128,10 @@ jobs:
       - name: build test
         run: make -C tests/charm++/mpi-interop
       - name: test (2 MPI ranks, mpirun)
+        # libopenmpi-dev pulls in libibverbs, so LCI also builds its ibv
+        # backend and would pick it; the runner has no RDMA device.
+        env:
+          LCI_ATTR_BACKEND: ofi
         run: timeout 600 make -C tests/charm++/mpi-interop test NP=2 LAUNCH="mpirun --oversubscribe -n 2"
 
   # ARM64 Linux (Grace-class systems). Replaces the coverage CircleCI's
