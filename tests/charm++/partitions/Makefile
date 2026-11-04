@@ -46,5 +46,5 @@ smptest: all
 ifeq ($(CMK_NO_PARTITIONS),1)
 	@echo "Skipping test since build does not support partitions"
 else
-	$(call run, ./hello +p4 10 2 +partitions 2 ++ppn 2)
+	$(RUN_PROCS) $(call run, ./hello +p4 10 2 +partitions 2 ++ppn 2)
 endif
