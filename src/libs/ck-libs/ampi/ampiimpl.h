@@ -2560,6 +2560,12 @@ class ampiParent final : public CBase_ampiParent {
 
   void pup(PUP::er &p) noexcept;
 
+  // Checkpoint to the directory dname (empty: in memory). postCheckpoint
+  // copies the name and contributes to the reduction whose target,
+  // checkpointAfterBarrier on rank 0, starts the checkpoint; ResumeThread is
+  // the checkpoint's callback. startCheckpoint is postCheckpoint followed by
+  // blocking the thread.
+  void postCheckpoint(const char* dname) noexcept;
   void startCheckpoint(const char* dname) noexcept;
   void checkpointAfterBarrier() noexcept;
   void Checkpoint(int len, const char* dname) noexcept;
@@ -3247,6 +3253,19 @@ void campi_parent_attached(TCharm *tc, ampiParent *parent) noexcept;
 // Defined in campi.C: per-PE campi setup, called from ampiProcInit on every
 // PE before any rank starts (registers campi's Converse handlers)
 void campi_proc_init() noexcept;
+
+// The actions an AMPI_Migrate info asks for, in the order of its keys
+// (shared by AMPI_Migrate and campi::Migrate). Values "false" add nothing;
+// unknown keys and values are reported with a warning and skipped.
+enum class AmpiMigrateKind { LB_SYNC, LB_ASYNC, CKPT_TO_FILE, CKPT_IN_MEMORY, CKPT_MESSAGE_LOGGING };
+struct AmpiMigrateAction {
+  AmpiMigrateKind kind;
+  std::string dir; // CKPT_TO_FILE: the checkpoint directory
+};
+std::vector<AmpiMigrateAction> ampiParseMigrateInfo(MPI_Info hints) noexcept;
+// Aborts if a nonblocking collective on MPI_COMM_WORLD is outstanding and
+// +ampiMigrateWithCollectives is off (see ampi.C).
+void ampiCheckNoCollectiveOutstanding() noexcept;
 CMI_WARN_UNUSED_RESULT ampi *getAmpiInstance(MPI_Comm comm) noexcept;
 void checkComm(MPI_Comm comm) noexcept;
 void checkRequest(MPI_Request req) noexcept;

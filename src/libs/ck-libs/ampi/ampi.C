@@ -1696,10 +1696,13 @@ TCharm *ampiParent::registerAmpi(ampi *ptr,const ampiCommStruct &s,bool forMigra
    rank 0 off PE 0, where the reduction completes, and the ranks blocked
    forever. The call is collective with one directory name, so rank 0's own
    copy is the one used. */
-void ampiParent::startCheckpoint(const char* dname) noexcept {
+void ampiParent::postCheckpoint(const char* dname) noexcept {
   ckptDirName = dname;
   contribute(CkCallback(CkIndex_ampiParent::checkpointAfterBarrier(), thisProxy[0]));
+}
 
+void ampiParent::startCheckpoint(const char* dname) noexcept {
+  postCheckpoint(dname);
   ampiParent* unused = block();
 }
 
@@ -11785,7 +11788,7 @@ CLINKAGE int AMPI_Get_argc()
 // element through the location manager, and every other communicator lives
 // on a child array (ampi::createNewChildAmpiSync, dynamic insertion) whose
 // broadcasts the runtime stores; neither is checked.
-static void checkNoCollectiveOutstanding() noexcept
+void ampiCheckNoCollectiveOutstanding() noexcept
 {
   if (CkpvAccess(isMigrateWithCollsEnabled)) return;
   ampiParent *parent = getAmpiParent();
@@ -11800,9 +11803,9 @@ static void checkNoCollectiveOutstanding() noexcept
   }
 }
 
-CLINKAGE int AMPI_Migrate(MPI_Info hints)
+std::vector<AmpiMigrateAction> ampiParseMigrateInfo(MPI_Info hints) noexcept
 {
-  AMPI_API("AMPI_Migrate", hints);
+  std::vector<AmpiMigrateAction> actions;
   int nkeys, exists;
   char key[MPI_MAX_INFO_KEY], value[MPI_MAX_INFO_VAL];
 
@@ -11817,20 +11820,10 @@ CLINKAGE int AMPI_Migrate(MPI_Info hints)
     else if (strncmp(key, "ampi_load_balance", MPI_MAX_INFO_KEY) == 0) {
 
       if (strncmp(value, "sync", MPI_MAX_INFO_VAL) == 0) {
-        checkNoCollectiveOutstanding();
-        int oldPe = CkMyPe();
-        TCHARM_Migrate();
-        if (oldPe != CkMyPe()) {
-          removeUnimportantArrayObjsfromPeCache();
-        }
+        actions.push_back({AmpiMigrateKind::LB_SYNC, {}});
       }
       else if (strncmp(value, "async", MPI_MAX_INFO_VAL) == 0) {
-        checkNoCollectiveOutstanding();
-        int oldPe = CkMyPe();
-        TCHARM_Async_Migrate();
-        if (oldPe != CkMyPe()) {
-          removeUnimportantArrayObjsfromPeCache();
-        }
+        actions.push_back({AmpiMigrateKind::LB_ASYNC, {}});
       }
       else if (strncmp(value, "false", MPI_MAX_INFO_VAL) == 0) {
         /* do nothing */
@@ -11854,21 +11847,13 @@ CLINKAGE int AMPI_Migrate(MPI_Info hints)
         else {
           CkAbort("AMPI> Error: No checkpoint directory name given to AMPI_Migrate\n");
         }
-        ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
-        ptr->getParent()->startCheckpoint(&value[offset]);
+        actions.push_back({AmpiMigrateKind::CKPT_TO_FILE, std::string(&value[offset])});
       }
       else if (strncmp(value, "in_memory", MPI_MAX_INFO_VAL) == 0) {
-#if CMK_MEM_CHECKPOINT
-        ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
-        ptr->getParent()->startCheckpoint("");
-#else
-        CkPrintf("AMPI> Error: In-memory checkpoint/restart is not enabled!\n");
-        CkAbort("AMPI> Error: Recompile Charm++/AMPI with CMK_MEM_CHECKPOINT.\n");
-#endif
+        actions.push_back({AmpiMigrateKind::CKPT_IN_MEMORY, {}});
       }
       else if (strncmp(value, "message_logging", MPI_MAX_INFO_VAL) == 0) {
-        CkPrintf("AMPI> Error: Message logging is not enabled!\n");
-        CkAbort("AMPI> Error: Recompile Charm++/AMPI with CMK_MESSAGE_LOGGING.\n");
+        actions.push_back({AmpiMigrateKind::CKPT_MESSAGE_LOGGING, {}});
       }
       else if (strncmp(value, "false", MPI_MAX_INFO_VAL) == 0) {
         /* do nothing */
@@ -11881,7 +11866,54 @@ CLINKAGE int AMPI_Migrate(MPI_Info hints)
       CkPrintf("WARNING: Unknown MPI_Info key given to AMPI_Migrate: %s\n", key);
     }
   }
+  return actions;
+}
 
+CLINKAGE int AMPI_Migrate(MPI_Info hints)
+{
+  AMPI_API("AMPI_Migrate", hints);
+
+  for (const AmpiMigrateAction &a : ampiParseMigrateInfo(hints)) {
+    switch (a.kind) {
+      case AmpiMigrateKind::LB_SYNC: {
+        ampiCheckNoCollectiveOutstanding();
+        int oldPe = CkMyPe();
+        TCHARM_Migrate();
+        if (oldPe != CkMyPe()) {
+          removeUnimportantArrayObjsfromPeCache();
+        }
+        break;
+      }
+      case AmpiMigrateKind::LB_ASYNC: {
+        ampiCheckNoCollectiveOutstanding();
+        int oldPe = CkMyPe();
+        TCHARM_Async_Migrate();
+        if (oldPe != CkMyPe()) {
+          removeUnimportantArrayObjsfromPeCache();
+        }
+        break;
+      }
+      case AmpiMigrateKind::CKPT_TO_FILE: {
+        ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
+        ptr->getParent()->startCheckpoint(a.dir.c_str());
+        break;
+      }
+      case AmpiMigrateKind::CKPT_IN_MEMORY: {
+#if CMK_MEM_CHECKPOINT
+        ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
+        ptr->getParent()->startCheckpoint("");
+#else
+        CkPrintf("AMPI> Error: In-memory checkpoint/restart is not enabled!\n");
+        CkAbort("AMPI> Error: Recompile Charm++/AMPI with CMK_MEM_CHECKPOINT.\n");
+#endif
+        break;
+      }
+      case AmpiMigrateKind::CKPT_MESSAGE_LOGGING:
+        CkPrintf("AMPI> Error: Message logging is not enabled!\n");
+        CkAbort("AMPI> Error: Recompile Charm++/AMPI with CMK_MESSAGE_LOGGING.\n");
+        break;
+    }
+  }
 
   return MPI_SUCCESS;
 }
