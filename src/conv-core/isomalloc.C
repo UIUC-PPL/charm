@@ -891,14 +891,17 @@ CLINKAGE int CmiIsomallocWriteRegion(const char * path)
     /* A restart of this checkpoint is refused whether or not randomization
        is off then: with it off, the code and libraries sit at other
        addresses than the ones the thread stacks hold; with it on, nothing
-       is at a predictable address at all. Said at checkpoint time, where it
-       can still be acted on; the single-process warning at thread creation
-       does not fire, since nothing migrates between processes there. */
+       is at a predictable address at all. The refusal is the load-address
+       check at unpack (pupLoadedObjects in isomalloc-reconverse.C). Said at
+       checkpoint time, where it can still be acted on; the single-process
+       warning at thread creation does not fire, since nothing migrates
+       between processes there. */
     CmiError("Isomalloc> Warning: this checkpoint holds migratable threads written with address "
-             "space layout randomization on%s; it cannot be restarted. Run the program with "
-             "randomization off (Linux: setarch $(uname -m) -R in front of the program; with srun or "
-             "mpirun, which start the tasks themselves, inside the launch: srun ... setarch $(uname -m) "
-             "-R ./pgm) if it is to be restarted from a checkpoint.\n",
+             "space layout randomization on%s; a restart will be refused, because the program and "
+             "its libraries will not be loaded at the addresses the thread stacks hold. Run the "
+             "program with randomization off (Linux: setarch $(uname -m) -R in front of the program; "
+             "with srun or mpirun, which start the tasks themselves, inside the launch: srun ... "
+             "setarch $(uname -m) -R ./pgm) if it is to be restarted from a checkpoint.\n",
              CmiIsomallocAslrUnknown ? " (or /proc/sys/kernel/randomize_va_space could not be read)" : "");
   FILE * f = fopen(path, "w");
   if (f == nullptr)
@@ -1286,16 +1289,10 @@ struct isommap
 
     if (p.isUnpacking())
     {
-      /* A context restored from a checkpoint, as opposed to one arriving by
-         migration, which warnOnceAboutAslr in isomalloc-reconverse.C covers. */
-      if (p.isCheckpoint() && CmiIsomallocAslr)
-        CmiAbort("Isomalloc> Cannot restore a migratable thread from a checkpoint while address space "
-                 "layout randomization is on%s: its stack holds addresses of code and libraries that the "
-                 "loader placed elsewhere in this process. Run the restart with randomization off "
-                 "(Linux: setarch $(uname -m) -R in front of the program; with srun or mpirun, which "
-                 "start the tasks themselves, inside the launch: srun ... setarch $(uname -m) -R ./pgm).",
-                 CmiIsomallocAslrUnknown ? " (/proc/sys/kernel/randomize_va_space could not be read, "
-                                           "so randomization is assumed on)" : "");
+      /* Whether the program and its libraries sit where the thread's stack
+         expects them is checked by the thread's own unpack (pupLoadedObjects
+         in isomalloc-reconverse.C), for a restart from a checkpoint and for
+         a migration alike. Here only the memory range is checked. */
       if (start < isomallocStart || isomallocEnd < allocated_extent)
       {
         if (!restartRegionProblem.empty())
