@@ -52,6 +52,9 @@ CONSTANTS
     DeadSet,    \* with Fix and not Rec: the home keeps only the set of dead lives,
                 \* drops their updates, and clears its entry unconditionally on a
                 \* notice (option C'' of the analysis; needs Sync for liveness).
+    AppSync,    \* TRUE: Kale's weaker condition: the program deletes the element only
+                \* after every application message to it has been processed (none in
+                \* flight or held); runtime messages are not constrained.
     Sync,       \* TRUE: a re-creation happens only after every runtime message of
                 \* the earlier life has been delivered (the contract: a global
                 \* synchronization between the deletion and the re-insertion).
@@ -62,7 +65,7 @@ Proc(p) == p \div PPN
 Ranks(P) == {p \in PEs : Proc(p) = P}
 
 ASSUME Home \in PEs /\ MaxMig \in Nat /\ BCap \in Nat \ {0} /\ Mutation \in 0..4
-ASSUME MaxDel \in Nat /\ MaxCreate \in Nat \ {0} /\ Fix \in BOOLEAN /\ Rec \in BOOLEAN /\ Sync \in BOOLEAN /\ DeadSet \in BOOLEAN
+ASSUME MaxDel \in Nat /\ MaxCreate \in Nat \ {0} /\ Fix \in BOOLEAN /\ Rec \in BOOLEAN /\ Sync \in BOOLEAN /\ DeadSet \in BOOLEAN /\ AppSync \in BOOLEAN
 UseRec == Fix /\ Rec
 UseDead == Fix /\ ~Rec /\ DeadSet
 
@@ -368,6 +371,7 @@ Create(c) ==
 (* again (packed kind: same id, epoch 0).                                      *)
 Delete(h) ==
     /\ holder = h /\ dels < MaxDel /\ pc[h].kind = "idle"
+    /\ (AppSync => (\A r \in net : r.type # "app") /\ (\A p \in PEs : buf[p] = {} /\ pc[p].kind = "idle"))
     /\ LET P == Proc(h)
            T1 == IF tab[P].pe = h THEN Cleared(tab[P]) ELSE tab[P]
            hl1 == IF UseRec /\ h = Home THEN {x \in hl : x.life # creates} ELSE hl

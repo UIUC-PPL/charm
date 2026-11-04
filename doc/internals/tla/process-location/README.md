@@ -26,10 +26,12 @@ Files:
   `Fix`: the home keeps its record of lives; `FALSE` leaves only the two free
   rules, the `MC_*_norec*.cfg` configurations), `DeadSet` (with `Fix` and not
   `Rec`: tags and the home's set of dead lives, no per-life location, the
-  notice clears unconditionally; `MC_*_deadset*.cfg`) and `Sync` (`TRUE`: a
+  notice clears unconditionally; `MC_*_deadset*.cfg`), `Sync` (`TRUE`: a
   re-creation happens only after every runtime message of the earlier life has
   been delivered, the contract of the design document's section 7.8; the
-  `*_sync` configurations).
+  `*_sync` configurations) and `AppSync` (`TRUE`: the element is deleted only
+  when no application message to it is in flight or held, the weaker condition
+  of section 7.8; `*_appsync` configurations).
 - `trace_*.txt` — the counterexamples of the Findings section, cut from the
   TLC output (one state per block). The full logs are not kept here; the
   Results tables give their state counts and times.
@@ -253,6 +255,8 @@ of dead lives, unconditional clear on a notice, no per-life location.
 | `MC_death_3proc_deadset_sync` (3 x 1) | dead set | yes | `EventuallyDelivered`, `Quiesces` | 40,036 | 17s | pass |
 | `MC_death_3proc_deadset` (3 x 1) | dead set | no | `EventuallyDelivered`, `Quiesces` | 144,054 | 1m03s | violated in 14 steps: finding 3 (`trace_deadset_nosync_3proc.txt`) |
 | `MC_death_liveness_deadset_noinv` | dead set | no | 3 liveness properties | 124,974 | 1m04s | violated |
+| `MC_death_3proc_deadset_appsync` (3 x 1) | dead set | AppSync only | `EventuallyDelivered`, `Quiesces` | 98,194 | 1m03s | violated in 12 steps (`trace_appsync_lost_message_3proc.txt`): the weaker condition does not order the notice against the new life's update |
+| `MC_death_liveness_deadset_noinv_appsync` | dead set | AppSync only | 3 liveness properties | 96,305 | 1m03s | violated |
 
 The no-death configurations have more states with `Fix` because the `own`
 mark distinguishes entries that were equal before; the property set is the

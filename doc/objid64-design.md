@@ -836,16 +836,39 @@ In every option the dead set grows with the deletions and is never pruned
 can arrive, which the contract would supply (prune at the synchronization) but
 the runtime cannot see.
 
-**Recommendation.** A, unless the memory at the home is shown to matter for a
-real application, in which case B. The criterion Kale set, no messaging
-overhead in the base scenario, is met by A; the remaining cost is about one
-extra table entry's worth of memory per element, at one PE; and the failure
-mode the record prevents is a silent hang in a race that only appears at scale
-and under load, which is the most expensive kind of defect to find. C is the
-real simplification and is right if the contract is accepted as a rule of the
-programming model; it removes the record but not the tags or the dead set,
-which finding 8 requires in every variant. The model has the switches (`Rec`,
-`DeadSet`, `Sync`) to check whichever is chosen.
+**A weaker contract that does not work.** Kale asked whether "the program
+processes every message to the element before deleting it" would do instead of
+quiescence. It does not: it orders application messages against the deletion,
+while the race is between two runtime messages, the old life's death notice and
+the new life's creation update, which travel from different PEs to the home.
+Modeled as `AppSync` (`MC_death_3proc_deadset_appsync`,
+`MC_death_liveness_deadset_noinv_appsync`): the dead-set protocol still loses a
+message in 12 steps (`trace_appsync_lost_message_3proc.txt`). The condition is
+still what makes a message to a dead element an error of the program rather
+than something the runtime must define; no discard rule follows from it, since
+a message held at the home for an id without location may be for the next life
+and is released by that life's update.
+
+**Decision (Kale, 2026-11-03): A**, the protocol as merged and checked, for
+every array. The per-array version was judged to make the runtime harder to
+read for the maintainer (two protocols, two sets of tests and configurations)
+while only the application programmer gains a simpler model. **C is kept ready
+as the fallback** if shrink/expand, heterogeneous nodes (processes with
+different PE counts) or another feature make the general protocol too complex
+to carry; its contract is the quiescence paragraph above (the weaker condition
+is not enough), and its model configurations (`DeadSet` with `Sync`) stay in
+the model folder so it can be rechecked against whatever the spec has become.
+Switching to C is: delete `homeLives`, `homeReinstall`, the older-than-record
+rule and the clear by match in `homeNoteDeath` (clear unconditionally); keep
+the tags, `deadLives` and the two free rules; add the manual paragraph next to
+`ckDestroy`; rewrite `objid_recreate`'s finding-3 scenario to expect the held
+message; update chapter sections 3.0 and 3.5. Neither shrink/expand nor
+heterogeneous processes change the rules of A as far as this analysis can see:
+the tables are per process and are rebuilt on restart from the re-creations
+(chapter section 5), a restart is a synchronization, so no message of an
+earlier life survives it and the dead set starts empty; and nothing in the
+protocol assumes equal PE counts per process (`CkNodeOf`, the per-process rank
+in the waiter word).
 
 ## 8. Diagnostics and limits (PR 0, can land first)
 
@@ -1182,4 +1205,6 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   home's entry and a message then bounces between the home and the dead PE for ever, in
   recharm's per-PE code too, no re-insertion needed) makes the tag and the dead set necessary
   in every variant; options A (keep), B (array option), C (remove the per-life record, adopt
-  the contract), with A recommended. Decision pending (Kale).
+  the contract). Decided A (Kale, 2026-11-03), C kept as the documented fallback with the
+  quiescence contract; the weaker "all messages to the element processed before deletion"
+  condition was modeled (`AppSync`) and shown insufficient.
