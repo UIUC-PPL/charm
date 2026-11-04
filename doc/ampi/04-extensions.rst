@@ -441,8 +441,10 @@ program is checkpointed to this directory. One can restart the program
 from the checkpointed state (using the same, more, or fewer physical
 processors than were checkpointed with) by specifying
 ``"+restart directory_name"`` on the command-line. The ranks' stacks and
-heaps return to the addresses they had, so the restart needs address
-space layout randomization off: on Linux, run it under
+heaps return to the addresses they had, and the restart checks that the
+program is loaded at the same addresses as in the run that wrote the
+checkpoint, so both that run and the restart need address space layout
+randomization off: on Linux, run each of them under
 ``setarch $(uname -m) -R``, placed in front of the program, which with
 ``srun`` or ``mpirun`` means inside the launch (``srun ... setarch
 $(uname -m) -R ./pgm +restart dir``). The restart must also run under
@@ -453,7 +455,7 @@ The example ``examples/ampi/Cjacobi3D`` shows this. The run
 
 .. code-block:: bash
 
-   $ ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 3
+   $ setarch $(uname -m) -R ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 3
 
 writes a checkpoint of all eight ranks to the directory ``log`` after
 iteration 20 and runs on to iteration 40, and

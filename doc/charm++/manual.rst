@@ -8595,10 +8595,12 @@ application when the availability of computing resources changes.
 
 Migratable threads (AMPI ranks, TCharm threads and threaded entry
 methods whose stacks Isomalloc manages) are restored at the addresses
-they had when the checkpoint was written, so a restart needs address
-space layout randomization off, as a migration between processes does.
-On Linux, run the restart under ``setarch $(uname -m) -R``, placed in
-front of the program. A launcher that forks the processes itself
+they had when the checkpoint was written, and the restart checks that
+the program is loaded at the same addresses as in the run that wrote the
+checkpoint. So both the run that writes the checkpoint and the restart
+need address space layout randomization off, as a migration between
+processes does: on Linux, run both under ``setarch $(uname -m) -R``,
+placed in front of the program. A launcher that forks the processes itself
 (``lcrun``) passes the setting on, so there it may also go in front of
 the launcher; ``srun`` and ``mpirun`` start the tasks through their own
 daemons, which do not inherit it, so with them it goes inside the launch:

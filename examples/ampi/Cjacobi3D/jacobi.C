@@ -24,12 +24,14 @@
  * rank inside that AMPI_Migrate call and runs iterations ITER+1 to nIter.
  * The program's own arguments are not read again on a restart (the ranks
  * resume with their saved stacks), but "+vp" must name the same number of
- * ranks. The restart needs address space layout randomization off, so on
- * Linux it is run under "setarch $(uname -m) -R" (see the AMPI manual,
- * "Checkpointing and Fault Tolerance"); the Makefile's test target does
- * this through testrun. For example:
+ * ranks. Both the run that writes the checkpoint and the restart need
+ * address space layout randomization off, because the restart checks that
+ * the program is loaded at the same addresses as in the run that wrote the
+ * checkpoint, so on Linux both are run under "setarch $(uname -m) -R" (see
+ * the AMPI manual, "Checkpointing and Fault Tolerance"); the Makefile's
+ * test target does this through testrun. For example:
  *
- *   ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 3
+ *   setarch $(uname -m) -R ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 3
  *   setarch $(uname -m) -R ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 4 +restart log
  *
  * Three links of the same source are built: jacobi (Isomalloc heap and the
