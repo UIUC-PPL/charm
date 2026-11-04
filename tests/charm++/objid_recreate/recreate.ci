@@ -1,0 +1,18 @@
+mainmodule recreate {
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Elem arrProxy;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry void done(CkReductionMsg *m);
+  };
+
+  array [1D] Elem {
+    entry Elem();
+  };
+
+  group Driver {
+    entry Driver();
+    entry void run();
+  };
+};

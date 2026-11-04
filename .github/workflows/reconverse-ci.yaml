@@ -64,6 +64,9 @@ env:
     tests/charm++/dynamic_insertion_deletion
     tests/charm++/objid_insert
     tests/charm++/objid_wide
+    tests/charm++/objid_migrate6
+    tests/charm++/objid_loctable
+    tests/charm++/objid_recreate
     tests/charm++/anytime_bcastred
     tests/charm++/atsync_reduction
     tests/charm++/threaded_redn
