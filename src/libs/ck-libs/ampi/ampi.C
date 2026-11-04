@@ -11805,9 +11805,20 @@ void ampiCheckNoCollectiveOutstanding() noexcept
   }
 }
 
-std::vector<AmpiMigrateAction> ampiParseMigrateInfo(MPI_Info hints) noexcept
+int ampiParseMigrateInfo(MPI_Info hints, AmpiMigrateAction *out, int max) noexcept
 {
-  std::vector<AmpiMigrateAction> actions;
+  int n = 0;
+  auto add = [&](AmpiMigrateKind kind, const char *dir) {
+    if (n == max)
+      CkAbort("AMPI> Error: AMPI_Migrate info asks for more than %d actions\n", max);
+    out[n].kind = kind;
+    out[n].dir[0] = '\0';
+    if (dir != nullptr) {
+      strncpy(out[n].dir, dir, sizeof(out[n].dir) - 1);
+      out[n].dir[sizeof(out[n].dir) - 1] = '\0';
+    }
+    n++;
+  };
   int nkeys, exists;
   char key[MPI_MAX_INFO_KEY], value[MPI_MAX_INFO_VAL];
 
@@ -11822,10 +11833,10 @@ std::vector<AmpiMigrateAction> ampiParseMigrateInfo(MPI_Info hints) noexcept
     else if (strncmp(key, "ampi_load_balance", MPI_MAX_INFO_KEY) == 0) {
 
       if (strncmp(value, "sync", MPI_MAX_INFO_VAL) == 0) {
-        actions.push_back({AmpiMigrateKind::LB_SYNC, {}});
+        add(AmpiMigrateKind::LB_SYNC, nullptr);
       }
       else if (strncmp(value, "async", MPI_MAX_INFO_VAL) == 0) {
-        actions.push_back({AmpiMigrateKind::LB_ASYNC, {}});
+        add(AmpiMigrateKind::LB_ASYNC, nullptr);
       }
       else if (strncmp(value, "false", MPI_MAX_INFO_VAL) == 0) {
         /* do nothing */
@@ -11849,13 +11860,13 @@ std::vector<AmpiMigrateAction> ampiParseMigrateInfo(MPI_Info hints) noexcept
         else {
           CkAbort("AMPI> Error: No checkpoint directory name given to AMPI_Migrate\n");
         }
-        actions.push_back({AmpiMigrateKind::CKPT_TO_FILE, std::string(&value[offset])});
+        add(AmpiMigrateKind::CKPT_TO_FILE, &value[offset]);
       }
       else if (strncmp(value, "in_memory", MPI_MAX_INFO_VAL) == 0) {
-        actions.push_back({AmpiMigrateKind::CKPT_IN_MEMORY, {}});
+        add(AmpiMigrateKind::CKPT_IN_MEMORY, nullptr);
       }
       else if (strncmp(value, "message_logging", MPI_MAX_INFO_VAL) == 0) {
-        actions.push_back({AmpiMigrateKind::CKPT_MESSAGE_LOGGING, {}});
+        add(AmpiMigrateKind::CKPT_MESSAGE_LOGGING, nullptr);
       }
       else if (strncmp(value, "false", MPI_MAX_INFO_VAL) == 0) {
         /* do nothing */
@@ -11868,14 +11879,20 @@ std::vector<AmpiMigrateAction> ampiParseMigrateInfo(MPI_Info hints) noexcept
       CkPrintf("WARNING: Unknown MPI_Info key given to AMPI_Migrate: %s\n", key);
     }
   }
-  return actions;
+  return n;
 }
 
 CLINKAGE int AMPI_Migrate(MPI_Info hints)
 {
   AMPI_API("AMPI_Migrate", hints);
 
-  for (const AmpiMigrateAction &a : ampiParseMigrateInfo(hints)) {
+  // Plain data on the rank's stack: the stack moves with the thread across
+  // TCHARM_Migrate and a restart from a checkpoint, a process-heap block
+  // (std::vector, std::string) does not.
+  AmpiMigrateAction actions[AMPI_MIGRATE_MAX_ACTIONS];
+  const int nactions = ampiParseMigrateInfo(hints, actions, AMPI_MIGRATE_MAX_ACTIONS);
+  for (int i = 0; i < nactions; i++) {
+    const AmpiMigrateAction &a = actions[i];
     switch (a.kind) {
       case AmpiMigrateKind::LB_SYNC: {
         ampiCheckNoCollectiveOutstanding();
@@ -11897,7 +11914,7 @@ CLINKAGE int AMPI_Migrate(MPI_Info hints)
       }
       case AmpiMigrateKind::CKPT_TO_FILE: {
         ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
-        ptr->getParent()->startCheckpoint(a.dir.c_str());
+        ptr->getParent()->startCheckpoint(a.dir);
         break;
       }
       case AmpiMigrateKind::CKPT_IN_MEMORY: {

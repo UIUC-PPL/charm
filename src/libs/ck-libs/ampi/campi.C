@@ -501,8 +501,10 @@ task<int> Migrate(MPI_Info hints) {
     co_return MPI_SUCCESS;
   }
 
-  std::vector<AmpiMigrateAction> actions = ampiParseMigrateInfo(hints);
-  for (const AmpiMigrateAction &a : actions) {
+  AmpiMigrateAction actions[AMPI_MIGRATE_MAX_ACTIONS];
+  const int nactions = ampiParseMigrateInfo(hints, actions, AMPI_MIGRATE_MAX_ACTIONS);
+  for (int i = 0; i < nactions; i++) {
+    const AmpiMigrateAction &a = actions[i];
     if (a.kind == AmpiMigrateKind::LB_ASYNC)
       CkAbort("campi: AMPI_Migrate with ampi_load_balance=async is not supported in campi");
     if (a.kind == AmpiMigrateKind::CKPT_IN_MEMORY)
@@ -511,7 +513,7 @@ task<int> Migrate(MPI_Info hints) {
       CkAbort("campi: AMPI_Migrate with ampi_checkpoint=message_logging is not supported in campi");
   }
   // A rank that moves in the first action would skip the second one.
-  if (actions.size() > 1)
+  if (nactions > 1)
     CkAbort("campi: AMPI_Migrate with more than one action (load balancing and checkpoint "
             "together) is not supported in campi; use two sites");
   check_no_outstanding_request(getAmpiParent());
@@ -523,7 +525,7 @@ task<int> Migrate(MPI_Info hints) {
     co_await suspend();
     CkAbort("campi: a rank resumed in a frame destroyed by +campi_fakemigrate");
   }
-  if (actions.empty()) co_return MPI_SUCCESS;
+  if (nactions == 0) co_return MPI_SUCCESS;
 
   const AmpiMigrateAction &a = actions[0];
   if (a.kind == AmpiMigrateKind::LB_SYNC) {
@@ -543,7 +545,7 @@ task<int> Migrate(MPI_Info hints) {
     co_await Barrier(MPI_COMM_WORLD);
     r = current();
     r->migrateDone = false;
-    getAmpiParent()->postCheckpoint(a.dir.c_str());
+    getAmpiParent()->postCheckpoint(a.dir);
     while (!r->migrateDone) co_await suspend();
   }
   co_return MPI_SUCCESS;

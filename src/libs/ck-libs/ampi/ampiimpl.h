@@ -3261,12 +3261,17 @@ void campi_migrate_resumed(TCharm *tc) noexcept;
 // The actions an AMPI_Migrate info asks for, in the order of its keys
 // (shared by AMPI_Migrate and campi::Migrate). Values "false" add nothing;
 // unknown keys and values are reported with a warning and skipped.
+// ampiParseMigrateInfo writes at most max actions to out (aborting if the
+// info asks for more) and returns their number. AmpiMigrateAction is plain
+// data, so that thread AMPI can keep the list on the rank's stack, which
+// migrates with the thread, unlike blocks of the process heap.
 enum class AmpiMigrateKind { LB_SYNC, LB_ASYNC, CKPT_TO_FILE, CKPT_IN_MEMORY, CKPT_MESSAGE_LOGGING };
 struct AmpiMigrateAction {
   AmpiMigrateKind kind;
-  std::string dir; // CKPT_TO_FILE: the checkpoint directory
+  char dir[MPI_MAX_INFO_VAL]; // CKPT_TO_FILE: the checkpoint directory
 };
-std::vector<AmpiMigrateAction> ampiParseMigrateInfo(MPI_Info hints) noexcept;
+#define AMPI_MIGRATE_MAX_ACTIONS 8
+int ampiParseMigrateInfo(MPI_Info hints, AmpiMigrateAction *out, int max) noexcept;
 // Aborts if a nonblocking collective on MPI_COMM_WORLD is outstanding and
 // +ampiMigrateWithCollectives is off (see ampi.C).
 void ampiCheckNoCollectiveOutstanding() noexcept;
