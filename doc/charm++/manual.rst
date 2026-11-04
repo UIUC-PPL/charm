@@ -9820,6 +9820,10 @@ with a pure MPI program:
 -  Include ``mpi-interoperate.h`` - if not included in the files that call
    ``CkExit``, invoking ``CkExit`` will result in unspecified behavior.
 
+-  Include ``mpi.h`` before ``mpi-interoperate.h``: ``CharmLibInit`` is
+   declared only when ``mpi.h`` has already been included (or
+   ``CMK_INTEROP_USE_MPI`` is defined).
+
 -  Since the ``CharmLibInit`` call invokes the constructors of mainchares,
    the constructors of mainchares should only perform basic set up such
    as creation of chare arrays etc, i.e. the set up should not result in
@@ -9867,7 +9871,7 @@ initial set up of Charm++. It is advisable to call an ``MPI_Barrier`` after
 a control transfer between Charm++ and MPI to avoid any side effects.
 Thereafter, a Charm++ library can be invoked at any point using the
 interface functions. One may look at
-``examples/charm++/mpi-coexist/multirun.cpp`` for a working example. Based
+``examples/charm++/mpi-coexist/multirun_time.cpp`` for a working example. Based
 on the way interfaces are defined, a library can be invoked multiple
 times. In the end, one should call ``CharmLibExit`` to free resources
 reserved by Charm++. ``CharmLibExit`` returns; the program can continue to
@@ -9901,6 +9905,15 @@ example, ``srun --mpi=cray_shasta`` for Cray MPICH under Slurm). With a
 launcher that does not match the MPI library, each process becomes its
 own one-rank MPI job; ``CharmLibInit`` prints a warning when it detects
 this.
+
+Under ``srun``, add ``--kill-on-bad-exit``: an abort in one process does
+not yet end the other processes of an interop job, and without the option
+they wait until the job's time limit.
+
+On HPE Slingshot (the CXI libfabric provider), export
+``FI_CXI_RX_MATCH_MODE=hybrid`` in the job script. Reconverse sets it
+before LCI starts, but in an MPI program ``MPI_Init`` has already
+initialized libfabric, so that setting may come too late.
 
 User Driven Mode
 ~~~~~~~~~~~~~~~~

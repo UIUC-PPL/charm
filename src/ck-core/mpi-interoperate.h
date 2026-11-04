@@ -47,6 +47,11 @@ void StopCharmScheduler();
 // MPI_COMM_WORLD rank i. After CharmLibExit returns the program may keep
 // using MPI and must call MPI_Finalize itself.
 static inline void CharmLibInit(MPI_Comm userComm, int argc, char **argv) {
+#if defined(_WIN32)
+  fprintf(stderr, "CharmLibInit: MPI interop is not supported on Windows\n");
+  fflush(stderr);
+  MPI_Abort(MPI_COMM_WORLD, 1);
+#endif
   int cmp = MPI_UNEQUAL, rank = -1, size = 0;
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -99,6 +104,10 @@ static inline void CharmLibInit(MPI_Comm userComm, int argc, char **argv) {
   MPI_Comm_rank(local, &local_rank);
   MPI_Comm_size(local, &local_size);
   MPI_Comm_free(&local);
+  // Read before CharmLibInitWorldTcp, which sets the variable when it is unset.
+  char userPmi[32] = "";
+  if (const char *p = getenv("LCT_PMI_BACKEND"))
+    snprintf(userPmi, sizeof(userPmi), "%s", p);
   CharmLibInitWorldTcp(rank, size, local_rank, local_size, host, port, argc,
                        argv);
   if (CmiMyNode() != rank || CmiNumNodes() != size) {
@@ -107,6 +116,11 @@ static inline void CharmLibInit(MPI_Comm userComm, int argc, char **argv) {
             "of %d; the launcher gave Charm++ and MPI different process "
             "numbering, which MPI interop requires to match.\n",
             CmiMyNode(), CmiNumNodes(), rank, size);
+    if (userPmi[0])
+      fprintf(stderr,
+              "CharmLibInit: LCT_PMI_BACKEND=%s was set in the environment, "
+              "so LCI did not use the tcp bootstrap that CharmLibInit sets "
+              "up; unset it for MPI interop.\n", userPmi);
     fflush(stderr);
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
