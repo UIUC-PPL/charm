@@ -853,6 +853,9 @@ public:
 
   /// Return true if this array element lives on another processor
   bool isRemote(const CkArrayIndex& idx, int* onPe) const;
+  /// More than one array shares this manager (bound arrays): an entry for an
+  /// index may be a live sibling's (doc/internals/object-ids.md, section 3).
+  bool servesBoundArrays() const { return managers.size() > 1; }
   bool isRemote(const CmiUInt8 id) const {
     return elementNrec(id) == nullptr;
   }

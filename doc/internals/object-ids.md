@@ -137,7 +137,11 @@ the element died on the home and from `reclaimRemote` otherwise); a message that
 still reaches a PE by id for a deleted element is handed to the home, which
 recovers the index from that table, in constant time, and holds the message by
 index until an element of that index exists again (or creates one, if the message
-asks for demand creation).
+asks for demand creation). The other processes keep the dead element's location,
+and one of them may be told to create it again (`createhere`, or an insertion):
+`CkArray::insertElement` does not follow that entry. It forwards an insertion to
+the PE the entry names only when the location manager serves bound arrays
+(`CkLocMgr::servesBoundArrays`), where the entry is a live sibling's.
 
 Re-creation under a new id: an element inserted without a PE argument lands on
 the map's PE, which for the hashed kind is not its home, so a deleted index

@@ -1094,10 +1094,12 @@ bool CkArray::insertElement(CkArrayMessage* m, const CkArrayIndex& idx,
 {
   CK_MAGICNUMBER_CHECK
   int onPe;
-  // Element's sibling already lives somewhere else, so insert there instead.
+  // Bound arrays: the sibling already lives somewhere else, so insert there instead.
+  // For a single array an entry naming another PE is a dead element's (charm #4031;
+  // doc/internals/object-ids.md, section 3), and the element is created here.
   // TODO: What if it's remote but we don't know it? Creation is not necessarily routed
   // through home like demand creation is, which can cause problems.
-  if (locMgr->isRemote(idx, &onPe))
+  if (locMgr->servesBoundArrays() && locMgr->isRemote(idx, &onPe))
   {
     thisProxy[onPe].insertElement(m, idx, listenerData);
     return false;

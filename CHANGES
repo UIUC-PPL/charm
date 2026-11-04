@@ -87,6 +87,13 @@ New on this line since the split from classic:
   or to the checkpoint format. New tests objid_loctable,
   objid_migrate6 and objid_recreate.
 
+- Re-creating a destroyed array element by [createhere] from a PE whose
+  process still held the dead element's location created it on the PE
+  the element died on (#4031, defect 1; predates the redesign). An
+  insertion now follows the index's entry only for bound arrays, where
+  the entry is a live sibling's. objid_insert phase 6 re-creates half
+  of the destroyed elements this way.
+
 - Broadcasts and [nokeep] entry methods: fixes for message reuse and
   copies (#4000-#4012). Checkpoint restart no longer hangs with more
   than one process and more than one PE per process (#4019). The

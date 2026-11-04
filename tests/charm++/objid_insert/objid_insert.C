@@ -38,13 +38,18 @@
 //           the home (a limitation that predates the redesign). Then phase 2.
 //  Phase 5  Half the elements ckDestroy() themselves; phase 2 over the
 //           survivors (section 4.2 reclaimRemote, section 5 "Deletion").
-//  Phase 6  Re-creation of the destroyed elements by revive (createhome,
-//           every PE sends): every sender still holds their ids and stale
-//           locations, so the messages arrive by id at a PE that has no
-//           record of the element, and for the hashed kind cannot name its
-//           index; only the home can (section 3.4). Each must be created
-//           exactly once, at its home. Then phase 2 over everything and a
-//           final count.
+//  Phase 6  Re-creation of the destroyed elements: every sender still holds
+//           their ids and stale locations, so the messages arrive by id at a
+//           PE that has no record of the element, and for the hashed kind
+//           cannot name its index; only the home can (section 3.4). Half of
+//           them (deadHere) come back by reviveHere (createhere) from ONE
+//           sender, a PE in a process other than the home's when there is one:
+//           that process still holds the dead element's location unless the
+//           element died there, and the creating PE's insertElement must not
+//           follow that entry (charm #4031, defect 1). The rest come back by
+//           revive (createhome, every PE sends). Each must be created exactly
+//           once, on its createhere sender or at its home. Then phase 2 over
+//           everything and a final count.
 //  Phase 7  Re-creation under a new id (needs 3 or more PEs). Phase 1 also
 //           inserts K "fresh" elements (700+pe,k) on each PE. One PE per fresh
 //           index, freshPe(x,y) (neither its inserter nor its home), never
@@ -67,13 +72,12 @@
 //           reply by index names the new id, and re-addressed there
 //           (CkLocMgr::retiredIds, CkArray::releaseRetiredMsgs). A second ping
 //           round runs over the bindings the first one taught.
-//           Re-creation by createhere is NOT tested: it fails for two reasons
-//           that predate the redesign and are out of its scope. The creating
-//           PE's insertElement follows its own stale location entry for the
-//           dead element (the isRemote redirect meant for bound siblings) and
-//           forwards the constructor elsewhere; and a re-created element
-//           starts again at epoch 0, so every stale cache rejects its location
-//           (debug builds assert in CkLocCache::insert on the creating PE).
+//           Of the two defects charm #4031 names for a re-creation by
+//           createhere, phase 6 checks the first (placement). The second, a
+//           re-created element's updates rejected by processes that still
+//           hold the old life's higher epoch, costs those processes a detour
+//           through the home on every send; delivery stays correct and this
+//           test does not measure it.
 //
 // Options: -b packed kind; -k K elements per PE per pattern (default 16);
 //          +messageBufferingThreshold 0 (runtime option): every message is held
@@ -143,9 +147,13 @@ static Kind kindOf(int x) {
   if (x >= 300) return CREATEHOME;
   return INSERTED;  // (pe,k) and (pe+100,k), inserted in phase 1
 }
-// Whether a demand creation of (x,y) must use createhere. A destroyed element
-// (phase 6) always comes back by createhome: see the header on createhere.
-static bool createsHere(int x, int y) { return kindOf(x) == CREATEHERE; }
+// Whether a demand creation of (x,y) uses createhere: the (500+pe,k) indices of
+// phase 4b, and half of the elements destroyed in phase 5 (phase 6; a bit of the
+// hash that chose them, other than the one diesAt reads).
+static bool deadHere(int x, int y) { return (mixIdx(x, y, destroySeed) >> 8) & 1; }
+static bool createsHere(int x, int y) {
+  return kindOf(x) == CREATEHERE || (kindOf(x) == INSERTED && deadHere(x, y));
+}
 static int homeOf(int x, int y) {
   return arrProxy.ckLocMgr()->homePe(CkArrayIndex2D(x, y));
 }
@@ -177,8 +185,17 @@ static bool skipsFresh(int x, int y, int pe) {
 static int freshSkippers(int x, int y) {
   return freshIsolated(x, y) ? CkNodeSize(CkNodeOf(freshPe(x, y))) : 1;
 }
-// The single PE that sends a createhere message to (x,y): the PE after its home.
-static int hereSender(int x, int y) { return (homeOf(x, y) + 1) % CkNumPes(); }
+// The single PE that sends a createhere message to (x,y): the PE after its home
+// for phase 4b; for a re-creation (phase 6) the first PE after the home in a
+// process other than the home's, when there is one, so that its process still
+// holds the dead element's location (the home's process cleared it at the death).
+static int hereSender(int x, int y) {
+  int P = CkNumPes(), h = homeOf(x, y);
+  if (kindOf(x) == INSERTED)
+    for (int f = (h + 1) % P, n = 0; n < P; f = (f + 1) % P, n++)
+      if (CkNodeOf(f) != CkNodeOf(h)) return f;
+  return (h + 1) % P;
+}
 // The PE a demand-created (x,y) must be constructed on.
 static int creationPe(int x, int y) {
   return createsHere(x, y) ? hereSender(x, y) : homeOf(x, y);
@@ -270,7 +287,7 @@ public:
     script.push_back({DESTROY, destroySeed, "destroy half"});
     script.push_back({PING, 0, "sends to survivors"});
     if (doDemand) {
-      script.push_back({REVIVE_DEAD, 0, "re-creation of destroyed elements"});
+      script.push_back({REVIVE_DEAD, 0, "re-creation of destroyed elements (createhome, createhere)"});
       script.push_back({PING, 0, "sends after re-creation"});
     }
     if (doFresh) {

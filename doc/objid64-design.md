@@ -1232,3 +1232,13 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
 - 2026-11-04 (Kale): PR 3 (#4123) retargeted from objid-redesign to recharm, with recharm
   merged into it first. objid-redesign carried nothing beyond recharm except PR 3, so the
   separate "part 3" PR of section 9.1 would have been a second review of the same change.
+- 2026-11-04: #4123 squash-merged into recharm as 4cf20af1c (Ritvik's approval). The three
+  parts of the redesign are on the reviewed line; objid-redesign carries nothing beyond it.
+- 2026-11-04 (#4031, defect 1): `CkArray::insertElement` forwards an insertion to the PE the
+  index's entry names only when the location manager serves bound arrays
+  (`CkLocMgr::servesBoundArrays`). For a single array such an entry is a dead element's
+  (the other processes keep it after a death, section 3.5 of the process-location chapter),
+  and a `createhere` re-creation followed it to the PE the element died on. `objid_insert`
+  phase 6 now re-creates half of the destroyed elements by `createhere` from a PE outside
+  the home's process. Defect 2 of #4031 (a re-created life's updates rejected by processes
+  holding the old life's higher epoch; a detour, not a misdelivery) stays open.
