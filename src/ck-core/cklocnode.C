@@ -177,16 +177,23 @@ uint64_t LocTable::store(uint64_t key, int pe, int epoch, bool arriving)
   return w;
 }
 
-uint64_t LocTable::update(uint64_t key, int pe, int epoch, bool arriving, bool* written)
+// An entry a PE of this process wrote about itself (section 3.5).
+static inline bool ownWrite(const LocTable::Value& c)
+{
+  return c.hasLocation() && !c.byMessage() && CmiNodeOf(c.pe()) == CmiMyNode();
+}
+
+uint64_t LocTable::update(uint64_t key, int pe, int epoch, bool arriving, bool* written,
+                          bool received)
 {
   Slot* s = findOrInsert(key);
-  const uint64_t want = Value::make(pe, epoch, arriving).raw;
+  const uint64_t want = Value::make(pe, epoch, arriving, received).raw;
   uint64_t cur = s->value.load(std::memory_order_acquire);
   for (;;)
   {
     Value c;
     c.raw = cur;
-    if (c.hasLocation() && epoch <= c.epoch())
+    if (c.hasLocation() && (epoch <= c.epoch() || (received && ownWrite(c))))
     {
       if (written) *written = false;
       return 0;
@@ -223,11 +230,11 @@ int LocTable::recordEmigration(uint64_t key, int fromPe, int toPe)
   }
 }
 
-bool LocTable::clear(uint64_t key, int ifPe, int ifEpoch)
+bool LocTable::clear(uint64_t key, int ifPe, int ifEpoch, bool keepOwn)
 {
   Slot* s = find(key);
   if (s == nullptr) return false;
-  if (ifPe < 0)
+  if (ifPe < 0 && !keepOwn)
   {
     s->value.store(0, std::memory_order_release);
     return true;
@@ -237,7 +244,8 @@ bool LocTable::clear(uint64_t key, int ifPe, int ifEpoch)
   {
     Value c;
     c.raw = cur;
-    if (!c.hasLocation() || c.pe() != ifPe || (ifEpoch >= 0 && c.epoch() != ifEpoch))
+    if (!c.hasLocation() || (ifPe >= 0 && c.pe() != ifPe) ||
+        (ifEpoch >= 0 && c.epoch() != ifEpoch) || (keepOwn && ownWrite(c)))
       return false;
     if (s->value.compare_exchange_weak(cur, 0, std::memory_order_acq_rel,
                                        std::memory_order_acquire))

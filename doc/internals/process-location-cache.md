@@ -183,8 +183,8 @@ pending table is not needed while requests are addressed to PEs (section 9).
 | creation (W1) | the creating PE | location {self, epoch 0}; hashed kind: index binding |
 | emigration (W2) | the source PE, before the migration message is sent | location {destination, epoch+1}: a forwarding entry, kept |
 | immigration (W3) | the destination PE | location {self, epoch from the message} |
-| update from another PE or process (W4) | the PE that receives the update or the reply | location, by epoch compare; hashed kind: index binding |
-| death (W5) | the owning PE, and the home PE that handles the reclaim | value 0 (no location) while the entry names the dying PE and epoch or, at the home, a location the home recorded for the dying life (section 3.5); waiter bits kept; hashed kind: index binding kept, id retired |
+| update from another PE or process (W4) | the PE that receives the update or the reply | location, by epoch compare, marked as written from a message, never over what a PE of this process wrote about itself (section 3.5); hashed kind: index binding |
+| death (W5) | the owning PE, and the home PE that handles the reclaim | value 0 (no location) while the entry names the dying PE and epoch or, at the home, a location the home recorded for the dying life, never over what a PE of the home's process wrote about itself (section 3.5); waiter bits kept; hashed kind: index binding kept, id retired |
 
 Every write is one CAS or one store; the writer sends messages (wake-ups,
 replies) after it, never while holding anything. W2 is written before the
@@ -344,11 +344,13 @@ nothing changes at the other PEs.
 
 At the home:
 
-- An update of a life known dead is dropped, after clearing the entry while it
-  still names that update's location: the home may have missed the update when
-  the notice came, and the notice could not clear what it did not know of.
-  Every other update is recorded for its life and applied to the table by the
-  epoch compare (W4), as before.
+- An update of a life known dead, or one older than the location the home has
+  recorded for its life, is dropped, after clearing the entry while it still
+  names that update's location: the home may have missed the update when the
+  notice came, and the notice could not clear what it did not know of; applied,
+  it would revive a cleared entry with a state the life has left. Every other
+  update is recorded for its life and applied to the table by the epoch compare
+  (W4), as before.
 - A death notice adds the life to the dead set, forgets its record, and clears
   the entry while it names where the life died or any location the home had
   recorded for that life. A later life's entry under the same id survives the
@@ -357,6 +359,25 @@ At the home:
 - When a notice or a dropped update leaves the entry empty and another life is
   recorded, that life is installed through the update path (`homeReinstall`),
   which also releases the location requests and the messages held at the home.
+
+Everywhere, a value written from a received update (W4) carries a mark in the
+value word (`byMessage`), and what a PE of this process wrote about itself
+(W1, W2, W3: unmarked, naming a PE of the process) is never replaced by a
+received update, nor cleared by the home on a death notice. Those writes are
+synchronous, before any message about them exists, so a message that
+contradicts one is from an earlier life: a sender repair or a reply by id of
+the old life, arriving after the index was re-created in this process, would
+otherwise put a dead PE at a higher epoch into the live element's own entry,
+which per-PE caches could not suffer (the TLA+ check found the by-id form; the
+independent model, the by-index form). The same rule closes the late death
+notice that would clear a same-PE re-creation. A received update that names a
+PE of this process is still applied to an empty or marked entry, so a reply
+about an element landing here keeps releasing the held messages; the landing's
+own store (W3) replaces it. In the home's process, replies and repairs by id
+are dropped altogether (`CkLocCache::updateLocation`): they carry no life, the
+home's by-index path and the process's own writes keep that entry, and a dead
+life's repair arriving there after the notice would otherwise revive the entry
+at epoch 0 and keep the new life's creation update out for good.
 
 The record is needed because epochs restart at 0 with each life, so the epoch
 compare cannot order two lives. Without it, a death notice that reaches the
@@ -565,18 +586,12 @@ Existing: `tests/charm++/anytime_migration`, `anytime_bcastred`,
   measured. Entries, index bindings and retired ids are never removed, so a
   program that creates and deletes many elements or arrays grows the tables
   for the whole run (a per-PE map grew the same way, once per PE).
-- Two windows in the home's process when a message of a dead life reaches the
-  home before that life's death notice and the new life lives in the home's
-  process (section 3.5). A late death notice for a life re-created on the same
-  PE at epoch 0: the clear cannot tell the two lives apart, and the entry is
-  empty until the new life's creation update arrives. A late move update of the
-  dead life with a higher epoch: it replaces the new life's own entry until the
-  notice clears it and the record reinstalls the new life (with per-PE caches
-  it touched only the home's copy). In either window a migration of the new
-  life aborts in `LocTable::recordEmigration`, and sends from the process go to
-  the home or to the dead PE. The second ordering came from the independent
-  TLA+ model of PR #4123. Ordering a dead life's messages before its notice
-  would close both; the home cannot.
+- A stale message of a dead life (a home update, a reply or a repair by id)
+  that reaches a process other than the home's and the holder's before the
+  home has processed that life's death notice is applied there by the epoch
+  compare, as any stale entry is; the next delivery's repair or the element's
+  next move corrects it. The holder's own entry and the home's are protected
+  (section 3.5).
 - Hashed kind, new life under a new id: a stale home update of the dead life
   that arrives before that life's death notice rebinds the index at the home to
   the dead id (`insertID` in `updateLocation`) until the live life's next update

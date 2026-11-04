@@ -457,7 +457,12 @@ public:
 
   // Entry methods for updating location tables across processes
   void requestLocation(CmiUInt8 id, int peToTell);
+  /// By id, from a message (a reply to requestLocation(id, pe) or a sender repair):
+  /// dropped in the home's process, which the home's by-index path and the
+  /// process's own writes keep current (section 3.5); else applyLocation.
   void updateLocation(const CkLocEntry& e);
+  /// W4 on this process's entry, then the listeners and wakes if written.
+  void applyLocation(const CkLocEntry& e);
   /// Another PE of this process wrote the location of id, or retired id: flush what
   /// this PE holds for it.
   void wake(CmiUInt8 id);
@@ -485,9 +490,9 @@ public:
   void insert(CmiUInt8 id, int epoch = 0);
   /// Forget the location; with ifPe >= 0 only while the entry still names ifPe (and
   /// ifEpoch, if given). True if cleared.
-  bool erase(CmiUInt8 id, int ifPe = -1, int ifEpoch = -1)
+  bool erase(CmiUInt8 id, int ifPe = -1, int ifEpoch = -1, bool keepOwn = false)
   {
-    return ck::objid::locTable().clear(key(id), ifPe, ifEpoch);
+    return ck::objid::locTable().clear(key(id), ifPe, ifEpoch, keepOwn);
   }
 
   void addListener(Listener l) { listeners.push_back(l); }
@@ -552,8 +557,9 @@ private:
   // the life tags whose death the home has processed.
   std::unordered_map<CmiUInt8, std::vector<CkLocEntry>> homeLives;
   std::unordered_set<CmiUInt8> deadLives;
-  // Record e at the home. False if e.life is known dead: the update is stale, and
-  // an entry it wrote earlier is cleared.
+  // Record e at the home. False if the update is stale (its life is known dead, or
+  // the home has seen a later location of that life): then an entry it wrote
+  // earlier is cleared and it is not applied.
   bool homeNoteLocation(const CkArrayIndex& idx, const CkLocEntry& e);
   // The home learns that the life `died` ended where `died` says.
   void homeNoteDeath(const CkArrayIndex& idx, const CkLocEntry& died);

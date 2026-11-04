@@ -2804,10 +2804,18 @@ void CkLocCache::requestLocation(CmiUInt8 id, const int peToTell)
 
 void CkLocCache::updateLocation(const CkLocEntry& newEntry)
 {
+  if (CkNodeOf(homePe(newEntry.id)) == CkMyNode()) return;
+  applyLocation(newEntry);
+}
+
+void CkLocCache::applyLocation(const CkLocEntry& newEntry)
+{
   CkAssert(newEntry.pe != -1);
   bool written = false;
+  // A received update (W4, received = true) never replaces what a PE of this process
+  // wrote about itself (section 3.5).
   const CmiUInt8 waiters = ck::objid::locTable().update(key(newEntry.id), newEntry.pe,
-                                                        newEntry.epoch, false, &written);
+                                                        newEntry.epoch, false, &written, true);
   if (written)
   {
     notifyListeners(newEntry.id, newEntry.pe);
@@ -3302,7 +3310,7 @@ void CkLocMgr::updateLocationFromLB(CmiUInt8 id, int pe)
   if (recoverIndex(id, idx))
     updateLocation(idx, e);  // also binds idx -> id and fires the index listeners
   else
-    cache->updateLocation(e);
+    cache->applyLocation(e);
 }
 #endif
 
@@ -3317,7 +3325,7 @@ void CkLocMgr::updateLocation(const CkArrayIndex& idx, const CkLocEntry& e)
   const bool hasRetired = insertID(idx, e.id, &retired);
 
   // Update the location information
-  cache->updateLocation(e);
+  cache->applyLocation(e);
 
   // Messages held under the retired id: re-address to e.id here, where both are known.
   if (hasRetired)
@@ -3395,32 +3403,32 @@ void CkLocMgr::noteDead(const CkArrayIndex& idx, CmiUInt8 id)
 
 bool CkLocMgr::homeNoteLocation(const CkArrayIndex& idx, const CkLocEntry& e)
 {
-  if (deadLives.count(e.life))
+  bool stale = deadLives.count(e.life) != 0;
+  if (!stale)
   {
-    // Stale. The entry it describes may still stand if the home missed this update
-    // before the death notice came; the notice could not clear what it did not know.
-    cache->erase(e.id, e.pe, e.epoch);
-    homeReinstall(idx, e.id);
-    return false;
+    std::vector<CkLocEntry>& lives = homeLives[e.id];
+    size_t i = 0;
+    for (; i < lives.size() && lives[i].life != e.life; ++i) {}
+    if (i == lives.size()) lives.push_back(e);
+    else if (e.epoch > lives[i].epoch) lives[i] = e;
+    else stale = e.epoch < lives[i].epoch;  // older than what the home saw of this life
   }
-  std::vector<CkLocEntry>& lives = homeLives[e.id];
-  for (CkLocEntry& l : lives)
-    if (l.life == e.life)
-    {
-      if (e.epoch > l.epoch) l = e;
-      return true;
-    }
-  lives.push_back(e);
-  return true;
+  if (!stale) return true;
+  // A dead life's update, or one from before the location the home recorded for the
+  // life: not applied, since it would revive a cleared entry. What such an update
+  // wrote earlier (the home missed it when the notice came) is cleared now.
+  cache->erase(e.id, e.pe, e.epoch, true);
+  homeReinstall(idx, e.id);
+  return false;
 }
 
 void CkLocMgr::homeNoteDeath(const CkArrayIndex& idx, const CkLocEntry& died)
 {
   if (died.life != 0) deadLives.insert(died.life);
   // Clear the entry while it names where the life died, or any location the home
-  // recorded for it: a later life's entry (same id, epoch 0 again) stays. The one
-  // case left is a later life created on the same PE at the same epoch (section 9).
-  cache->erase(died.id, died.pe, died.epoch);
+  // recorded for it, unless a PE of this process wrote it about itself (its W5 and
+  // stores are the truth): a later life's entry (same id, epoch 0 again) stays.
+  cache->erase(died.id, died.pe, died.epoch, true);
   auto it = homeLives.find(died.id);
   if (it != homeLives.end())
   {
@@ -3428,7 +3436,7 @@ void CkLocMgr::homeNoteDeath(const CkArrayIndex& idx, const CkLocEntry& died)
     for (size_t i = 0; i < lives.size(); ++i)
       if (lives[i].life == died.life)
       {
-        cache->erase(died.id, lives[i].pe, lives[i].epoch);
+        cache->erase(died.id, lives[i].pe, lives[i].epoch, true);
         lives.erase(lives.begin() + i);
         break;
       }

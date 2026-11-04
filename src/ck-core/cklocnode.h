@@ -35,16 +35,19 @@ public:
     int pe() const { return (int)(raw & PE_MASK) - 1; }  // -1 when no location
     int epoch() const { return hasLocation() ? (int)(raw >> EPOCH_SHIFT) : -1; }
     bool arriving() const { return (raw & ARRIVING_BIT) != 0; }
-    static Value make(int pe, int epoch, bool arriving)
+    /// Written from a received update (W4), not by the PE it names (W1, W2, W3).
+    bool byMessage() const { return (raw & BY_MESSAGE_BIT) != 0; }
+    static Value make(int pe, int epoch, bool arriving, bool byMessage = false)
     {
       Value v;
       v.raw = ((uint64_t)(uint32_t)epoch << EPOCH_SHIFT) | (arriving ? ARRIVING_BIT : 0) |
-              (uint64_t)(uint32_t)(pe + 1);
+              (byMessage ? BY_MESSAGE_BIT : 0) | (uint64_t)(uint32_t)(pe + 1);
       return v;
     }
     static constexpr uint64_t PE_MASK = 0xffffffffull;
     static constexpr uint64_t ARRIVING_BIT = 1ull << 32;
-    static constexpr int EPOCH_SHIFT = 33;
+    static constexpr uint64_t BY_MESSAGE_BIT = 1ull << 33;
+    static constexpr int EPOCH_SHIFT = 34;  // 30 bits of epoch
   };
 
   /// Counters for +objid_diag; relaxed atomics, touched only when the flag is on.
@@ -78,7 +81,12 @@ public:
   uint64_t store(uint64_t key, int pe, int epoch, bool arriving = false);
   /// Store if epoch is greater than the stored epoch (W4): newer epoch wins under
   /// any interleaving. *written tells whether it did.
-  uint64_t update(uint64_t key, int pe, int epoch, bool arriving, bool* written = nullptr);
+  /// With received = true the update came by message (W4) and the value is marked
+  /// byMessage. It is not applied over an entry that a PE of this process wrote about
+  /// itself (W1, W2, W3; not marked): those writes are synchronous, so the message is
+  /// at best redundant, at worst from an earlier life.
+  uint64_t update(uint64_t key, int pe, int epoch, bool arriving, bool* written = nullptr,
+                  bool received = false);
   /// W2: {fromPe, e} -> {toPe, e+1}; returns the new epoch. The entry must name fromPe.
   int recordEmigration(uint64_t key, int fromPe, int toPe);
   /// Forget the location (death, or the record leaving this PE); the key and the
@@ -86,7 +94,10 @@ public:
   /// woken by the next store. With ifPe >= 0 the entry is cleared only while it
   /// names ifPe (and, with ifEpoch >= 0, that epoch): a death notice that arrives
   /// after a re-creation leaves the live entry alone. True if cleared.
-  bool clear(uint64_t key, int ifPe = -1, int ifEpoch = -1);
+  /// With keepOwn = true an entry a PE of this process wrote about itself (naming it,
+  /// not byMessage) is left alone: the home's clears on a death notice, since that PE
+  /// cleared or rewrote its own entry before anything was sent.
+  bool clear(uint64_t key, int ifPe = -1, int ifEpoch = -1, bool keepOwn = false);
 
   /// Set rank's bit in the key's waiter word; true if the word was 0 before, which
   /// makes this rank the one that sends the request. Inserts the key if absent.
