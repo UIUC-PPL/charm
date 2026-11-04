@@ -30,6 +30,9 @@
 //      cleared by a death, the second re-reads nothing; the second must be told
 //      to send the request (the order of a review comment on #4123; the waiter
 //      word alone cannot tell it, section 3.3)
+//  10  rank 0, in order: a rank misses and registers, a fill lands before its
+//      claim, it claims and sends, and the reply writes nothing (the entry is
+//      already as new); after a death the next miss must be told to send
 //
 // doc/internals/process-location-cache.md, sections 2 and 3.
 
@@ -38,7 +41,7 @@
 /*readonly*/ int nKeys;
 /*readonly*/ int nRounds;
 
-static const int PHASES = 9;
+static const int PHASES = 10;
 
 class Tables : public CBase_Tables
 {
@@ -92,6 +95,7 @@ public:
       case 7: what = "index rebinding reports the old id"; wantExtra = (long)nKeys * N; break;
       case 8: what = "index lookups give the new id"; break;
       case 9: what = "fill between miss and registration, then a death: the request is still sent"; break;
+      case 10: what = "a reply that writes nothing still reopens the claim"; break;
     }
     CkPrintf("phase %d: %s: %ld checked, %ld violations, extra %ld (expect %ld)\n", phase,
              what, checked, violations, extra, wantExtra);
@@ -115,6 +119,7 @@ class Worker : public CBase_Worker
   static uint64_t smallKey(int k) { return 1000001 + (uint64_t)k; }
   static uint64_t waitKey(int k) { return 2000001 + (uint64_t)k; }
   static uint64_t raceKey(int k) { return 3000001 + (uint64_t)k; }
+  static uint64_t replyKey(int k) { return 4000001 + (uint64_t)k; }
 
 public:
   Worker() : lastEpoch(nKeys, -1) {}
@@ -231,6 +236,24 @@ public:
             const uint64_t bits = t->big.store(key, c, 1);   // re-creation: wakes both
             if (bits != 6) ++violations;
             if (!t->big.claimRequest(key)) ++violations;     // the fill reopened the claim
+          }
+        break;
+      case 10:
+        if (rank == 0)
+          for (int k = 0; k < nKeys; ++k)
+          {
+            ++checked;
+            const uint64_t key = replyKey(k);
+            const int c = CkMyPe();  // the element's PE; rank 1 plays the sender
+            t->big.registerWaiter(key, 1);                   // rank 1 misses and registers
+            if (t->big.pe(key) != -1) ++violations;          // ... and re-reads nothing
+            if (t->big.store(key, c, 0) != 2) ++violations;  // a fill lands: wakes rank 1
+            if (!t->big.claimRequest(key)) ++violations;     // rank 1 claims after it, sends
+            bool written = true;
+            t->big.update(key, c, 0, false, &written, true); // the reply: nothing newer
+            if (written) ++violations;
+            if (!t->big.clear(key, c, 0)) ++violations;      // the element dies on c
+            if (!t->big.claimRequest(key)) ++violations;     // the next miss must send
           }
         break;
     }

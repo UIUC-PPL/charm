@@ -84,7 +84,8 @@ public:
   /// With received = true the update came by message (W4) and the value is marked
   /// byMessage. It is not applied over an entry that a PE of this process wrote about
   /// itself (W1, W2, W3; not marked): those writes are synchronous, so the message is
-  /// at best redundant, at worst from an earlier life.
+  /// at best redundant, at worst from an earlier life. A received update clears the
+  /// request flag whether or not it writes.
   uint64_t update(uint64_t key, int pe, int epoch, bool arriving, bool* written = nullptr,
                   bool received = false);
   /// W2: {fromPe, e} -> {toPe, e+1}; returns the new epoch. The entry must name fromPe.
@@ -105,7 +106,8 @@ public:
   /// itself costs that rank one wake with nothing to do.
   void registerWaiter(uint64_t key, int rank);
   /// Set the key's request flag; true if it was clear, which makes the caller the
-  /// one that sends the request to the home. A fill (store, update) clears the flag.
+  /// one that sends the request to the home. A fill (store, update) clears the flag,
+  /// and so does every received update, written or not.
   /// The waiter word cannot carry this: a bit may be left by a rank that found the
   /// location, and a fill between a miss and the registration takes no bits
   /// (section 3.3).

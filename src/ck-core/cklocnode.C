@@ -196,6 +196,11 @@ uint64_t LocTable::update(uint64_t key, int pe, int epoch, bool arriving, bool* 
                           bool received)
 {
   Slot* s = findOrInsert(key);
+  // A received update answers or overtakes this process's request: it clears the
+  // request flag whether or not it writes, so a reply that finds the entry already as
+  // new does not leave the flag set with no request out. The exchange comes before
+  // the value is read, which orders it with a concurrent claim (section 3.3).
+  if (received) s->request.exchange(0, std::memory_order_acq_rel);
   const uint64_t want = Value::make(pe, epoch, arriving, received).raw;
   uint64_t cur = s->value.load(std::memory_order_acquire);
   for (;;)

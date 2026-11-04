@@ -104,7 +104,8 @@ Writes are single-word compare-and-swap operations, never a lock:
 - register, claim, take waiters: fetch_or on the waiter word, exchange on the
   request flag, exchange on the waiter word. A store or update that gives the
   key a location takes the waiter bits, returns them to the caller, which sends
-  the wakes, and clears the request flag (section 3.3).
+  the wakes, and clears the request flag; a received update clears the flag
+  whether or not it writes (section 3.3).
 
 Keys never move and never change once published, so a key that is in the table
 is found by a plain lock-free probe, and only a miss enters the insert protocol
@@ -377,7 +378,8 @@ sent once per process per unresolved element, by the first PE whose re-read
 missed. The request goes to the home PE and the reply to the requesting PE, as
 group entry methods of `CkLocCache` (the design's nodegroup is not needed for
 this; section 9); the reply writes the location (W4), which takes the waiter
-bits and clears the request flag, and the writer sends each rank that had a bit set a small wake message
+bits and clears the request flag (a reply that writes nothing clears it too,
+below), and the writer sends each rank that had a bit set a small wake message
 (`CkLocCache::wake`, one message per rank, which reconverse delivers as a push
 onto that PE's queue); each woken rank flushes its own buffered messages for
 that id (`CkArray::sendBufferedMsgs`). When the home is in the requesting PE's
@@ -404,8 +406,19 @@ atomic action); with the flag, the second rank's claim succeeds, because the
 fill cleared the flag, and its request goes out. The flag also removes the
 need to drop one's own bit after a re-read that found the location, which
 with more than 64 ranks per process also dropped the bit of the ranks folded
-onto it. A flag set with no request behind it happens only when the home is in
-this process, where the fill comes from a local write, which clears it.
+onto it.
+
+Every received update clears the flag, whether or not it writes
+(`LocTable::update`). A rank whose re-read comes just before a fill and whose
+claim comes just after it sends a request although the location is known; the
+reply then writes nothing, because the entry is already as new or is this
+process's own write. If only a fill cleared the flag, it would then stay set
+with no request out, and after a death every miss in the process would hold.
+The clear is an exchange, done before the update reads the value: a rank
+whose claim comes before it is woken by the update's own write or by the fill
+that gave the entry the location the update finds, and a rank whose claim
+comes after it sends. In the home's process no request is sent, and the flag
+has no effect there.
 
 The rule every path must keep: a message a PE holds is either under an id
 whose waiter word has the PE's bit, or under an index with a request out to
@@ -722,7 +735,9 @@ Existing: `tests/charm++/anytime_migration`, `anytime_bcastred`,
   "no previous binding" exactly once per process, a rebinding reports the old
   id, and lookups afterwards give the new one; and the order of review finding
   9 (section 3.3: a fill between two misses and their registrations, then a
-  death) ends with the second rank told to send the request.
+  death) ends with the second rank told to send the request; and a claim after
+  a fill, whose reply writes nothing, leaves the next miss after a death free
+  to send (phase 10).
 - `objid_insert` phase 7 now distinguishes a fresh PE whose process never
   addressed the index (three or more processes: a new id) from one whose
   process did (the old id is reused).

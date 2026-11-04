@@ -1213,3 +1213,7 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   instead of "the waiter word was 0 before": a fill between two misses and their
   registrations followed by a death left a process holding messages with no request out.
   The model's atomic send step hid the ordering. Chapter section 3.3; model README finding 9.
+- 2026-11-04 (#4123 review, Ritvik): every received update clears the request flag, whether
+  or not it writes. A claim that came after a fill the rank's re-read had missed sent a
+  request whose reply wrote nothing, which left the flag set with no request out. Chapter
+  section 3.3; `objid_loctable` phase 10.

@@ -534,3 +534,11 @@ per process, where the same bit stands for rank r + 64 as well. Chapter section
 3.3 has the rule; `tests/charm++/objid_loctable` phase 9 drives the order
 above at the table level and checks that r's claim succeeds, phase 4 checks one
 claim per key per process, and phase 5 that a fill reopens the claim.
+
+Follow-up (same day): a rank whose re-read came just before a fill and whose
+claim came after it sent a request whose reply wrote nothing (the entry already
+as new, or the process's own write), and only a fill cleared the flag, so it
+stayed set with no request out; after a death, every miss in the process held.
+Every received update now clears the flag, written or not, with an exchange
+before the value is read (`LocTable::update`); `objid_loctable` phase 10 drives
+that order. The model has no request flag, so this is outside it as well.
