@@ -2759,20 +2759,20 @@ int CkLocCache::requestLocation(CmiUInt8 id)
   const CmiUInt8 k = key(id);
   // Register before re-reading: a write that lands between this PE's miss and its
   // registration is seen by the re-read; one that lands after takes the bit and
-  // wakes this PE. Either way the message is not stranded (section 3.3).
-  const bool first = t.registerWaiter(k, CkMyRank());
+  // wakes this PE. Either way the message is not stranded (section 3.3). A bit left
+  // here by a rank that found the location costs it one wake with nothing to do.
+  t.registerWaiter(k, CkMyRank());
   const int pe = t.pe(k);
-  if (pe != -1)
-  {
-    // The bit would otherwise stay after the fill and make the next miss on this
-    // id think a request is already out.
-    t.unregisterWaiter(k, CkMyRank());
-    return pe;
-  }
-  if (!first)
+  if (pe != -1) return pe;
+  // Whether a request is out is a flag of its own, set by the rank whose re-read
+  // found nothing and cleared by the fill. The waiter word cannot tell: a fill
+  // between a miss and the registration takes no bits, and the rank that registered
+  // first may then find the location and send, leaving the others with their bits
+  // set and no request out (section 3.3, found in review).
+  if (!t.claimRequest(k))
   {
     if (ck::objid::_objidDiag) t.counters().requestsSkipped++;
-    return -1;  // another PE of this process has asked; its reply wakes every waiter
+    return -1;  // a request of this process is out; its reply wakes every waiter
   }
   const int home = homePe(id);
   // The home's table is this table when the home is in this process: it has no
@@ -2834,8 +2834,9 @@ void CkLocCache::wake(CmiUInt8 id)
   if (mgr == nullptr) return;
   if (mgr->releaseRetired(id)) return;  // a retired id: re-addressed
   // The location was cleared again (the element died) before this wake ran, and the
-  // fill took this rank's bit. Stay a waiter while messages are held, so the next
-  // store wakes this rank; the array does not request again while it holds them.
+  // fill took this rank's bit and cleared the request flag. Register again while
+  // messages are held, and send the request if no rank has since: a re-creation in
+  // another process is learned only through the home.
   if (mgr->hasBufferedMsgs(id))
   {
     const int now = requestLocation(id);

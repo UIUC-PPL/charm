@@ -65,13 +65,14 @@ that number times the number of PEs.
 ### 2.1 Location table
 
 Open-addressing hash table with linear probing, power-of-two capacity, two
-64-bit words per slot plus a waiter word:
+64-bit words per slot plus a waiter word and a request flag:
 
 ```
    slot:  key      atomic<uint64>   full id (ObjID::getID()); 0 = empty
           value    atomic<uint64>   epoch:31 | state:1 | pe+1:32 ; 0 = no location
           waiters  atomic<uint64>   bit r set: rank r of this process holds
                                     messages for this id (section 3.3)
+          request  atomic<uint64>   1: a request for this id is out (section 3.3)
 ```
 
 The id is never 0 (collection numbers start at 1), so 0 marks an empty slot.
@@ -98,11 +99,12 @@ Writes are single-word compare-and-swap operations, never a lock:
 - record an emigration (`LocTable::recordEmigration`, W2): CAS {self, e} to
   {destination, e+1}; the entry must name the writer, which the CAS loop checks.
 - clear (`LocTable::clear`, W5): CAS the value word to 0 while it still names
-  the PE the element died on, at the epoch it died with; the key and the waiter
-  word stay (section 3.5).
-- register or take waiters: fetch_or and exchange on the waiter word. A store or
-  update that gives the key a location takes the waiter bits and returns them to
-  the caller, which sends the wakes (section 3.3).
+  the PE the element died on, at the epoch it died with; the key, the waiter
+  word and the request flag stay (section 3.5).
+- register, claim, take waiters: fetch_or on the waiter word, exchange on the
+  request flag, exchange on the waiter word. A store or update that gives the
+  key a location takes the waiter bits, returns them to the caller, which sends
+  the wakes, and clears the request flag (section 3.3).
 
 Keys never move and never change once published, so a key that is in the table
 is found by a plain lock-free probe, and only a miss enters the insert protocol
@@ -188,8 +190,9 @@ in parentheses refer to the TLA+ model in `tla/process-location/` (section 7).
 - Every process that has addressed x has one entry for it in the process's
   location table (section 2.1): a PE, an epoch, and two marks (written from a
   message; arriving, reserved), or no location; plus a waiter word with one bit
-  per rank of the process that holds messages for x. The entry is the process's
-  belief about where X is. It is written by the PEs of the process only.
+  per rank of the process that holds messages for x, and a flag that says a
+  request for x is out. The entry is the process's belief about where X is. It
+  is written by the PEs of the process only.
 - The PE that holds X keeps, in X's `CkLocRec`, the epoch (the number of moves
   in this life) and the life tag (a number unique in the run, minted at
   creation).
@@ -367,13 +370,14 @@ PE has never heard of the element.
 
 A PE that misses on an id it must deliver to (a buffered send, demand creation)
 registers as a waiter (`CkLocCache::requestLocation`): it sets its rank bit in
-the slot's waiter word with fetch_or, reads the value again, and, if the word
-was 0 before and the value is still empty, sends the request. A request is
-therefore sent once per process per unresolved element, by the first PE to
-miss. The request goes to the home PE and the reply to the requesting PE, as
+the slot's waiter word with fetch_or, reads the value again, and, if the value
+is still empty, claims the request by exchanging the slot's request flag to 1;
+the PE that finds the flag clear sends the request. A request is therefore
+sent once per process per unresolved element, by the first PE whose re-read
+missed. The request goes to the home PE and the reply to the requesting PE, as
 group entry methods of `CkLocCache` (the design's nodegroup is not needed for
 this; section 9); the reply writes the location (W4), which takes the waiter
-bits, and the writer sends each rank that had a bit set a small wake message
+bits and clears the request flag, and the writer sends each rank that had a bit set a small wake message
 (`CkLocCache::wake`, one message per rank, which reconverse delivers as a push
 onto that PE's queue); each woken rank flushes its own buffered messages for
 that id (`CkArray::sendBufferedMsgs`). When the home is in the requesting PE's
@@ -383,9 +387,25 @@ update from elsewhere, wakes the waiters. Registration and fill cannot miss
 each other: a PE registers after its own read missed, and the filler takes the
 waiter bits after its CAS succeeded; a PE whose registration lands after the
 fill reads the table again before buffering and finds the entry, and then
-sends instead of buffering (`requestLocation` returns the PE) and removes its
-own bit again, so no bit outlives the fill and a later miss on the same key is
-"first" again. A wake to a rank that has nothing buffered is a no-op.
+sends instead of buffering (`requestLocation` returns the PE). Its bit stays
+in the word, and the next fill sends it a wake that finds nothing to do. A wake
+to a rank that has nothing buffered is a no-op.
+
+Why the request has a flag of its own and is not "the word was 0 before": a
+fill can land between two ranks' misses and their registrations, and then it
+takes no bits. The first rank to register re-reads, finds the location and
+sends; the second re-reads after a death has cleared the entry, finds
+nothing, and, were "first" the rule, would hold its message with no request
+out and no wake coming. Every later miss in the process would find the word
+nonzero and hold as well, and a re-creation in another process is learned only
+through the home. The first version had this gap (the review of #4123 found
+it; the model did not, because its send step registers and re-reads in one
+atomic action); with the flag, the second rank's claim succeeds, because the
+fill cleared the flag, and its request goes out. The flag also removes the
+need to drop one's own bit after a re-read that found the location, which
+with more than 64 ranks per process also dropped the bit of the ranks folded
+onto it. A flag set with no request behind it happens only when the home is in
+this process, where the fill comes from a local write, which clears it.
 
 The rule every path must keep: a message a PE holds is either under an id
 whose waiter word has the PE's bit, or under an index with a request out to
@@ -409,12 +429,14 @@ other or could drop it, and each is written to keep the rule:
   rebinding PE itself does the same for what it holds (immigration, restore
   and resume rebind before they create the element).
 - A wake can find the entry cleared again (the element died between the fill
-  and the wake). The fill took the rank's bit, so the rank registers again
-  while it still holds messages (`CkLocCache::wake`), and the next store, by
-  the re-creation, wakes it.
-- Death (W5) clears the value but leaves the waiter word: ranks that registered
-  while the location was unknown are woken by the next store, and their request
-  to the home, if one went out, is held there until the element exists again.
+  and the wake). The fill took the rank's bit and cleared the flag, so the rank
+  registers again while it still holds messages and claims the request
+  (`CkLocCache::wake`); the re-creation, wherever it is, fills the entry, by
+  the local store or by the home's reply, and wakes it.
+- Death (W5) clears the value but leaves the waiter word and the request
+  flag: ranks that registered while the location was unknown are woken by the
+  next store, and their request to the home, if one went out, is held there
+  until the element exists again (`CkLocMgr::bufferedLocationRequests`).
 
 The sender-repair rule (section 3.2) skips a sender in the delivering PE's own
 process, since that sender reads the table the landing wrote
@@ -431,15 +453,13 @@ still sends the one request, and a wake to a rank that has nothing buffered
 costs one local message. Processes above 64 PEs are realistic (one process per
 node on Frontier is 56 or 64, Aurora 104, El Capitan 96, Perlmutter CPU nodes
 128), so the alternative was considered: k = ceil(ranks/64) waiter words per
-slot, with the stride computed at init. With k words the condition "send if the
-word was 0 before" is no longer one atomic check, because two PEs setting bits
-in different words each see their own word go from 0 to nonzero; it needs a
-separate request-sent flag, set by fetch_or after registering, with only the PE
-that flips it sending, and the fill clears k words plus the flag. Neither
-version touches the lookup path. The first version keeps the single word and
-the fold; the cost is at most one spare wake per rank per fill at 128 PEs, and
-fills happen once per process per unknown element. Switch to k words if a
-profile of a 128-PE process shows the spare wakes.
+slot, with the stride computed at init. The request flag is already separate
+from the waiter word (above), so k words change only the fill, which would
+clear k words plus the flag. Neither version touches the lookup path. The
+first version keeps the single word and the fold; the cost is at most one
+spare wake per rank per fill at 128 PEs, and fills happen once per process
+per unknown element. Switch to k words if a profile of a 128-PE process shows
+the spare wakes.
 
 Home-side bookkeeping is unchanged: `informHome` after creation or emigration
 is one message to the home PE, which also binds the index there (hashed kind)
@@ -697,10 +717,12 @@ Existing: `tests/charm++/anytime_migration`, `anytime_bcastred`,
 - `tests/charm++/objid_loctable`: the tables themselves, on private instances,
   under every PE of the process at once: concurrent updates never show an
   older epoch; a 16-slot table grows under contention without losing a key;
-  exactly one PE per process is told it registered first as a waiter and a
-  fill takes every PE's bit once; concurrent binds of one index report "no
-  previous binding" exactly once per process, a rebinding reports the old id,
-  and lookups afterwards give the new one.
+  exactly one PE per process claims the request for a key, a fill takes every
+  PE's bit once and reopens the claim; concurrent binds of one index report
+  "no previous binding" exactly once per process, a rebinding reports the old
+  id, and lookups afterwards give the new one; and the order of review finding
+  9 (section 3.3: a fill between two misses and their registrations, then a
+  death) ends with the second rank told to send the request.
 - `objid_insert` phase 7 now distinguishes a fresh PE whose process never
   addressed the index (three or more processes: a new id) from one whose
   process did (the old id is reused).
@@ -759,11 +781,10 @@ functions here, so the model can follow the code.
   the dead id (`insertID` in `updateLocation`) until the live life's next update
   rebinds it; once the notice has arrived the life record drops such updates
   before the binding is touched. Not modeled (the model has no index table).
-- Above 64 ranks per process, a rank that drops its own waiter bit after it
-  found the location also drops the bit of the ranks it is folded with (r+64,
-  ...). A folded rank loses its wake only if it registered after a fill and a
-  death of the same id in between; the k-word alternative in section 3.3
-  removes the fold.
+- Above 64 ranks per process, a wake to bit r reaches ranks r, r+64, ...;
+  the spare wakes are no-ops. No bit is ever dropped by a rank (the request
+  flag made that unnecessary), so no folded rank loses its wake; the k-word
+  alternative in section 3.3 removes the fold itself.
 - Under `CMK_GLOBAL_LOCATION_UPDATE`, rank 0 of each process applies the
   balancer's announced move to the shared table, and no rank does in the
   source's process, where the emigrating PE records it. That build mode has

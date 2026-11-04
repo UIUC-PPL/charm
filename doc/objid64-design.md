@@ -1208,3 +1208,8 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   the contract). Decided A (Kale, 2026-11-03), C kept as the documented fallback with the
   quiescence contract; the weaker "all messages to the element processed before deletion"
   condition was modeled (`AppSync`) and shown insufficient.
+- 2026-11-04 (#4123 review, Ritvik): whether a location request is out is a flag of its own
+  in the table slot, set by the rank whose re-read found nothing and cleared by the fill,
+  instead of "the waiter word was 0 before": a fill between two misses and their
+  registrations followed by a death left a process holding messages with no request out.
+  The model's atomic send step hid the ordering. Chapter section 3.3; model README finding 9.

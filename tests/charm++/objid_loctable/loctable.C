@@ -17,14 +17,19 @@
 //   2  every key ends at the highest epoch written; then nKeys*4 keys go into a
 //      16-slot table from every PE at once (growth under contention)
 //   3  every grown-table key is found, the table grew, and no key is lost
-//   4  every PE registers as a waiter on fresh keys: exactly one PE per process
-//      is told it was first
+//   4  every PE registers as a waiter on fresh keys and claims the request:
+//      exactly one PE per process is told to send it
 //   5  rank 0 of each process fills those keys: the waiter bits it takes name
-//      every PE of the process exactly once
+//      every PE of the process exactly once, and the fill reopened the claim
 //   6  index table: every PE binds the same (collection, index) -> id for nKeys
 //      indices; exactly one bind per process reports "no previous binding"
 //   7  rank 0 rebinds every index to a new id and is told the old one; every
 //      lookup afterwards (phase 8) gives the new id
+//   9  rank 0, in order: a fill lands between two ranks' misses and their
+//      registrations, the first registrant finds the location, the entry is
+//      cleared by a death, the second re-reads nothing; the second must be told
+//      to send the request (the order of a review comment on #4123; the waiter
+//      word alone cannot tell it, section 3.3)
 //
 // doc/internals/process-location-cache.md, sections 2 and 3.
 
@@ -33,7 +38,7 @@
 /*readonly*/ int nKeys;
 /*readonly*/ int nRounds;
 
-static const int PHASES = 8;
+static const int PHASES = 9;
 
 class Tables : public CBase_Tables
 {
@@ -78,14 +83,15 @@ public:
       case 1: what = "concurrent updates, epochs never go backwards"; break;
       case 2: what = "every key at the final epoch; grown-table inserts"; break;
       case 3: what = "grown table: every key found, growth happened"; wantExtra = N; break;
-      case 4: what = "waiters: one first registrant per key per process"; wantExtra = (long)nKeys * N; break;
+      case 4: what = "waiters: one request claim per key per process"; wantExtra = (long)nKeys * N; break;
       case 5:  // bit r stands for ranks r, r+64, ...: at most 64 bits per key
-        what = "fill takes one waiter bit per PE";
+        what = "fill takes one waiter bit per PE and reopens the claim";
         wantExtra = (long)nKeys * N * (ranks < 64 ? ranks : 64);
         break;
       case 6: what = "index table: one unbound bind per key per process"; wantExtra = (long)nKeys * N; break;
       case 7: what = "index rebinding reports the old id"; wantExtra = (long)nKeys * N; break;
       case 8: what = "index lookups give the new id"; break;
+      case 9: what = "fill between miss and registration, then a death: the request is still sent"; break;
     }
     CkPrintf("phase %d: %s: %ld checked, %ld violations, extra %ld (expect %ld)\n", phase,
              what, checked, violations, extra, wantExtra);
@@ -108,6 +114,7 @@ class Worker : public CBase_Worker
   static uint64_t bigKey(int k) { return 1 + (uint64_t)k; }
   static uint64_t smallKey(int k) { return 1000001 + (uint64_t)k; }
   static uint64_t waitKey(int k) { return 2000001 + (uint64_t)k; }
+  static uint64_t raceKey(int k) { return 3000001 + (uint64_t)k; }
 
 public:
   Worker() : lastEpoch(nKeys, -1) {}
@@ -157,7 +164,8 @@ public:
         for (int k = 0; k < nKeys; ++k)
         {
           ++checked;
-          if (t->big.registerWaiter(waitKey(k), rank)) ++extra;
+          t->big.registerWaiter(waitKey(k), rank);
+          if (t->big.claimRequest(waitKey(k))) ++extra;
         }
         break;
       case 5:
@@ -168,6 +176,7 @@ public:
             uint64_t bits = t->big.store(waitKey(k), CkMyPe(), 0);
             extra += (long)std::bitset<64>(bits).count();
             if (t->big.takeWaiters(waitKey(k)) != 0) ++violations;  // taken once only
+            if (!t->big.claimRequest(waitKey(k))) ++violations;     // the fill reopened it
           }
         break;
       case 6:
@@ -203,6 +212,26 @@ public:
             ++violations;
         }
         if (rank == 0 && t->index.segments() < 2) ++violations;  // 16 slots must have grown
+        break;
+      case 9:
+        if (rank == 0)
+          for (int k = 0; k < nKeys; ++k)
+          {
+            ++checked;
+            const uint64_t key = raceKey(k);
+            const int c = CkMyPe();  // the element's PE; ranks 1 and 2 play the two senders
+            if (t->big.store(key, c, 0) != 0) ++violations;  // nobody registered yet
+            t->big.registerWaiter(key, 1);                   // first registrant
+            t->big.registerWaiter(key, 2);
+            if (t->big.pe(key) != c) ++violations;           // rank 1 re-reads, finds c, sends
+            if (!t->big.clear(key, c, 0)) ++violations;      // the element dies on c
+            if (t->big.pe(key) != -1) ++violations;          // rank 2 re-reads nothing
+            if (!t->big.claimRequest(key)) ++violations;     // ... and must send the request
+            if (t->big.claimRequest(key)) ++violations;      // a third miss would not
+            const uint64_t bits = t->big.store(key, c, 1);   // re-creation: wakes both
+            if (bits != 6) ++violations;
+            if (!t->big.claimRequest(key)) ++violations;     // the fill reopened the claim
+          }
         break;
     }
     long v[3] = {checked, violations, extra};

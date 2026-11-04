@@ -92,7 +92,7 @@ carried but ignored.
 | model action | source |
 |---|---|
 | `Send` | `ckarray.C` `CkArray::sendMsg` (packed: id known; `whichPe` reads the process table), `handleUnknown` (small, not home: send to the home), `bufferForLocation` (hold under the id) |
-| `Hold` / `Reread` | `CkArray::bufferForLocation` → `CkLocCache::requestLocation(id)`: `LocTable::registerWaiter` (first = word was 0), re-read; found: `unregisterWaiter`, send; not found: the first registrant sends `requestLocation(id, me)` to the home unless the home is in this process; then push to `bufferedIDMsgs` |
+| `Hold` / `Reread` | `CkArray::bufferForLocation` → `CkLocCache::requestLocation(id)`: `LocTable::registerWaiter`, re-read; found: send; not found: `LocTable::claimRequest`, and the rank that finds the flag clear sends `requestLocation(id, me)` to the home unless the home is in this process; then push to `bufferedIDMsgs`. The model does the registration and the re-read in one atomic step, which hides finding 9 |
 | `RecvApp` deliver | `CkArray::recvMsg` (hops++), `deliverToElement`, `CkLocMgr::multiHop`: no repair for a sender in this process; else `CkLocCache::requestLocation(id, srcPe)` run locally → update by id to the sender. With the entry empty the request is held on this PE, which is not the home, and never answered: modeled as no repair |
 | `RecvApp` forward | `CkArray::recvMsg`: follow the process table; after two hops send to the home, except at the home |
 | `RecvApp` no entry | `CkArray::handleUnknownByID`: at the home hold (`bufferForLocation`, id path); small and not home → send home; large → hold |
@@ -285,7 +285,9 @@ Traces: `trace_mut1.txt` to `trace_mut4.txt`.
 ## Findings
 
 The growth, waiter and request protocol of the chapter holds in every
-configuration without deaths. All findings involve deletion or a message that
+configuration without deaths, as far as the model's granularity goes: finding
+9 below, found in review, falls between two actions the model takes as one.
+All findings involve deletion or a message that
 reaches a destination before the element lands. Findings 1 to 3 and 5 are in
 the base branch too in some form (per-PE `CkLocCache::updateLocation` has the
 same strict epoch compare, `objid-redesign` cklocation.C:2786, and its
@@ -499,3 +501,36 @@ Fix: rule 2's dead set. The notice records the life as dead and the late update
 is dropped. This is the one part of the record every variant needs: the tag,
 to recognize the life, and the set of dead lives; the per-life location and the
 reinstall are needed only without the contract (finding 3).
+
+### 9. A fill between two misses and their registrations, then a death: a request is never sent (found in review, not by the model)
+
+Reported by Ritvik Rao in the review of #4123 (2026-11-04), against the code of
+2f144b0e7, with `+messageBufferingThreshold` set so that large messages are
+held in the sending process rather than forwarded to the home. In a process P
+that is not the home's: ranks q and r both miss on element E in `sendMsg`;
+before either registers, E is created on PE c of P, whose store takes the
+waiter word while it is still empty; q registers (the word was 0: q is
+"first"), r registers (not first); q re-reads, finds c, drops its bit and
+sends; E is deleted on c and the clear leaves the waiter word {r}; r re-reads,
+finds no location, is not first, and holds its message. No request is out and
+no wake is coming. Every later miss in P on E registers as not first and holds
+as well, including q's message, which reaches c after the deletion and is held
+there. A re-creation of E in another process is learned only through the home,
+so these messages are never sent.
+
+The model does not reach this ordering: `Send` reads the table and, on a miss,
+registers in the same atomic step (`Hold`), so a store cannot fall between the
+miss and the registration. It also needs two held messages and a death, which
+is the configuration whose run stopped incomplete.
+
+Fix (same day): whether a request is out is a flag of its own in the slot
+(`LocTable::claimRequest`, an exchange to 1 by the rank whose re-read found
+nothing; the rank that finds it clear sends), cleared by every fill
+(`LocTable::fill`, called from `store` and `update` after they take the
+waiter bits), left alone by `clear`, since a request that is out is held at the
+home. `unregisterWaiter` is gone: a bit left by a rank that found the location
+costs one wake with nothing to do, and dropping it was unsafe above 64 ranks
+per process, where the same bit stands for rank r + 64 as well. Chapter section
+3.3 has the rule; `tests/charm++/objid_loctable` phase 9 drives the order
+above at the table level and checks that r's claim succeeds, phase 4 checks one
+claim per key per process, and phase 5 that a fill reopens the claim.

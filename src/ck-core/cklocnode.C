@@ -172,7 +172,16 @@ uint64_t LocTable::store(uint64_t key, int pe, int epoch, bool arriving)
   Slot* s = findOrInsert(key);
   s->value.store(Value::make(pe, epoch, arriving).raw, std::memory_order_release);
   if (arriving) return 0;
+  return fill(s);
+}
+
+// After a write that gave the key a location: take the waiter bits for the caller
+// to wake, and clear the request flag, so the next rank that misses on this key
+// sends a new request (section 3.3).
+uint64_t LocTable::fill(Slot* s)
+{
   const uint64_t w = s->waiters.exchange(0, std::memory_order_acq_rel);
+  s->request.store(0, std::memory_order_release);
   if (_objidDiag && w) counts.fills.fetch_add(1, std::memory_order_relaxed);
   return w;
 }
@@ -205,9 +214,7 @@ uint64_t LocTable::update(uint64_t key, int pe, int epoch, bool arriving, bool* 
   }
   if (written) *written = true;
   if (arriving) return 0;
-  const uint64_t w = s->waiters.exchange(0, std::memory_order_acq_rel);
-  if (_objidDiag && w) counts.fills.fetch_add(1, std::memory_order_relaxed);
-  return w;
+  return fill(s);
 }
 
 int LocTable::recordEmigration(uint64_t key, int fromPe, int toPe)
@@ -253,18 +260,16 @@ bool LocTable::clear(uint64_t key, int ifPe, int ifEpoch, bool keepOwn)
   }
 }
 
-bool LocTable::registerWaiter(uint64_t key, int rank)
+void LocTable::registerWaiter(uint64_t key, int rank)
 {
   Slot* s = findOrInsert(key);
-  const uint64_t bit = 1ull << (rank & 63);
-  const uint64_t before = s->waiters.fetch_or(bit, std::memory_order_acq_rel);
-  return before == 0;
+  s->waiters.fetch_or(1ull << (rank & 63), std::memory_order_acq_rel);
 }
 
-void LocTable::unregisterWaiter(uint64_t key, int rank)
+bool LocTable::claimRequest(uint64_t key)
 {
-  Slot* s = find(key);
-  if (s) s->waiters.fetch_and(~(1ull << (rank & 63)), std::memory_order_acq_rel);
+  Slot* s = findOrInsert(key);
+  return s->request.exchange(1, std::memory_order_acq_rel) == 0;
 }
 
 uint64_t LocTable::takeWaiters(uint64_t key)

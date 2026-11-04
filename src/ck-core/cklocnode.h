@@ -89,9 +89,10 @@ public:
                   bool received = false);
   /// W2: {fromPe, e} -> {toPe, e+1}; returns the new epoch. The entry must name fromPe.
   int recordEmigration(uint64_t key, int fromPe, int toPe);
-  /// Forget the location (death, or the record leaving this PE); the key and the
-  /// waiter bits stay: a rank that registered while the location was unknown is
-  /// woken by the next store. With ifPe >= 0 the entry is cleared only while it
+  /// Forget the location (death, or the record leaving this PE); the key, the
+  /// waiter bits and the request flag stay: a rank that registered while the
+  /// location was unknown is woken by the next store, and a request that is out is
+  /// held at the home until the element exists again. With ifPe >= 0 the entry is cleared only while it
   /// names ifPe (and, with ifEpoch >= 0, that epoch): a death notice that arrives
   /// after a re-creation leaves the live entry alone. True if cleared.
   /// With keepOwn = true an entry a PE of this process wrote about itself (naming it,
@@ -99,11 +100,16 @@ public:
   /// cleared or rewrote its own entry before anything was sent.
   bool clear(uint64_t key, int ifPe = -1, int ifEpoch = -1, bool keepOwn = false);
 
-  /// Set rank's bit in the key's waiter word; true if the word was 0 before, which
-  /// makes this rank the one that sends the request. Inserts the key if absent.
-  bool registerWaiter(uint64_t key, int rank);
-  /// Drop rank's bit: the rank registered and then found the location itself.
-  void unregisterWaiter(uint64_t key, int rank);
+  /// Set rank's bit in the key's waiter word: the next fill wakes this rank.
+  /// Inserts the key if absent. A bit left by a rank that then found the location
+  /// itself costs that rank one wake with nothing to do.
+  void registerWaiter(uint64_t key, int rank);
+  /// Set the key's request flag; true if it was clear, which makes the caller the
+  /// one that sends the request to the home. A fill (store, update) clears the flag.
+  /// The waiter word cannot carry this: a bit may be left by a rank that found the
+  /// location, and a fill between a miss and the registration takes no bits
+  /// (section 3.3).
+  bool claimRequest(uint64_t key);
   uint64_t takeWaiters(uint64_t key);
 
   Counters& counters() { return counts; }
@@ -117,6 +123,7 @@ private:
     std::atomic<uint64_t> key;
     std::atomic<uint64_t> value;
     std::atomic<uint64_t> waiters;
+    std::atomic<uint64_t> request;  // 1: a request for this key is out (section 3.3)
   };
   // Growth (cklocnode.C, findOrInsert and grow): an inserter counts itself in
   // `active` of the head segment before it looks for its key, and leaves the count
@@ -133,6 +140,7 @@ private:
     Slot* slots;
   };
   std::atomic<Segment*> head;
+  uint64_t fill(Slot* s);  // after a write with a location: take waiters, clear the flag
   mutable Counters counts;
 
   static Segment* makeSegment(int log2, Segment* older);
