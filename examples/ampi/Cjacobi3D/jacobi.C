@@ -1,5 +1,44 @@
+/*
+ * 3D Jacobi relaxation on AMPI: the program that shows AMPI's migration
+ * based capabilities, each on the same code.
+ *
+ *   ./jacobi X Y Z [nIter] [-chkpt ITER DIR] +vpN [+pe P] [+balancer LB]
+ *
+ * X*Y*Z ranks, each owning a DIMX x DIMY x DIMZ block with a one-cell halo,
+ * exchange halos with their six neighbours and relax for nIter iterations
+ * (default 20). Rank 0 prints the maximum change per iteration and a final
+ * line "jacobi: N iterations, final maxerr ..." that is the same whether
+ * the run was interrupted or not.
+ *
+ * Load balancing: every tenth iteration (iter % 10 == 5) the ranks call
+ * AMPI_Migrate(AMPI_INFO_LB_SYNC); with "+balancer <LB>" the runtime moves
+ * ranks between PEs there. Rank 35 does nine times the work in iterations
+ * 26 to 84, so a 36-rank or larger run is imbalanced.
+ *
+ * Checkpoint and restart: "-chkpt ITER DIR" makes the ranks call
+ * AMPI_Migrate with "ampi_checkpoint" set to "to_file=DIR" after iteration
+ * ITER, which writes every rank's state (its thread stack and heap, or the
+ * chunk through chunk_pup when the heap is not Isomalloc's) to the
+ * directory DIR. A later run of the same program with "+restart DIR" on the
+ * command line, on the same, fewer or more PEs or processes, resumes every
+ * rank inside that AMPI_Migrate call and runs iterations ITER+1 to nIter.
+ * The program's own arguments are not read again on a restart (the ranks
+ * resume with their saved stacks), but "+vp" must name the same number of
+ * ranks. The restart needs address space layout randomization off, so on
+ * Linux it is run under "setarch $(uname -m) -R" (see the AMPI manual,
+ * "Checkpointing and Fault Tolerance"); the Makefile's test target does
+ * this through testrun. For example:
+ *
+ *   ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 3
+ *   setarch $(uname -m) -R ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 4 +restart log
+ *
+ * Three links of the same source are built: jacobi (Isomalloc heap and the
+ * chunk_pup routine), jacobi.pup (-memory default: the chunk travels only
+ * through chunk_pup) and jacobi.iso (Isomalloc heap only, -DNO_PUP).
+ */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "mpi.h"
 
 #define DIMX 100
@@ -105,6 +144,9 @@ int main(int ac, char** av)
   chunk *cp;
   int rank, size;
   MPI_Request req[12];
+  int chkpt_iter = 0;
+  const char *chkpt_dir = NULL;
+  MPI_Info chkpt_info = MPI_INFO_NULL;
 
   MPI_Init(&ac, &av);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -112,7 +154,7 @@ int main(int ac, char** av)
 
   if (ac < 4) {
     if (rank == 0)
-      printf("Usage: jacobi X Y Z [nIter].\n");
+      printf("Usage: jacobi X Y Z [nIter] [-chkpt ITER DIR]\n");
     MPI_Finalize();
     return 1;
   }
@@ -125,12 +167,27 @@ int main(int ac, char** av)
     MPI_Finalize();
     return 2;
   }
-  if (ac == 5)
-    niter = atoi(av[4]);
-  else
-    niter = 20;
+  niter = 20;
+  for (i = 4; i < ac; i++) {
+    if (strcmp(av[i], "-chkpt") == 0 && i + 2 < ac) {
+      chkpt_iter = atoi(av[i+1]);
+      chkpt_dir = av[i+2];
+      i += 2;
+    } else if (av[i][0] != '+' && av[i][0] != '-') {
+      niter = atoi(av[i]);
+    }
+  }
 
   MPI_Bcast(&niter, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+#ifdef AMPI
+  if (chkpt_dir != NULL) {
+    char value[MPI_MAX_INFO_VAL];
+    snprintf(value, sizeof(value), "to_file=%s", chkpt_dir);
+    MPI_Info_create(&chkpt_info);
+    MPI_Info_set(chkpt_info, "ampi_checkpoint", value);
+  }
+#endif
 
   cp = new chunk;
 #if defined(AMPI) && ! defined(NO_PUP)
@@ -208,11 +265,29 @@ int main(int ac, char** av)
       printf("iter %d time: %lf maxerr: %lf\n", iter, itertime / size, maxerr);
     starttime = MPI_Wtime();
 #ifdef AMPI
-    if(iter%10 == 5) {
+    if (chkpt_dir != NULL && iter == chkpt_iter) {
+      /* Writes the checkpoint; a run started with "+restart <dir>" resumes
+         every rank here, with iter == chkpt_iter, and goes on. */
+      if (rank == 0)
+        printf("iter %d: checkpoint to %s\n", iter, chkpt_dir);
+      AMPI_Migrate(chkpt_info);
+      if (rank == 0) {
+        char where[MPI_MAX_PROCESSOR_NAME];
+        int len;
+        MPI_Get_processor_name(where, &len);
+        printf("iter %d: continuing after the checkpoint; rank 0 is %s\n", iter, where);
+      }
+    } else if (iter%10 == 5) {
       AMPI_Migrate(AMPI_INFO_LB_SYNC);
     }
 #endif
   }
+  if (rank == 0)
+    printf("jacobi: %d iterations, final maxerr %.17g\n", niter, maxerr);
+#ifdef AMPI
+  if (chkpt_info != MPI_INFO_NULL)
+    MPI_Info_free(&chkpt_info);
+#endif
   MPI_Finalize();
   return 0;
 }
