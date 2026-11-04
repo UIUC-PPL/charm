@@ -64,6 +64,8 @@ RECONVERSE_NA += \
   privatization \
   scan \
   waitall_ata \
+  collmatch \
+  migrate_colls \
 
 endif
 endif
