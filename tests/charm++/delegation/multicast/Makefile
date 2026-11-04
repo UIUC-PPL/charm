@@ -18,6 +18,7 @@ hello.ci.stamp: hello.ci
 test: all
 	$(call run, +p3 ./hello 10 )
 	$(call run, +p3 ./hello 10 +randomized_msgq +randomized_seed 1 )
+	$(call run, +p4 ./hello 10 +randomized_msgq +randomized_seed 1 )
 	$(call run, +p4 ./hello 10 +randomized_msgq +randomized_seed 2 )
 	$(call run, +p4 ./hello 10 +randomized_msgq +randomized_seed 3 )
 

@@ -108,8 +108,6 @@ Known gaps in the alpha:
   9.0 pre-releases, because the object id layout may change before
   the beta. Trace logs and load balancer dumps are not affected.
 
-- CkMulticast delegation can hang under +randomized_msgq (#4032).
-
 ================================================================================
 What's new in Charm++ 8.1.0
 ================================================================================

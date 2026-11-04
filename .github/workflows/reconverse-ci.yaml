@@ -106,7 +106,7 @@ jobs:
       - name: test (single process)
         run: |
           set -e
-          for d in $TEST_DIRS; do TESTRUN_VA_RANDOMIZATION=1 make -C $d test; done
+          for d in $TEST_DIRS; do TESTRUN_VA_RANDOMIZATION=1 timeout 900 make -C $d test; done
       - name: test (2 processes, lcrun)
         run: |
           set -e
@@ -135,7 +135,7 @@ jobs:
       - name: test (single process)
         run: |
           set -e
-          for d in $TEST_DIRS; do make -C $d test; done
+          for d in $TEST_DIRS; do timeout 900 make -C $d test; done
       - name: test (2 processes, lcrun)
         run: |
           set -e
@@ -161,7 +161,7 @@ jobs:
       - name: test (single process)
         run: |
           set -e
-          for d in $TEST_DIRS; do make -C $d test; done
+          for d in $TEST_DIRS; do gtimeout 900 make -C $d test; done
       - name: test (2 processes, lcrun)
         run: |
           set -e
