@@ -156,6 +156,19 @@ struct LoadedObject
 
 static std::vector<LoadedObject> loadedObjects;
 
+/* Each name is listed once, at the first address the loader reports for it,
+   on every platform. Two lists built this way pair up entry for entry by
+   name, so an unpack compares each received entry with the one local entry
+   of its name and no second entry of a name can fail a thread. */
+static void addLoadedObject(std::vector<LoadedObject> & objects,
+                            const std::string & name, unsigned long long base)
+{
+  for (const LoadedObject & o : objects)
+    if (o.name == name)
+      return;
+  objects.push_back({name, base});
+}
+
 #if defined(__linux__)
 static int collectLoadedObject(struct dl_phdr_info * info, size_t, void * data)
 {
@@ -166,13 +179,11 @@ static int collectLoadedObject(struct dl_phdr_info * info, size_t, void * data)
      the program, so a mismatch report would name it instead of the object
      that matters. Newer glibc lists it as linux-vdso.so.1 or linux-gate.so.1;
      glibc 2.17 (CentOS and RHEL 7) lists it with an empty name, the same as
-     the program's own entry. The program is always the first entry visited,
-     so a later unnamed entry is the vdso and is skipped. */
+     the program's own entry; the program is always the first entry visited,
+     so that one is dropped as a second entry of a name already listed. */
   if (name.compare(0, 10, "linux-vdso") == 0 || name.compare(0, 10, "linux-gate") == 0)
     return 0;
-  if (name.empty() && !objects->empty())
-    return 0;
-  objects->push_back({name, (unsigned long long)info->dlpi_addr});
+  addLoadedObject(*objects, name, (unsigned long long)info->dlpi_addr);
   return 0;
 }
 #endif
@@ -183,8 +194,8 @@ static void collectLoadedObjects(void)
 #if defined(__APPLE__)
   const uint32_t n = _dyld_image_count();
   for (uint32_t i = 0; i < n; i++)
-    loadedObjects.push_back({_dyld_get_image_name(i),
-                             (unsigned long long)(uintptr_t)_dyld_get_image_header(i)});
+    addLoadedObject(loadedObjects, _dyld_get_image_name(i),
+                    (unsigned long long)(uintptr_t)_dyld_get_image_header(i));
 #elif defined(__linux__)
   dl_iterate_phdr(collectLoadedObject, &loadedObjects);
 #endif
@@ -207,10 +218,9 @@ static void pupLoadedObjects(PUP::er & p)
     p | base;
     if (!p.isUnpacking())
       continue;
-    /* Compared with the first local entry of that name only: a second entry
-       of the same name, if a loader ever lists one, must not fail the thread
-       against the entry it does not match. An object this process has not
-       loaded is not compared. */
+    /* Each name appears once in both lists (addLoadedObject), so the entry
+       is compared with the one local entry of its name. An object this
+       process has not loaded is not compared. */
     for (const LoadedObject & o : loadedObjects)
     {
       if (o.name != name)
