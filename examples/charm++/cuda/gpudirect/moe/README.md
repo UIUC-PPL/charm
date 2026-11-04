@@ -541,7 +541,9 @@ one node (`hapiDevPoolCheckRegistrable`).
 > ran without the Slingshot plugin and the example's serving arms from
 > "Copies up to four" on ran with a serving bug; the next section has the
 > re-measured matrix and the corrected ratios. The example's training rows
-> and the four-GPU rows stand.
+> and the four-GPU rows stand, except (2026-11-03) the Megatron-Core rows,
+> which ran sequential experts, and the FasterMoE serving rows, which paid
+> a per-step garbage collection; see "Measured 2026-11-03".
 
 Everything above routes a hashed Zipf. This section replays recorded routing
 (`-E`, `--trace`; `ref/README.md` has the tools; the traces are release
@@ -794,6 +796,10 @@ inside the round's window when it is zero. Rule and plumbing:
 
 ## Measured 2026-11-02: the same matrix with NCCL on Slingshot, and a serving fix
 
+> Superseded in part (2026-11-03): the Megatron-Core rows below ran
+> sequential experts, and the FasterMoE serving rows paid a per-step
+> garbage collection; see "Measured 2026-11-03".
+
 **Correction.** Every NCCL baseline of the 2026-11-01 section (the PyTorch
 reference, Megatron-Core, FastMoE, FasterMoE) ran without the `aws-ofi-nccl`
 plugin, so across the two nodes NCCL did not use Slingshot through libfabric:
@@ -937,6 +943,75 @@ copies per expert gets the 2026-11-01 step back from the two-partition
 build. The two builds' checksums differ in the ninth digit (the partition
 boundaries set the chunk sequence) and each build's plain and copy arms
 agree with each other.
+
+## Measured 2026-11-03: the baselines as their authors run them (one node)
+
+**Correction.** An audit of the baseline harnesses against the way their
+authors run them (prompted by the question of what a fair comparison must
+match) found two faults, both of which slowed the baselines, and one
+mismatch. Measured in job 23496712, one A40 node, four GPUs, the same
+traces and arguments as the 2026-11-01 four-GPU rows.
+
+1. **Megatron-Core's experts were sequential.** In Megatron-Core 0.20
+   `get_gpt_layer_local_spec` builds `SequentialMLP` whatever
+   `moe_grouped_gemm` says: there is no `GroupedMLP` in 0.20 and the
+   `grouped_gemm` package is never used. The grouped path is the Transformer
+   Engine spec, `TEGroupedMLP` on TE's `GroupedLinear`, which is Megatron-LM's
+   default `--transformer-impl`. Every "Megatron-Core, grouped GEMM" row of
+   the 2026-10-31, 2026-11-01 and 2026-11-02 sections ran one GEMM per
+   expert; the harness printed "grouped GEMM" from its flag (the two fp32
+   rows of `ref/README.md`'s Megatron table, sequential and "grouped", are
+   identical for that reason). `ref/megatron_moe.py` now takes `--te`
+   (and `--permute-fusion` for TE's fused token permutation) and prints the
+   module class that ran.
+2. **FasterMoE's serving step paid a full garbage collection per step.**
+   FastMoE's fused forward records autograd graphs whatever the grad mode;
+   the harness collected them every step to bound memory, and that
+   collection scanned every long-lived object: 95 ms of forward in serving
+   against 38 ms for the same forward in training (job 23452305, SmartMoE
+   routing, eight GPUs). `gc.freeze()` before the loop limits each
+   collection to the step's own garbage. Every FasterMoE serving row above
+   carries the old cost.
+3. **Master weights.** The Megatron and FastMoE harnesses updated their bf16
+   parameters in place. Megatron-LM's bf16 optimizer keeps fp32 master
+   weights and casts into the bf16 parameters each step, as the example does
+   (an update below 2^-9 of a weight is rounded away by an in-place bf16
+   update). Both harnesses now take `--master`; its cost is measured in the
+   eight-GPU re-run, not here.
+
+| four GPUs, ms/step                                   | SmartMoE train | SmartMoE serve | Mixtral train | Mixtral serve | OLMoE train | OLMoE serve |
+|------------------------------------------------------|---------------:|---------------:|--------------:|--------------:|------------:|------------:|
+| Megatron-Core, sequential experts (as published)     |      90.2 (a)  |           52.0 |         272.6 |         138.1 |       252.0 |       167.2 |
+| Megatron-Core, Transformer Engine grouped experts    |           81.4 |           48.6 |         250.8 |         139.5 |       253.0 |       167.3 |
+| Megatron-Core, TE grouped experts, fused permute     |           81.9 |           48.2 |         246.7 |         136.5 |       255.2 |       166.2 |
+| FasterMoE, serving as published                      |                |       82.3 (a) |               |     188.2 (a) |             |             |
+| FasterMoE, serving with the collection fixed         |                |           27.0 |               |         132.4 |             |       184.3 |
+| FastMoE plain, serving                               |                |           52.0 |               |         134.6 |             |       216.4 |
+| example plain (2026-11-01 rows)                      |           55.4 |           32.9 |         137.8 |         108.7 |             |             |
+| example ShedLB (2026-11-01 rows)                     |           50.4 |           27.3 |         137.3 |         100.7 |             |             |
+
+(a) the 2026-11-01 four-GPU row, another node; this job's sequential
+controls reproduced the other 2026-11-01 one-node rows within 1% (52.0
+against 52.1, 272.6 against 270.8, 138.1 against 138.1), and its SmartMoE
+training control was lost to a harness error.
+
+What the numbers say. The Transformer Engine experts are worth 10% on
+SmartMoE training, 7% on SmartMoE serving and 8% on Mixtral training, and
+nothing on Mixtral serving (two experts per GPU, nothing to group) or on
+OLMoE (the step is the top-8 exchange); fused permutation is inside the
+run-to-run band everywhere, so the eight-GPU re-run uses the TE experts
+without it. FasterMoE's serving step on SmartMoE's routing is 27.0, equal
+to the example with ShedLB (27.3) and ahead of the plain example (32.9):
+its shadow of the hottest expert does in serving what ShedLB's copy does,
+and the 2026-11-01 harness hid that behind the collection. On Mixtral's
+flat routing it is level with FastMoE plain and Megatron-Core. The
+eight-GPU serving claim over FasterMoE in the 2026-11-02 section (3.6x on
+SmartMoE's routing, 1.4x on Mixtral's) is therefore void until the
+eight-GPU matrix is re-measured with these harnesses, and the eight-GPU
+Megatron-Core ratios there are too large by the margins above. Megatron's
+DeepEP ("flex") dispatcher and its NVLink-multicast inference dispatcher
+cannot run on Delta's A40 nodes (no InfiniBand, no NVLink), so the
+all-to-all dispatcher stays the Megatron configuration.
 
 ## Measured (2026-09-06, one A40 node, four PEs, `+gpupool`)
 

@@ -203,6 +203,19 @@ in the user site of the `pytorch-2.12.1-cu130` environment, and the environment'
 must lead `LD_LIBRARY_PATH` (the launcher does this) for Transformer Engine,
 which `megatron.core` imports, to load.
 
+**Which experts ran (2026-11-03).** In Megatron-Core 0.20 the local spec
+builds `SequentialMLP` whatever `--grouped` says: there is no `GroupedMLP`
+in 0.20 and `grouped_gemm` is never used, which is why the two fp32 rows
+below are identical. The grouped path is the Transformer Engine spec
+(`--te`: `TEGroupedMLP` on TE 2.17's `GroupedLinear`, Megatron-LM's default
+`--transformer-impl`), with `--permute-fusion` for TE's fused token
+permutation (inside the band everywhere, see the example's README,
+"Measured 2026-11-03"). The header line prints the module class that ran.
+`--master` keeps fp32 master weights for the experts and casts into the
+bf16 parameters after each SGD step, as Megatron-LM's bf16 optimizer does;
+without it the bf16 parameters are updated in place, which rounds away
+updates below 2^-9 of a weight and does less work than the real optimizer.
+
 Same arguments as the example's 2026-10-31 runs (`-e 64 -m 2048 -H 8192 -t
 8192 -z 1.3 -p 0 -i 60 -u 3`), steady state steps 33-63:
 
@@ -288,7 +301,13 @@ site of the same `pytorch-2.12.1-cu130` environment, built with plain gcc
 against the environment's NCCL headers and `libnccl.so.2` (`build_fastmoe.sh
 <work dir>`: clone, `fastmoe-55af4f9.patch`, the NCCL stub, user-site install;
 FastMoE reports itself as 1.1.0). The group size of the group-wise exchange is
-FastMoE's default (4).
+FastMoE's default (4). `--master` is the same fp32-master option as the
+Megatron harness's. In serving with the fused schedule the forward records
+autograd graphs whatever the grad mode and the harness collects them each
+step; `gc.freeze()` before the loop keeps that collection to the step's own
+garbage (a full collection cost ~55 ms a step and made every FasterMoE
+serving row before 2026-11-03 too slow; see the example's README, "Measured
+2026-11-03").
 
 **The network NCCL uses.** Delta has no NCCL module; every harness uses the
 `nvidia-nccl-cu13` 2.29.7 wheel inside the `pytorch-2.12.1-cu130` environment.

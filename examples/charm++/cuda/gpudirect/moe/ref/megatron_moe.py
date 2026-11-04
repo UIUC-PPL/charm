@@ -20,12 +20,12 @@ import torch
 import torch.distributed as dist
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from moe_ref import make_router, routing_line, init_uniform, hmix, Attention, attention_step, add_attention_args  # noqa: E402
+from moe_ref import make_router, routing_line, init_uniform, hmix, Attention, attention_step, add_attention_args, master_sgd_step  # noqa: E402
 
 from megatron.core import parallel_state  # noqa: E402
 from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed  # noqa: E402
 from megatron.core.transformer.transformer_config import TransformerConfig  # noqa: E402
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec  # noqa: E402
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec, get_gpt_layer_with_transformer_engine_spec  # noqa: E402
 from megatron.core.transformer.moe.router import TopKRouter  # noqa: E402
 
 
@@ -67,7 +67,15 @@ def main():
     ap.add_argument("-L", "--lr", type=float, default=1e-4)
     ap.add_argument("-S", "--seed", type=int, default=12345)
     ap.add_argument("--bf16", action="store_true", help="bf16 parameters and activations")
-    ap.add_argument("--grouped", action="store_true", help="grouped GEMM experts (needs grouped_gemm)")
+    ap.add_argument("--grouped", action="store_true", help="grouped GEMM experts (with --te; the local spec ignores it)")
+    ap.add_argument("--te", action="store_true",
+                    help="the Transformer Engine layer spec (Megatron-LM's default --transformer-impl): "
+                         "with --grouped the experts are TE's GroupedLinear (TEGroupedMLP)")
+    ap.add_argument("--permute-fusion", action="store_true",
+                    help="moe_permute_fusion: TE's fused token permutation in the dispatcher")
+    ap.add_argument("--master", action="store_true",
+                    help="fp32 master weights for the experts, the SGD step on them and a cast into the bf16 "
+                         "parameters each step, as Megatron-LM's bf16 optimizer does (and the example)")
     ap.add_argument("--dispatcher", choices=["alltoall", "allgather"], default="alltoall")
     ap.add_argument("--capacity-factor", type=float, default=None,
                     help="Megatron's moe_expert_capacity_factor: tokens above capacity are dropped (GShard/Switch)")
@@ -107,12 +115,18 @@ def main():
         add_bias_linear=False, gated_linear_unit=False,
         activation_func=torch.nn.functional.relu,
         moe_grouped_gemm=a.grouped,
+        moe_permute_fusion=a.permute_fusion,
         moe_expert_capacity_factor=a.capacity_factor,
         moe_token_drop_policy="probs",
         bf16=a.bf16, params_dtype=dtype,
         use_cpu_initialization=False,
     )
-    spec = get_gpt_layer_local_spec(num_experts=E, moe_grouped_gemm=a.grouped).submodules.mlp
+    # Megatron-Core 0.20 has no GroupedMLP: the local backend builds SequentialMLP whatever
+    # moe_grouped_gemm says, and the grouped path is the Transformer Engine spec.
+    if a.te:
+        spec = get_gpt_layer_with_transformer_engine_spec(num_experts=E, moe_grouped_gemm=a.grouped).submodules.mlp
+    else:
+        spec = get_gpt_layer_local_spec(num_experts=E, moe_grouped_gemm=a.grouped).submodules.mlp
     submods = spec.keywords["submodules"]
     submods.router = HashedRouter
     layer = spec.func(cfg, submodules=submods, layer_number=1).to(device)
@@ -120,6 +134,7 @@ def main():
     layer.router.hashed = make_router(a, rank, P)
     params = [p for p in layer.parameters() if p.requires_grad]
     opt = torch.optim.SGD(params, lr=a.lr / T)   # per-token mean, as the example's 1/n
+    masters = [p.detach().float().clone() for p in params] if a.master else None
 
     x_in = init_uniform(T * dm, hmix(hmix(a.seed, 1000), rank), math.sqrt(3.0),
                         device, dtype).view(T, 1, dm)
@@ -132,9 +147,12 @@ def main():
     n_total = a.warmup + a.steps
     H = sum(math.pow(r + 1, -a.zipf) for r in range(E)) if a.zipf > 0 else E
     nparams = sum(p.numel() for p in layer.experts.parameters())
-    log("\n[Megatron-Core %s MoE layer: expert parallel, %s dispatcher, %s experts]" % (
+    log("\n[Megatron-Core %s MoE layer: expert parallel, %s dispatcher%s, experts %s%s]" % (
         __import__("megatron.core").core.__version__, a.dispatcher,
-        "grouped GEMM" if a.grouped else "sequential"))
+        " with fused permute" if a.permute_fusion else "", type(layer.experts).__name__,
+        " (Transformer Engine spec)" if a.te else " (local spec)"))
+    if a.master:
+        log("Experts' optimizer: fp32 master weights, the SGD step on them, cast into the bf16 parameters each step")
     log("Experts: %d, d_model %d, d_ff %d, %s, %d local, %.1f MB expert parameters per rank" % (
         E, dm, dff, "bf16" if a.bf16 else "fp32", E // P,
         nparams * (2 if a.bf16 else 4) / 1e6))
@@ -163,8 +181,11 @@ def main():
             ev[s][1].record()
             loss = 0.5 * out.float().square().sum()
             loss.backward()
-            opt.step()
-            opt.zero_grad(set_to_none=True)
+            if masters is not None:
+                master_sgd_step(params, masters, a.lr / T)
+            else:
+                opt.step()
+                opt.zero_grad(set_to_none=True)
         ev[s][2].record()
         if s == a.warmup:
             torch.cuda.synchronize()

@@ -33,7 +33,7 @@ import torch
 import torch.distributed as dist
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from moe_ref import make_router, routing_line, init_uniform, hmix, Attention, attention_step, add_attention_args  # noqa: E402
+from moe_ref import make_router, routing_line, init_uniform, hmix, Attention, attention_step, add_attention_args, master_sgd_step  # noqa: E402
 
 
 def parse():
@@ -54,6 +54,9 @@ def parse():
     ap.add_argument("--bf16", action="store_true", help="bf16 parameters and activations")
     ap.add_argument("--forward-only", action="store_true",
                     help="serving: the forward under no_grad, no loss, no backward, no update")
+    ap.add_argument("--master", action="store_true",
+                    help="fp32 master weights for the experts, the SGD step on them and a cast into the bf16 "
+                         "parameters each step, as Megatron-LM's bf16 optimizer does (and the example)")
     add_attention_args(ap)
     return ap.parse_args()
 
@@ -129,6 +132,7 @@ def main():
     layer.gate.hashed = make_router(a, rank, P)
     params = [p for p in layer.experts.parameters() if p.requires_grad]
     opt = torch.optim.SGD(params, lr=a.lr / T)   # per-token mean, as the example's 1/n
+    masters = [p.detach().float().clone() for p in params] if a.master else None
 
     shadow_on = fmoe_faster_schedule and switch_from_env("FMOE_FASTER_SHADOW_ENABLE")
     shadows = []   # per step: the global expert ids the policy shadowed
@@ -170,6 +174,8 @@ def main():
         nparams * (2 if a.bf16 else 4) / 1e6))
     log("Tokens: %d per rank per step on %d ranks, top-%d" % (T, P, K))
     log(routing_line(a, layer.gate.hashed))
+    if a.master:
+        log("Experts' optimizer: fp32 master weights, the SGD step on them, cast into the bf16 parameters each step")
     log("Steps: %d (+%d warmup); static placement (expert e on rank e*P/E)%s%s%s\n" % (
         a.steps, a.warmup, ", shadows re-chosen every step" if shadow_on else ", no balancing",
         "; forward only (serving)" if a.forward_only else "",
@@ -181,6 +187,8 @@ def main():
     ev = [[torch.cuda.Event(enable_timing=True) for _ in range(3)] for _ in range(n_total + 2)]
     loss_hist = torch.zeros(n_total + 1, dtype=torch.float64, device=device)   # rank 0's loss per step, read at the end
     loss = torch.zeros((), device=device)
+    if a.forward_only and fmoe_faster_schedule:
+        gc.freeze()   # the per-step collection below then scans only the step's own objects
     for s in range(1, n_total + 1):
         layer.gate.step = s
         ev[s][0].record()
@@ -192,7 +200,9 @@ def main():
             if fmoe_faster_schedule:
                 # FasterMoE's fused forward records the experts' sub-graphs whatever the grad mode, and
                 # without a backward to consume them the hot rank's memory grew every step and ran out
-                # (44 GB) at the Mixtral shape; the graph is released by collecting the cycle each step
+                # (44 GB) at the Mixtral shape; the graph is released by collecting the cycle each step.
+                # Everything older is frozen (above): a full collection over the long-lived objects cost
+                # ~55 ms a step (job 23452305: forward 95 ms serving against 38 ms training)
                 out = layer(x_in)
                 del out
                 gc.collect()
@@ -209,8 +219,11 @@ def main():
             loss = 0.5 * out.float().square().sum()
             loss_hist[s] = loss.detach()
             loss.backward()
-            opt.step()
-            opt.zero_grad(set_to_none=True)
+            if masters is not None:
+                master_sgd_step(params, masters, a.lr / T)
+            else:
+                opt.step()
+                opt.zero_grad(set_to_none=True)
             x_in.grad = None
         ev[s][2].record()
         if s == a.warmup:

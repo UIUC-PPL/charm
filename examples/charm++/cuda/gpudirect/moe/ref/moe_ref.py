@@ -250,6 +250,20 @@ class Attention(torch.nn.Module):
         return o.transpose(1, 2).reshape(T, d) @ self.w[3]
 
 
+def master_sgd_step(params, masters, lr):
+    """The bf16 optimizer's step as Megatron-LM's does it (and the example's experts): the
+    gradients cast to fp32, the SGD step on the fp32 master copies, the masters cast back
+    into the bf16 parameters. An update below 2^-9 of a weight is rounded away by a bf16
+    parameter updated in place, which is why bf16 training keeps masters."""
+    with torch.no_grad():
+        for p, m in zip(params, masters):
+            if p.grad is None:
+                continue   # outside the step's graph (Megatron's router weight under the replayed routing)
+            m.add_(p.grad, alpha=-lr)   # the bf16 gradient promoted into the fp32 master
+            p.copy_(m)
+            p.grad = None
+
+
 def attention_step(attn, opt, x, lr_scale, serving):
     """One attention sublayer step: forward, and unless serving its loss, backward and
     update. Returns the detached output, the MoE sublayer's input."""
