@@ -22,7 +22,14 @@ Files:
 
 - `ProcLoc.tla` — the specification.
 - `MC_*.cfg` — TLC configurations (see "Results"); `MC_*_fix.cfg` set
-  `Fix = TRUE`, the others `Fix = FALSE`.
+  `Fix = TRUE`, the others `Fix = FALSE`. Two more constants: `Rec` (with
+  `Fix`: the home keeps its record of lives; `FALSE` leaves only the two free
+  rules, the `MC_*_norec*.cfg` configurations), `DeadSet` (with `Fix` and not
+  `Rec`: tags and the home's set of dead lives, no per-life location, the
+  notice clears unconditionally; `MC_*_deadset*.cfg`) and `Sync` (`TRUE`: a
+  re-creation happens only after every runtime message of the earlier life has
+  been delivered, the contract of the design document's section 7.8; the
+  `*_sync` configurations).
 - `trace_*.txt` — the counterexamples of the Findings section, cut from the
   TLC output (one state per block). The full logs are not kept here; the
   Results tables give their state counts and times.
@@ -135,6 +142,13 @@ Four rules, all in chapter section 3.5. Model names in parentheses.
    arriving at any PE of the home's process is dropped: the home's by-index
    path and the process's own writes keep that entry.
 
+Rules 1 and 2 are the record (`Rec`); rules 3 and 4 cost no messages and no
+state and are kept in every variant. `Rec = FALSE` with `Fix = TRUE` models
+the code without the record and the tags (design document section 7.8, option
+C), and `Sync = TRUE` adds the contract that a re-creation waits for the
+earlier life's runtime messages to be delivered (`Create` is enabled only when
+no update, notice, request or wake is in flight).
+
 ## Properties
 
 Safety (`Inv`, plus the action property `TableMonotone`):
@@ -171,6 +185,8 @@ split request, and on creation):
 - `EventuallyDelivered` — every sent message is delivered.
 - `HomeConverges` — the home's process entry ends up exact.
 - `Quiesces` — the network, all buffers and all split requests drain.
+- `NetDrains` — the network alone drains (used when a message to an element
+  that died and is not re-created is expected to end up held at the home).
 
 ## Results
 
@@ -213,6 +229,31 @@ first violation.
 | `MC_death_3proc_fix` (3 procs x 1 PE) | 0 | 1 | 1 | 1 | `EventuallyDelivered`, `Quiesces` | 210,446 | 2m06s | pass |
 | `MC_death_safety_2msg_fix` | 1 | 1 | 2 | 1 | `Inv`, `TableMonotone` | running (started 16:21, 2026-11-03; 2.3M states after 1 min) | | result to be appended to this line |
 
+### Reduced protocols, with and without the contract (`Rec = FALSE`)
+
+Run for the design document's section 7.8 (is the record needed, and what does
+a synchronization between deletion and re-insertion buy). "no record": only
+the two free rules (own writes stay, by-id drop). "dead set": tags and the set
+of dead lives, unconditional clear on a notice, no per-life location.
+
+| config | protocol | Sync | checks | distinct states | time | result |
+|---|---|---|---|---|---|---|
+| `MC_death_safety_norec` | no record | no | `Inv`, `TableMonotone` | 1,877,252 | 54s | pass |
+| `MC_death_liveness_norec_noinv` | no record | no | 3 liveness properties | 118,831 | 1m03s | violated (finding 3's race) |
+| `MC_death_3proc_norec` (3 x 1) | no record | no | `EventuallyDelivered`, `Quiesces` | 127,617 | 1m03s | violated |
+| `MC_death_safety_norec_sync` | no record | yes | `Inv`, `TableMonotone` | 206,549 | 4s | pass |
+| `MC_death_stale_norec_sync` | no record | yes | the three weaker forms | 206,549 | 4s | pass |
+| `MC_death_liveness_norec_sync` | no record | yes | `Inv` + 3 liveness properties | 106,918 | 1m06s | `HomeConverges` violated in 12 steps: finding 8 |
+| `MC_death_3proc_norec_sync` (3 x 1) | no record | yes | `EventuallyDelivered`, `Quiesces` | 50,136 | 20s | violated in 22 steps: finding 8 |
+| `MC_death_only` (`Fix = FALSE`, MaxCreate 1) | code as written | | `NetDrains` | 128,235 | 35s | violated in 13 steps: finding 8 |
+| `MC_death_only_fix` (MaxCreate 1) | record | | `NetDrains` | 91,558 | 26s | pass |
+| `MC_death_safety_deadset_sync` | dead set | yes | `Inv`, `TableMonotone` | 168,346 | 3s | pass |
+| `MC_death_stale_deadset_sync` | dead set | yes | the three weaker forms | 168,346 | 3s | pass |
+| `MC_death_liveness_deadset_sync` | dead set | yes | `Inv` + 3 liveness properties | 168,346 | 2m09s | pass |
+| `MC_death_3proc_deadset_sync` (3 x 1) | dead set | yes | `EventuallyDelivered`, `Quiesces` | 40,036 | 17s | pass |
+| `MC_death_3proc_deadset` (3 x 1) | dead set | no | `EventuallyDelivered`, `Quiesces` | 144,054 | 1m03s | violated in 14 steps: finding 3 (`trace_deadset_nosync_3proc.txt`) |
+| `MC_death_liveness_deadset_noinv` | dead set | no | 3 liveness properties | 124,974 | 1m04s | violated |
+
 The no-death configurations have more states with `Fix` because the `own`
 mark distinguishes entries that were equal before; the property set is the
 same and still passes. An earlier oracle (`LifeTag`, a life on every entry
@@ -246,8 +287,8 @@ the base branch too in some form (per-PE `CkLocCache::updateLocation` has the
 same strict epoch compare, `objid-redesign` cklocation.C:2786, and its
 `reclaimRemote` erased unconditionally); 5 and 6 reach the live element's own
 entry only with the shared table. Steps name code terms; PE p is in process
-p ÷ 2 (two-process runs) or p (three-process runs). Findings 1, 2, 3, 5, 6 and
-7 are closed by the fix (the `_fix` rows above); 4 is not a defect.
+p ÷ 2 (two-process runs) or p (three-process runs). Findings 1, 2, 3, 5, 6, 7
+and 8 are closed by the fix (the `_fix` rows above); 4 is not a defect.
 
 Code coverage of the same orderings: `tests/charm++/objid_recreate` drives
 the home with hand-built updates and notices (seven scenarios, 166 checks,
@@ -423,3 +464,34 @@ With rules 1 to 4 and a record that only kept the latest epoch per life:
 record clause (`Stale`) drops the update of step 6 before it reaches the
 table; `MC_death_liveness_fix` and `MC_death_liveness_fix_noinv` pass with
 it (1,541,300 states each).
+
+### 8. A death notice outrun by the life's own earlier update: a message bounces for ever
+
+`MC_death_only`, `trace_dead_bounce.txt`, Home = PE 1 (process 0), no
+re-creation (`MaxCreate = 1`); also the reason the reduced protocols fail
+under the contract (`trace_notice_before_updates_2proc.txt`,
+`trace_notice_before_updates_3proc.txt`). Found while checking those variants.
+
+1. `createLocal` on PE 0, epoch 0: process 0 entry {PE 0, 0}; `informHome` {PE 0, 0} to PE 1, delayed.
+2. A PE sends message 1 to PE 0.
+3. `reclaim` on PE 0: process 0 entry cleared (W5); `reclaimRemote(idx, 0, 0)` to PE 1.
+4. PE 1 receives the notice first: the entry is empty, nothing to clear.
+5. PE 1 receives the update of step 1: the entry is empty, {PE 0, 0} is written.
+6. Message 1 reaches PE 0: no element; the entry names PE 0 itself, so it is requeued; on the second pass (`hops > 1`) it goes to the home.
+7. PE 1 follows its entry to PE 0, PE 0 sends it to the home, and so on.
+
+`NetDrains` fails: the message circulates between the home and the dead PE and
+never comes to rest. With the home in another process the same ordering is
+produced by the network between two processes. No re-creation is involved, so
+no synchronization between deletion and re-insertion prevents it. The per-PE
+code of recharm has the same ordering: the home PE's cache entry is erased by
+the notice and revived by the late update, and a message then bounces between
+the home and the dead PE. The compare-and-clear on the notice, which was added
+to protect a re-creation, is what lets the stale update through here (an
+unconditional clear would also have missed it, since the entry was empty when
+the notice came).
+
+Fix: rule 2's dead set. The notice records the life as dead and the late update
+is dropped. This is the one part of the record every variant needs: the tag,
+to recognize the life, and the set of dead lives; the per-life location and the
+reinstall are needed only without the contract (finding 3).

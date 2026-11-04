@@ -176,6 +176,161 @@ pending table is not needed while requests are addressed to PEs (section 9).
 
 ## 3. Protocols
 
+### 3.0 The protocol in one pass
+
+This section follows one element through its life and names every piece of
+location state that changes, who changes it, and what must stay true. Sections
+3.1 to 3.7 are the reference for each part; read this one first. Model names
+in parentheses refer to the TLA+ model in `tla/process-location/` (section 7).
+
+**The state.** For an element X with id x:
+
+- Every process that has addressed x has one entry for it in the process's
+  location table (section 2.1): a PE, an epoch, and two marks (written from a
+  message; arriving, reserved), or no location; plus a waiter word with one bit
+  per rank of the process that holds messages for x. The entry is the process's
+  belief about where X is. It is written by the PEs of the process only.
+- The PE that holds X keeps, in X's `CkLocRec`, the epoch (the number of moves
+  in this life) and the life tag (a number unique in the run, minted at
+  creation).
+- The home PE of x (`homePe`, a function of the index) keeps, in its
+  `CkLocMgr`: for each life of x it has heard of and not seen die, the latest
+  location it was told (`homeLives`); the set of tags of the lives it has seen
+  die (`deadLives`); the location requests by index it could not answer
+  (`bufferedLocationRequests`). The home's process entry is the one others ask
+  about.
+- Every PE keeps the messages it could not deliver: under the id, with its
+  waiter bit set in that process's entry, or under the index, with a request
+  by index out to the home (section 3.3).
+
+**The writes, in the order of a life.**
+
+1. *Creation* on PE c (`createLocal`). c stores {c, 0} in its process's entry
+   (W1, unconditional; it takes the waiter bits and wakes those ranks), mints
+   the life, and sends the home {c, 0, life} (`informHome`) unless c is the
+   home, which records it on the spot. X exists and can receive messages from
+   its own process before anyone else knows of it.
+2. *A send* from PE s (`CkArray::sendMsg`). s reads its process's entry. A hit
+   sends to that PE. A miss sends a small message to the home and holds a large
+   one under x: s sets its waiter bit, reads the entry again, and if it was the
+   first bit and the entry is still empty sends one request to the home
+   (`requestLocation(id)`), unless the home is in this process, whose entry
+   will be written by whoever learns the location.
+3. *Arrival* at a PE that does not hold X (`recvMsg`). The PE reads its
+   process's entry and forwards along it, once; a message that has already been
+   forwarded goes to the home instead, except at the home. With no entry it
+   does what a miss does in step 2; at the home it is held. When the message
+   reaches the holder after a forward, the holder tells the sender's process
+   where X is (`multiHop`: an update by id, {holder, epoch}), unless the sender
+   is in the holder's process, whose entry the landing wrote.
+4. *A move* from PE a to PE b (`emigrate`). a changes its process's entry from
+   {a, e} to {b, e+1} by one CAS that requires the entry to name a (W2; the
+   entry stays as a forwarding entry), sends the migration message with e+1
+   and the life, and sends the home {b, e+1, life} unless the home is a or b.
+   On landing (`immigrate`), b stores {b, e+1} in its process's entry (W3,
+   unconditional, wakes) and flushes what it holds for x.
+5. *The home receives an update by index* ({pe, epoch, life}, from steps 1 and
+   4). It records the location for that life, writes it to its process's entry
+   if the epoch is higher than the entry's (W4, marked as written from a
+   message), flushes what the home holds for x toward pe, and answers the
+   requests by index it held with the same entry. A request by id (step 2) is
+   answered from the home's process entry, or held until it has one.
+6. *A process receives an update by id* (a reply or a repair; steps 2 and 3).
+   The receiving PE writes it by epoch compare (W4, marked), and if it wrote,
+   flushes its held messages toward the new PE and wakes the ranks whose bits
+   the write took, which flush theirs.
+7. *Death* on PE d at epoch e (`reclaim`). d clears its process's entry while
+   the entry names d (W5; the key and the waiter bits stay), and sends the
+   home {d, e, life} (`reclaimRemote`), or handles it on the spot. The home
+   marks the life dead, forgets its record, clears its process's entry while
+   the entry names {d, e} or the location recorded for that life, and, if the
+   entry is now empty and another life is recorded, installs that life as in
+   step 5.
+8. *Re-creation* is step 1 again: a new life, epoch 0, the same id (packed
+   kind; the hashed kind mints a new id and retires the old, section 2.2).
+
+**What must hold.** The model checks three properties and the code is written
+to keep them:
+
+- *The holder's process entry is exact* (`HolderEntryExact`): the process that
+  holds X has {holder, epoch}. Senders in that process rely on it to push the
+  message to the holder without leaving the process, and the move's CAS (W2)
+  requires it, aborting otherwise. The writes that establish it (W1, W2, W3)
+  are made by the PE they name, before any message about them exists.
+- *A held message has a release pending* (`WaiterCoverage`,
+  `RequestOutstanding`): a message held under an id has the holding rank's
+  waiter bit set in its process's entry, so the next write to that entry wakes
+  it; one held under an index has a request out to the home, whose reply by
+  index releases it (section 3.3 lists the four hand-overs).
+- *The home converges, and every message is delivered* (`HomeConverges`,
+  `EventuallyDelivered`): once the messages about a life have arrived, the
+  home's entry names the live holder, and nothing stays held. Entries in other
+  processes may stay stale; a stale entry forwards along the chain of
+  forwarding entries (step 3) and is repaired by the next delivery or the next
+  move. Message order across a move is not kept (section 3.4).
+
+**Why this is enough without deaths.** Within one life the epoch orders every
+fact about X: each move adds one. The holder's process writes what it knows
+unconditionally; every other process writes by epoch compare, so each entry
+only ever moves toward the newest location it has been told. The home hears of
+every move it is not itself part of, and of those it is part of it writes the
+truth itself. A stale entry names a PE that either holds X or wrote a
+forwarding entry pointing further along, so a message always gets closer, and
+a message that has been forwarded once goes to the home, which holds it until
+it knows. That is the whole protocol for a program that never deletes an
+element: the table, the epoch compare, the waiter bits and one request per
+process.
+
+**What deletion adds, and why.** A deleted index can be inserted again under
+the same id while messages about the old life (home updates, replies, repairs,
+the death notice) are still in flight, in any order. The new life starts at
+epoch 0, so the epoch compare cannot tell it from the old one, and the old
+life's messages can carry higher epochs than the new life's. Five rules handle
+this; each defeats a named ordering (the trace files are in the model folder):
+
+1. *Life tags* on updates, notices and the migration message, so the home can
+   tell the lives apart (the table does not carry them).
+2. *The home's record of lives.* Without it, a new life's creation update that
+   reaches the home before the old life's death notice is rejected by the old
+   life's higher epoch, the notice then clears the entry, and the new life is
+   unknown at the home until it moves: a message held under its id, or a
+   request held at the home, waits forever (`trace_lost_message_3proc.txt`).
+   The record remembers the rejected update and installs it when the notice
+   comes. The same record drops an update of a life known dead, or one older
+   than what the home has recorded for that life, which would otherwise revive
+   the cleared entry at the dead life's epoch and shut the new life's update
+   out (`trace_stale_create_update.txt`). That revival needs no re-creation at
+   all: a notice that outruns the life's own earlier update leaves the home
+   naming the dead PE, and a message sent to the element afterwards bounces
+   between the home and that PE for ever (`trace_dead_bounce.txt`; the per-PE
+   code had this).
+3. *Own writes stay.* A value written from a message is marked, and what a PE
+   of the process wrote about itself (W1, W2, W3, unmarked) is never replaced
+   by a message nor cleared by the home. Without it, a notice for the old life
+   clears a re-creation on the same PE at epoch 0 (`trace_death_residual.txt`),
+   and a stale move update of the old life, with a higher epoch, overwrites the
+   re-created element's own entry so that the next move aborts in W2
+   (`trace_stale_over_new_life.txt`; with per-PE caches this entry was private
+   to the holder and nothing else could write it).
+4. *Replies and repairs by id are dropped in the home's process.* They carry no
+   life, so the record cannot judge them; the home's updates by index and the
+   process's own writes keep that entry. Without it, a dead life's repair
+   arriving after the notice revives the empty entry and shuts the new life
+   out, as in rule 2.
+5. *The notice clears by match*, {d, e} or the recorded location of the life,
+   never unconditionally, so a later life's entry under the same id survives it.
+
+None of these adds a message. Updates, replies and the migration message grow
+by the 8-byte tag; the home keeps about a hundred bytes per element it is home
+of, and the set of dead tags grows with the deletions (section 9). The rules are
+exercised only when an index is re-created while the old life's messages are
+in flight; a program that deletes without re-inserting pays the tag bytes and
+the record, nothing else.
+
+**What is deferred.** The arriving state for an element in flight (section
+3.4), home updates skipped for moves within a process (section 3.7), and
+device payloads (section 3.6) do not change the rules above.
+
 ### 3.1 Who writes, and when
 
 | event | writer | writes |

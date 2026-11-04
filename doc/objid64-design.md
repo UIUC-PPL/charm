@@ -705,6 +705,148 @@ Measure before choosing the per-PE read cache at all: if one shard read per
 index-addressed send is cheap enough on a 64-PE node, the read cache can be dropped
 and only the shared table needs the cap.
 
+### 7.8 The re-creation rules after the TLA+ check: cost, contract, options (2026-11-03)
+
+Kale's question after the check of PR #4123: the location protocol has grown
+(chapter section 3.0 lists five rules for deletion and re-creation that the
+first version did not have); is a simplification being missed, does the
+machinery cost the program that never deletes, and should the full protocol be
+an option an array declares? This section answers from the code as merged
+(2f144b0e7), the chapter, and the model (`doc/internals/tla/process-location/`,
+configurations `*_norec*`).
+
+**Where the complexity is.** Entirely in deletion followed by re-insertion of
+the same index while messages about the earlier life are still in flight. The
+protocol for a program that never deletes is the first design: the table, the
+epoch compare, the waiter bits, one request per process (chapter 3.0, "why this
+is enough without deaths"). Of the five rules, two cost nothing and are
+protective for every array: the mark on values written from messages with
+"own writes stay" (rule 3), and the drop of replies and repairs by id in the
+home's process (rule 4, which removes writes). Rule 5 (clear by match) is one
+comparison. The cost is in rules 1 and 2: the life tag and the home's record.
+
+**What they cost a program that never deletes.**
+
+| item | cost | where |
+|---|---|---|
+| extra messages | none | the record is updated from messages the protocol already sends |
+| message size | 8 bytes on each home update (`informHome`), reply by index, migration message and death notice | `CkLocEntry::life`, `CkArrayElementMigrateMessage::life` |
+| home CPU | one hash-map lookup or insert and a scan of a one-element vector per home update | `CkLocMgr::homeNoteLocation` |
+| home memory | about 100 bytes per element, at its home PE only (an `unordered_map` node holding a one-entry `std::vector<CkLocEntry>`); for comparison, a table slot is 24 bytes at a load of at most one half, in every process that addressed the element, and a `CkLocRec` plus the element itself is hundreds of bytes | `CkLocMgr::homeLives` |
+| growth | the dead-tag set grows with deletions and is never pruned (chapter section 9); without deletions it is empty | `CkLocMgr::deadLives` |
+| holder memory | 8 bytes per element | `CkLocRec::life` |
+
+So there is no parallel messaging overhead in the base scenario. The argument
+for separate code paths on messaging grounds does not hold; what remains is
+memory at the home and a second per-element structure beside the table.
+
+**Is the record the minimum for the no-contract setting?** Yes, with the
+network as it is. Reconverse delivers in any order, a life's messages come from
+whichever PEs it visited, and two lives are minted on different processes, so
+no tag carried by a message orders two lives, and the home cannot tell, when a
+creation update at epoch 0 meets an entry at a higher epoch, whether it is a
+stale update of the same life or the first word of a new one. One scalar "life
+of the entry" at the home is not enough: an old life's stale update can arrive
+after the new life's update and before the old life's notice, and the home must
+still remember the new life's location when the notice clears the entry. The
+set of lives not known dead, with one location each, is that memory; in
+practice it holds one entry, two during a race. The alternative of deciding at
+the home by asking the PE the entry names ("do you hold x at epoch e?") would
+replace tags and record by a probe message on each ambiguous update and each
+notice; it keeps no per-element state but adds a round trip per deletion and a
+pending list, and has not been modeled. Not pursued.
+
+**The contract alternative.** The question is different if a program promises
+that an index deleted is inserted again only after a synchronization that
+follows the deletion (a reduction or quiescence after the `ckDestroy` calls;
+re-creating the whole array also satisfies it), so that no runtime message
+about the old life is in flight when the new life is created. The model has
+this as `Sync`, and two reduced protocols: `Rec = FALSE` (no record, no tags:
+the compare-and-clear on a notice plus the two free rules) and `DeadSet` (tags
+kept; the home keeps only the set of dead lives, drops their updates, and clears
+its entry unconditionally on a notice; no per-life location, no reinstall).
+
+| configuration | protocol | contract | checks | result |
+|---|---|---|---|---|
+| `MC_death_safety_norec` | no record | no | `Inv`: holder's entry exact, held messages covered, requests outstanding | pass, 1,877,252 states |
+| `MC_death_liveness_norec_noinv` | no record | no | delivery, home convergence, quiescence | violated (the race of finding 3) |
+| `MC_death_3proc_norec` | no record | no | delivery, quiescence | violated |
+| `MC_death_safety_norec_sync` | no record | yes | `Inv` | pass, 206,549 |
+| `MC_death_stale_norec_sync` | no record | yes | stale and settled forms of the holder's entry | pass, 206,549 |
+| `MC_death_liveness_norec_sync` | no record | yes | `Inv` + the three liveness properties | **violated**: finding 8 |
+| `MC_death_3proc_norec_sync` | no record | yes | delivery, quiescence | **violated**: finding 8, a message bounces for ever |
+| `MC_death_only` (code as written, no re-creation at all) | | | the network drains | **violated**: finding 8 |
+| `MC_death_only_fix` (merged code) | record | | the network drains | pass, 91,558 |
+| `MC_death_safety_deadset_sync` | dead set | yes | `Inv` | pass, 168,346 |
+| `MC_death_stale_deadset_sync` | dead set | yes | stale and settled forms | pass, 168,346 |
+| `MC_death_liveness_deadset_sync` | dead set | yes | `Inv` + the three liveness properties | pass, 168,346 |
+| `MC_death_3proc_deadset_sync` | dead set | yes | delivery, quiescence | pass, 40,036 |
+| `MC_death_3proc_deadset`, `MC_death_liveness_deadset_noinv` | dead set | no | liveness | violated (finding 3: the unconditional clear removes the new life's entry) |
+
+Three facts come out of this:
+
+- The safety properties hold without the record and without the contract: the
+  two free rules alone keep the holder's process entry exact, so the move's CAS
+  cannot abort and same-process sends go to the right PE. The record is needed
+  for liveness only.
+- The contract alone does not make the no-record protocol live, because of an
+  ordering that has nothing to do with re-insertion (finding 8 in the model's
+  README, `trace_dead_bounce.txt`): the element dies, its death notice reaches
+  the home before one of the life's own earlier home updates (its creation or
+  a move), the notice finds nothing to clear, and the late update revives the
+  home's entry naming the dead PE. A message sent to the element afterwards
+  goes to the home, which forwards it to the dead PE, whose process has no
+  entry and sends it to the home: it bounces for ever. A later re-creation does
+  not correct the home, since the new life's epoch 0 loses the compare. The
+  per-PE code of recharm has the same ordering with the same outcome (the home
+  PE's cache is erased by the notice and revived by the update); 339753ce0 is
+  the first version without it. Closing it needs the home to remember that the
+  life is dead when a late update of that life arrives, and to recognize the
+  life: the tag and the dead set are the minimum.
+- With the tag and the dead set, the contract is enough: the per-life location
+  record and the reinstall step exist only for the no-contract race (a new
+  life's creation update reaching the home before the old life's notice,
+  finding 3), which the contract excludes. Without the contract the dead-set
+  protocol loses that message.
+
+**Options.**
+
+- *A. Keep the full protocol for every array* (the code as merged). No contract
+  to document; the cost in the table above. Most code, simplest rule for users:
+  delete and re-insert whenever you like.
+- *B. The per-life record as an array option.* `CkArrayOptions::setReinsertion(bool)`,
+  beside `setAnytimeMigration` and `setStaticInsertion`: an array that may
+  re-insert a deleted index without a synchronization in between declares it,
+  and only its `CkLocMgr` keeps `homeLives` and runs `homeReinstall`; every
+  array keeps the tags and the dead set (finding 8 needs them regardless), and
+  clears by match or unconditionally depending on the flag. The default is the
+  dead-set protocol with the contract in the manual. Saves the per-element home
+  memory for every other array; adds a flag and a branch, so more code than A,
+  not less.
+- *C. Remove the per-life record, adopt the contract.* Deletes `homeLives`,
+  `homeReinstall`, the older-than-record rule and the clear by match (about 80
+  lines and one concept, the record), keeps the tags, the dead set and the two
+  free rules. Model-checked as `DeadSet` with `Sync`. Returns to a lost message
+  (a silent hang) when a program breaks the contract, as recharm does today in
+  that race, with the abort of finding 5 and the own-entry corruption of
+  finding 6 closed. The contract goes in the manual next to `ckDestroy`.
+
+In every option the dead set grows with the deletions and is never pruned
+(chapter section 9); pruning needs a bound on how late a message of a dead life
+can arrive, which the contract would supply (prune at the synchronization) but
+the runtime cannot see.
+
+**Recommendation.** A, unless the memory at the home is shown to matter for a
+real application, in which case B. The criterion Kale set, no messaging
+overhead in the base scenario, is met by A; the remaining cost is about one
+extra table entry's worth of memory per element, at one PE; and the failure
+mode the record prevents is a silent hang in a race that only appears at scale
+and under load, which is the most expensive kind of defect to find. C is the
+real simplification and is right if the contract is accepted as a rule of the
+programming model; it removes the record but not the tags or the dead set,
+which finding 8 requires in every variant. The model has the switches (`Rec`,
+`DeadSet`, `Sync`) to check whichever is chosen.
+
 ## 8. Diagnostics and limits (PR 0, can land first)
 
 - Abort in getNewObjectID when the per-PE counter would exceed the element mask
@@ -1030,3 +1172,14 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   tombstones, process-addressed messages (the CkLocNode nodegroup), eviction. Kale's
   proposal of 2026-10-31, no home update for a move within a process, is section 3.7 of
   the chapter and a later step.
+- 2026-11-03 (TLA+ check of PR 3, #4123): five rules for deletion and re-creation under the
+  same id (life tags, the home's record of lives, own writes stay, by-id drop in the home's
+  process, clear by match), each from a model counterexample; model and traces in
+  doc/internals/tla/process-location. Section 7.8 added: the rules cost no messages in the
+  base scenario, about 100 bytes per element at the home; the record is needed only for
+  liveness in the race and only without a synchronization between deletion and
+  re-insertion; finding 8 (a death notice outrun by the life's own earlier update revives the
+  home's entry and a message then bounces between the home and the dead PE for ever, in
+  recharm's per-PE code too, no re-insertion needed) makes the tag and the dead set necessary
+  in every variant; options A (keep), B (array option), C (remove the per-life record, adopt
+  the contract), with A recommended. Decision pending (Kale).

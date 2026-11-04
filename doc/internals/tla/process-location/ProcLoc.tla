@@ -42,9 +42,19 @@ CONSTANTS
     BCap,       \* saturation cap of the per-message forward counter (probes)
     MaxDel,     \* bound on deaths (0: the element never dies)
     MaxCreate,  \* bound on creations (MaxDel + 1 lets every death be followed by a re-creation)
-    Fix,        \* FALSE: the code at cc84660f1.  TRUE: the fix for finding 3 (README):
-                \* life tags on updates and death notices, and the home's record of
-                \* lives (CkLocMgr::homeLives, deadLives, homeReinstall).
+    Fix,        \* FALSE: the code at cc84660f1.  TRUE: the fix (README): own-write
+                \* protection, the by-id drop in the home's process, and (with Rec)
+                \* life tags and the home's record of lives (CkLocMgr::homeLives,
+                \* deadLives, homeReinstall).
+    Rec,        \* with Fix: TRUE = the home keeps its record of lives (2f144b0e7);
+                \* FALSE = no record, no life tags: only the compare-and-clear on a
+                \* notice plus the two free rules (the proposal of the analysis).
+    DeadSet,    \* with Fix and not Rec: the home keeps only the set of dead lives,
+                \* drops their updates, and clears its entry unconditionally on a
+                \* notice (option C'' of the analysis; needs Sync for liveness).
+    Sync,       \* TRUE: a re-creation happens only after every runtime message of
+                \* the earlier life has been delivered (the contract: a global
+                \* synchronization between the deletion and the re-insertion).
     Mutation    \* 0: the code.  1..4: deliberate protocol errors (see README)
 
 PEs == {P * PPN + r : P \in Procs, r \in 0..PPN-1}
@@ -52,7 +62,9 @@ Proc(p) == p \div PPN
 Ranks(P) == {p \in PEs : Proc(p) = P}
 
 ASSUME Home \in PEs /\ MaxMig \in Nat /\ BCap \in Nat \ {0} /\ Mutation \in 0..4
-ASSUME MaxDel \in Nat /\ MaxCreate \in Nat \ {0} /\ Fix \in BOOLEAN
+ASSUME MaxDel \in Nat /\ MaxCreate \in Nat \ {0} /\ Fix \in BOOLEAN /\ Rec \in BOOLEAN /\ Sync \in BOOLEAN /\ DeadSet \in BOOLEAN
+UseRec == Fix /\ Rec
+UseDead == Fix /\ ~Rec /\ DeadSet
 
 None == -1
 NotCreated == -2
@@ -334,6 +346,8 @@ LocalUpdateState(p) ==
 (* locally; informHome(idx, e) unless the home is c.                           *)
 Create(c) ==
     /\ holder = NotCreated /\ creates < MaxCreate /\ pc[c].kind = "idle"
+    \* Sync: the contract.  Held application messages and held requests may remain.
+    /\ (Sync => \A r \in net : r.type = "app")
     /\ LET P == Proc(c)
            l == creates + 1  \* this creation's life
        IN
@@ -343,7 +357,7 @@ Create(c) ==
        /\ tab' = [tab EXCEPT ![P] = Store(P, c, 0)]
        /\ net' = net \cup LocalUpdateMsgs(c, 0, l) \cup Wakes(tab[P].w, c)
                  \cup (IF Home # c THEN {UpdMsgL(Home, c, 0, TRUE, l)} ELSE {})
-       /\ hl' = IF Fix /\ c = Home THEN Upsert(hl, HomeRec(c, 0, l)) ELSE hl
+       /\ hl' = IF UseRec /\ c = Home THEN Upsert(hl, HomeRec(c, 0, l)) ELSE hl
        /\ LocalUpdateState(c)
     /\ UNCHANGED <<migs, dels, pc, sent, msrc, mlarge, dcount, dead>>
 
@@ -356,10 +370,10 @@ Delete(h) ==
     /\ holder = h /\ dels < MaxDel /\ pc[h].kind = "idle"
     /\ LET P == Proc(h)
            T1 == IF tab[P].pe = h THEN Cleared(tab[P]) ELSE tab[P]
-           hl1 == IF Fix /\ h = Home THEN {x \in hl : x.life # creates} ELSE hl
+           hl1 == IF UseRec /\ h = Home THEN {x \in hl : x.life # creates} ELSE hl
        IN
        /\ hl' = hl1
-       /\ dead' = IF Fix /\ h = Home THEN dead \cup {creates} ELSE dead
+       /\ dead' = IF (UseRec \/ UseDead) /\ h = Home THEN dead \cup {creates} ELSE dead
        /\ IF h = Home
             THEN AfterClear(T1, hl1, net)
             ELSE /\ tab' = [tab EXCEPT ![P] = T1]
@@ -378,15 +392,16 @@ RecvDead(r) ==
     /\ pc[Home].kind = "idle"
     /\ LET P == Proc(Home)
            T == tab[P]
-           known == IF Fix THEN {x \in hl : x.life = r.life} ELSE {}
+           known == IF UseRec THEN {x \in hl : x.life = r.life} ELSE {}
            hl1 == hl \ known
            \* Fix: what a PE of the home's process wrote about itself stays (it cleared
            \* its own entry before any notice was sent).
            clear == /\ ~OwnWrite(P, T)
-                    /\ (T.pe = r.pe /\ T.ep = r.ep) \/ \E x \in known : T.pe = x.pe /\ T.ep = x.ep
+                    /\ \/ UseDead  \* no record: clear whatever stands (the contract excludes a newer life)
+                       \/ (T.pe = r.pe /\ T.ep = r.ep) \/ \E x \in known : T.pe = x.pe /\ T.ep = x.ep
            T1 == IF clear THEN Cleared(T) ELSE T
        IN
-       /\ dead' = IF Fix THEN dead \cup {r.life} ELSE dead
+       /\ dead' = IF UseRec \/ UseDead THEN dead \cup {r.life} ELSE dead
        /\ hl' = hl1
        /\ AfterClear(T1, hl1, net \ {r})
     /\ UNCHANGED <<holder, epoch, migs, creates, dels, pc, sent, msrc, mlarge, dcount>>
@@ -405,7 +420,7 @@ Emigrate(H, T) ==
                      \cup (IF Home \notin {H, T} THEN {UpdMsg(Home, T, e1, TRUE)} ELSE {})
        /\ epoch' = e1
        \* informHome with the home = H: recorded on the spot, no message
-       /\ hl' = IF Fix /\ H = Home THEN Upsert(hl, HomeRec(T, e1, creates)) ELSE hl
+       /\ hl' = IF UseRec /\ H = Home THEN Upsert(hl, HomeRec(T, e1, creates)) ELSE hl
     /\ holder' = None
     /\ migs' = migs + 1
     /\ UNCHANGED <<creates, dels, pc, buf, pendReq, sent, msrc, mlarge, dcount, dead>>
@@ -423,7 +438,7 @@ RecvImm(r) ==
        /\ LocalUpdateState(T)
        /\ net' = (net \ {r}) \cup LocalUpdateMsgs(T, r.ep, creates)
                  \cup Wakes(tab[P].w, T)
-       /\ hl' = IF Fix /\ T = Home THEN Upsert(hl, HomeRec(T, r.ep, creates)) ELSE hl
+       /\ hl' = IF UseRec /\ T = Home THEN Upsert(hl, HomeRec(T, r.ep, creates)) ELSE hl
     /\ UNCHANGED <<epoch, migs, creates, dels, pc, sent, msrc, mlarge, dcount, dead>>
 
 (* An update arriving at p.  idx = TRUE: CkLocMgr::updateLocation(idx, e):      *)
@@ -438,7 +453,7 @@ RecvUpd(r) ==
     /\ LET p == r.to
            P == Proc(p)
            rest == net \ {r}
-           atHome == Fix /\ p = Home /\ r.idx
+           atHome == UseRec /\ p = Home /\ r.idx
            wr == Written(P, r.ep)
            flush == wr \/ r.idx
        IN
@@ -448,7 +463,7 @@ RecvUpd(r) ==
              \* by-index path and the process's own writes keep this entry
              /\ net' = rest
              /\ UNCHANGED <<tab, buf, pendReq, hl>>
-          ELSE IF atHome /\ (r.life \in dead \/ Stale(r)) THEN
+          ELSE IF (atHome /\ (r.life \in dead \/ Stale(r))) \/ (UseDead /\ p = Home /\ r.idx /\ r.life \in dead) THEN
              LET T == tab[P]
                  T1 == IF T.pe = r.pe /\ T.ep = r.ep /\ ~OwnWrite(P, T) THEN Cleared(T) ELSE T
              IN /\ AfterClear(T1, hl, rest)
@@ -604,6 +619,9 @@ HomeConverges ==
     <>[](holder \in PEs /\ tab[Proc(Home)].pe = holder /\ tab[Proc(Home)].ep = epoch)
 
 Quiesces == <>[](net = {} /\ \A p \in PEs : buf[p] = {} /\ pc[p].kind = "idle")
+\* The network drains: every message comes to rest, delivered or held (a message
+\* to an element that died and is not re-created is held at the home).
+NetDrains == <>[](net = {})
 
 -----------------------------------------------------------------------------
 (* Probe: expected to FAIL; its trace shows how far a message is forwarded. *)
