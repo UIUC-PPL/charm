@@ -1229,3 +1229,6 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   or not it writes. A claim that came after a fill the rank's re-read had missed sent a
   request whose reply wrote nothing, which left the flag set with no request out. Chapter
   section 3.3; `objid_loctable` phase 10.
+- 2026-11-04 (Kale): PR 3 (#4123) retargeted from objid-redesign to recharm, with recharm
+  merged into it first. objid-redesign carried nothing beyond recharm except PR 3, so the
+  separate "part 3" PR of section 9.1 would have been a second review of the same change.

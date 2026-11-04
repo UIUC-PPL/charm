@@ -72,6 +72,21 @@ New on this line since the split from classic:
   aborts naming it. A checkpoint records both field widths and a
   build with different widths refuses to restore it.
 
+- 64-bit object ids, part 3: process-level location and index tables
+  (#4123). The id -> location table, the index -> id table and the
+  retired-id table are shared by the PEs of a process (lock-free:
+  atomic loads on the lookup path, single-word compare-and-swap
+  writes, growth by chained segments). One location request per
+  process per unknown element instead of one per PE; a move or a
+  creation is written once per process touched. Deletion and
+  re-creation under the same id follow five rules checked with a
+  TLA+ model (doc/internals/tla/process-location, which also records
+  eight orderings the model found and one the review found); the
+  protocol is described for maintainers in
+  doc/internals/process-location-cache.md. No change to the id layout
+  or to the checkpoint format. New tests objid_loctable,
+  objid_migrate6 and objid_recreate.
+
 - Broadcasts and [nokeep] entry methods: fixes for message reuse and
   copies (#4000-#4012). Checkpoint restart no longer hangs with more
   than one process and more than one PE per process (#4019). The
