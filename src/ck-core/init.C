@@ -355,6 +355,12 @@ static inline void _parseCommandLineOpts(char **argv)
   if (!CmiGetArgIntDesc(argv, "+objid_tranche_log2", &_objidTrancheLog2Cap,
                         "Testing: cap element id tranches at 2^N numbers per process"))
       _objidTrancheLog2Cap = 0;
+  if (!CmiGetArgIntDesc(argv, "+objid_table_log2", &ck::objid::_objidTableLog2,
+                        "Initial size (log2 slots) of the process-level location table"
+                        " (default 16)"))
+      ck::objid::_objidTableLog2 = 16;
+  ck::objid::_objidDiag = CmiGetArgFlagDesc(argv, "+objid_diag",
+                        "Count location-table events and print them per process at exit");
 
   if(CmiGetArgString(argv,"+restart",&_restartDir))
       faultFunc = CkRestartMain;

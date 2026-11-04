@@ -1,0 +1,32 @@
+mainmodule migrate6 {
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Elem arrProxy;
+  readonly int nElems;
+  readonly int nCount;
+  readonly int migPeriod;
+  readonly int mode;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void inserted();
+    entry void quiescent();
+    entry void tally(CkReductionMsg *m);
+  };
+
+  group Inserter {
+    entry Inserter();
+  };
+
+  group Streamer {
+    entry Streamer();
+    entry void stream(int n);
+  };
+
+  array [6D] Elem {
+    entry Elem(int ordinal);
+    entry void SayHi(int count);
+    entry void ackPlease(int fromOrdinal, int c);
+    entry void tick();
+    entry void report();
+  };
+};
