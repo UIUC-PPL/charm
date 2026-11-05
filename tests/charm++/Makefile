@@ -50,6 +50,7 @@ DIRS = \
   objid_recreate \
   collide \
   qd \
+  reduction_migrate_ahead \
 
 FTDIRS = \
   jacobi3d \
