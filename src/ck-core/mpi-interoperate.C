@@ -1,4 +1,14 @@
 #include "mpi-interoperate.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#if !defined(_WIN32)
+#include <unistd.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#endif
 //#define PERFORM_DEBUG 1
 #if PERFORM_DEBUG
 #define DEBUG(a) a
@@ -11,12 +21,6 @@ static bool _libExitStarted = false;
 
 extern std::atomic<int> ckExitComplete;
 extern std::atomic<int> _cleanUp;
-
-#if CMK_CONVERSE_MPI
-extern MPI_Comm charmComm;
-#else
-typedef int MPI_Comm;
-#endif
 
 extern void LrtsDrainResources(); /* used when exit */
 
@@ -139,35 +143,93 @@ void CharmInit(int argc, char** argv) {
   CharmFinishInit();
 }
 
-// CharmLibInit is specifically for MPI interop, where MPI applications want
-// to call Charm as a library. It does full initialization and starts the
-// scheduler. If Charm is built on MPI, multiple Charm instances can be created
-// using different communicators.
-void CharmLibInit(MPI_Comm userComm, int argc, char **argv) {
-
-  // Reconverse has no communicator to hand Charm++, so userComm would be
-  // silently ignored; only the user-driven form (CharmInit) works.
-  if(!userDrivenMode) {
-    CmiAbort("MPI interop is not supported on reconverse yet; did you mean to use CharmInit?");
-  }
-
-#if CMK_CONVERSE_MPI
-  if(!userDrivenMode) {
-    MPI_Comm_dup(userComm, &charmComm);
-  }
-#endif
-
+// MPI interop entry point behind the inline CharmLibInit in
+// mpi-interoperate.h, which has already checked that the communicator is
+// MPI_COMM_WORLD (up to congruence). Charm++ runs on every process of the job
+// and CharmLibExit returns, so the program can keep using MPI afterwards.
+// No MPI call is made here; libck does not depend on MPI.
+void CharmLibInitWorld(int argc, char **argv) {
+  CmiInteropReturnOnExit = 1;
   CharmLibInterOperate = true;
   _registerConverseInitHooks();
   ConverseInit(argc, argv, (CmiStartFn)_initCharm, 1, 0);
   StartInteropScheduler();
 }
 
+// Picks a TCP rendezvous endpoint for LCT's tcp bootstrap: this host's
+// address (the IPv4 address its hostname resolves to, or the hostname itself)
+// and a port the kernel reports free. The probe socket is closed before
+// returning, so another process can take the port before LCT binds it.
+// Returns the port, or -1 on failure (always on Windows, where MPI interop is
+// not supported).
+int CharmInteropPickRendezvous(char *host, int hostlen) {
+#if defined(_WIN32)
+  return -1;
+#else
+  char name[256];
+  if (gethostname(name, sizeof(name)) != 0) return -1;
+  name[sizeof(name) - 1] = '\0';
+  snprintf(host, hostlen, "%s", name);
+  struct addrinfo hints, *res = nullptr;
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_STREAM;
+  if (getaddrinfo(name, nullptr, &hints, &res) == 0 && res) {
+    char ip[INET_ADDRSTRLEN];
+    struct sockaddr_in *sin = (struct sockaddr_in *)res->ai_addr;
+    if (inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip)) &&
+        strncmp(ip, "127.", 4) != 0)
+      snprintf(host, hostlen, "%s", ip);
+    freeaddrinfo(res);
+  }
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) return -1;
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  addr.sin_port = 0;
+  socklen_t len = sizeof(addr);
+  int port = -1;
+  if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0 &&
+      getsockname(fd, (struct sockaddr *)&addr, &len) == 0)
+    port = ntohs(addr.sin_port);
+  close(fd);
+  return port;
+#endif
+}
+
+// MPI interop with LCT's tcp bootstrap, which needs no PMI client and no MPI
+// in LCI: the caller supplies rank, size and the rendezvous endpoint (rank 0
+// listens there). An LCT_PMI_BACKEND set by the user is left alone.
+void CharmLibInitWorldTcp(int rank, int size, int local_rank, int local_size,
+                          const char *host, int port, int argc, char **argv) {
+#if defined(_WIN32)
+  CmiAbort("CharmLibInit: MPI interop is not supported on Windows");
+#else
+  if (getenv("LCT_PMI_BACKEND") == nullptr) {
+    char buf[32];
+    setenv("LCT_PMI_BACKEND", "tcp", 1);
+    snprintf(buf, sizeof(buf), "%d", rank);
+    setenv("RANK", buf, 1);
+    snprintf(buf, sizeof(buf), "%d", size);
+    setenv("WORLD_SIZE", buf, 1);
+    snprintf(buf, sizeof(buf), "%d", local_rank);
+    setenv("LOCAL_RANK", buf, 1);
+    snprintf(buf, sizeof(buf), "%d", local_size);
+    setenv("LOCAL_WORLD_SIZE", buf, 1);
+    setenv("LCT_MASTER_ADDR", host, 1);
+    snprintf(buf, sizeof(buf), "%d", port);
+    setenv("LCT_MASTER_PORT", buf, 1);
+  }
+  CharmLibInitWorld(argc, argv);
+#endif
+}
+
 // CharmLibExit is called for both forms of interop when the application is
-// done with Charm. It does all necessary cleanup for Charm++ and returns
-// control to the user afterwards. In the case of userDrivenMode, this would
-// also include calling MPI_Finalize. In regular MPI interop, MPI_Finalize
-// is not called.
+// done with Charm. After CharmLibInit (MPI interop) it tears the runtime down
+// and returns, leaving MPI to the caller. After CharmInit (user-driven) the
+// process exits inside it.
 #undef CkExit
 #define CkExit CKEXIT_0 // CKEXIT_0 and other CkExit macros defined in charm.h
 void CharmLibExit() {
@@ -181,5 +243,7 @@ void CharmLibExit() {
   } else { 
     CsdScheduler(-1);
     CmiNodeAllBarrier();
+    if (CmiInteropReturnOnExit)
+      ConverseInteropFinalize();
   }
 }
