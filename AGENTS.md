@@ -34,6 +34,16 @@ how to code.
 
 - Comments describe the code as it is; the reasons and the history go in
   the pull request and, for a subsystem with a chapter, in `doc/internals/`.
+- Prefer short comments, a line or two at the place in the code: what the
+  code does, plus a reason when the code would be easy to break without
+  it. History (what the code replaced, what went wrong, measurements)
+  goes in the commit message and the pull request description, and the
+  history of a design decision in the design documents under `doc/`. An
+  explanation of a mechanism, a flow or a protocol goes in
+  `doc/internals/`, updated in the same pull request, and the comment
+  can point to the section. A longer comment is fine where the code
+  would be hard to follow without it, for example a test that describes
+  the scenario it sets up.
 - The default branch is `recharm` (Charm++ on reconverse). `classic` is
   the frozen classic-Converse line and takes fixes only.
 - Reconverse is the `contrib/reconverse` submodule; its own repository is

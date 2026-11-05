@@ -28,16 +28,105 @@
  * Unlike thread AMPI, where MPI_Finalize ends the rank and the process exits
  * with status 0, MPI_Finalize does not end a campi rank: code after it runs,
  * and the process exit code is the value main co_returns.
+ *
+ * Migration and checkpoint/restart. A rank that migrates under a load
+ * balancer or restarts from a checkpoint does not keep its coroutine frames:
+ * its main runs again from the top on arrival, and a switch at the top of
+ * each resumable function jumps to the site the rank was at. Everything that
+ * must survive lives in a state object that campi creates, passes to main,
+ * and packs with the rank (its pup routine):
+ *
+ *   struct State {
+ *     int step, nsteps;
+ *     void pup(PUP::er &p) { p | step; p | nsteps; }
+ *   };
+ *   CAMPI_MAIN_STATE(State, argc, argv, s) {
+ *     CAMPI_RESUMABLE();               // switch to the recorded site
+ *     MPI_Init(&argc, &argv);          // skipped on a restarted rank
+ *     s.nsteps = 100;
+ *     for (s.step = 0; s.step < s.nsteps; s.step++) {
+ *       ...
+ *       CAMPI_MIGRATE(AMPI_INFO_LB_SYNC);  // a migrate site
+ *     }
+ *     MPI_Finalize();
+ *     CAMPI_END();
+ *     co_return 0;
+ *   }
+ *
+ * Rules: (1) values carried across a migrate site live in the state object,
+ * not in locals (C++ rejects the switch's jump past a local with an
+ * initializer or a non-trivial type; a scalar declared without an
+ * initializer is not caught, and +campi_fakemigrate is the check for it);
+ * (2) no request is outstanding at a migrate site; (3) code before a site is
+ * skipped on restart, so its results must be in the state object. A
+ * resumable function other than main that contains a site (directly or in a
+ * function it awaits) has its own CAMPI_RESUMABLE/CAMPI_END and is awaited
+ * with CAMPI_CALL or CAMPI_CALL_TO. A site is one statement and may be the
+ * body of an if or a loop. Case labels of a site must not be inside a switch
+ * statement of the user's own, and two sites must not share a line.
+ *
+ * +campi_fakemigrate on the command line makes every migrate site rebuild
+ * the rank in place (state packed and unpacked, frames destroyed, main run
+ * again to the site) instead of doing what its info asks.
  */
 #ifndef CAMPI_H
 #define CAMPI_H
 
 #include "campi_core.h"
+#include "pup_stl.h" // state objects with std::string, std::vector, ... members
 
+// The rank's main, with a state object of type State_ named s_ (see above).
+#define CAMPI_MAIN_STATE(State_, argc_, argv_, s_)                            \
+  ::campi::task<int> campi_main(int argc_, char **argv_, State_ &s_);         \
+  static ::campi::task<int> campi_main_entry_(int argc_, char **argv_,        \
+                                              void *state_) {                 \
+    return campi_main(argc_, argv_, *static_cast<State_ *>(state_));          \
+  }                                                                           \
+  static ::campi::main_registrar campi_main_registrar_(                       \
+      &campi_main_entry_, &::campi::state_ops_for<State_>::ops);              \
+  ::campi::task<int> campi_main(int argc_, char **argv_, State_ &s_)
+
+// The rank's main without a state object.
 #define CAMPI_MAIN(argc_, argv_)                                              \
-  ::campi::task<int> campi_main(int argc_, char **argv_);                     \
-  static ::campi::main_registrar campi_main_registrar_(&campi_main);          \
-  ::campi::task<int> campi_main(int argc_, char **argv_)
+  CAMPI_MAIN_STATE(::campi::no_state, argc_, argv_, campi_unused_state_)
+
+// The start of the restart switch of a resumable function, and its end.
+#define CAMPI_RESUMABLE()                                                     \
+  ::campi::frame_guard campi_frame_;                                          \
+  switch (campi_frame_.site()) {                                              \
+  case 0:
+#define CAMPI_END()                                                           \
+  break;                                                                      \
+  default:                                                                    \
+    ::campi::abort_no_site(campi_frame_);                                     \
+  }
+
+// A migrate site: AMPI_Migrate(info) at a restart point. The case label comes
+// first and the rest is one statement, so a site may be the body of an if or a
+// loop; the label still belongs to the restart switch, and the jump to it on
+// restart enters that body directly.
+#define CAMPI_MIGRATE(info_)                                                  \
+  case __LINE__:                                                              \
+    do {                                                                      \
+      ::campi::note_site(campi_frame_, __LINE__);                             \
+      (void)co_await ::campi::Migrate(info_);                                 \
+    } while (0)
+
+// A call site: awaits a resumable function that contains a site. The case
+// label in front of it keeps it out of expressions, so the second form
+// assigns the awaited value: CAMPI_CALL_TO(s.x, f(s)); means s.x = co_await f(s);
+#define CAMPI_CALL(expr_)                                                     \
+  case __LINE__:                                                              \
+    do {                                                                      \
+      ::campi::note_site(campi_frame_, __LINE__, true);                       \
+      co_await (expr_);                                                       \
+    } while (0)
+#define CAMPI_CALL_TO(lhs_, expr_)                                            \
+  case __LINE__:                                                              \
+    do {                                                                      \
+      ::campi::note_site(campi_frame_, __LINE__, true);                       \
+      (lhs_) = co_await (expr_);                                              \
+    } while (0)
 
 #define CAMPI_AWAIT(expr) (co_await (expr))
 
@@ -111,6 +200,7 @@
 #define MPI_Request_get_status(...) CAMPI_AWAIT(::campi::Request_get_status(__VA_ARGS__))
 #define MPI_Iprobe(...)      CAMPI_AWAIT(::campi::Iprobe(__VA_ARGS__))
 #define MPI_Improbe(...)     CAMPI_AWAIT(::campi::Improbe(__VA_ARGS__))
+// Aborts at run time unless written CAMPI_MIGRATE inside CAMPI_RESUMABLE/CAMPI_END.
 #define AMPI_Migrate(...)    CAMPI_AWAIT(::campi::Migrate(__VA_ARGS__))
 
 /* Routines that block inside AMPI (directly, or through a blocking MPI call,
@@ -231,5 +321,19 @@
 #define AMPI_GPU_Invoke_wr(...)             campi_unsupported_blocking_call_AMPI_GPU_Invoke_wr
 #define AMPI_Yield(...)                     CAMPI_AWAIT(::campi::yield())
 #define AMPI_Suspend(...)                   campi_unsupported_blocking_call_AMPI_Suspend
+
+/* Thread AMPI's ways of carrying rank data across a migration. A campi rank
+ * keeps such data in its state object (CAMPI_MAIN_STATE), whose pup routine
+ * campi calls; per-arrival work belongs after the migrate site. */
+#undef AMPI_Register_pup
+#undef AMPI_Get_pup_data
+#undef AMPI_Register_about_to_migrate
+#undef AMPI_Register_just_migrated
+#undef TCHARM_Register
+#define AMPI_Register_pup(...)              campi_unsupported_use_the_state_object_AMPI_Register_pup
+#define AMPI_Get_pup_data(...)              campi_unsupported_use_the_state_object_AMPI_Get_pup_data
+#define AMPI_Register_about_to_migrate(...) campi_unsupported_use_the_state_object_AMPI_Register_about_to_migrate
+#define AMPI_Register_just_migrated(...)    campi_unsupported_use_the_state_object_AMPI_Register_just_migrated
+#define TCHARM_Register(...)                campi_unsupported_use_the_state_object_TCHARM_Register
 
 #endif // CAMPI_H
