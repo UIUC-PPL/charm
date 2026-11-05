@@ -742,9 +742,14 @@ private:
 
   void sendBufferedMsgs(CmiUInt8, int pe);
   void sendBufferedMsgs(const CkArrayIndex& idx, CmiUInt8 id, int pe);
-  /// Messages held for oldId, whose index is now bound to newId at pe: re-address
-  /// and send (CkLocMgr::updateLocation, hashed kind).
+  /// Messages held for oldId, whose index is now bound to newId: re-address and
+  /// send to pe, or, with pe == -1, hold under newId until its location arrives
+  /// (CkLocMgr::releaseRetired, hashed kind).
   void releaseRetiredMsgs(CmiUInt8 oldId, CmiUInt8 newId, int pe);
+  bool hasBufferedMsgs(CmiUInt8 id) const
+  {
+    return bufferedIDMsgs.find(id) != bufferedIDMsgs.end();
+  }
 
 public:
   // TODO: Make sure the demand creation pipeline still obeys message delivery type?

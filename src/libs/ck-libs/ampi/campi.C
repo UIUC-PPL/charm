@@ -941,7 +941,10 @@ static task<void> ampi_init() {
     CkArrayID threads;
     opts = ampiInitRootArrayOptions(&threads, &nchunks);
     r->arrayCreated = false;
-    CProxy_ampiParent::ckNew(threads, nchunks, opts, CkCallback(array_created, r));
+    // As in ampiInit: the ampiParent manager's creation waits for ampiPeMgr on each PE.
+    CkEntryOptions parentOpts;
+    parentOpts.setGroupDepID(ampiPeMgrGroupID());
+    CProxy_ampiParent::ckNew(threads, nchunks, opts, CkCallback(array_created, r), &parentOpts);
     while (!r->arrayCreated) co_await suspend();
     parentAid = r->createdAid;
     CAMPI_DBG("init: ampiParent array created\n");
@@ -956,7 +959,10 @@ static task<void> ampi_init() {
     CkArrayID empty;
     ampiCommStruct worldComm(MPI_COMM_WORLD, empty, nchunks);
     r->arrayCreated = false;
-    CProxy_ampi::ckNew(parentAid, worldComm, opts, CkCallback(array_created, r));
+    // As in ampiInit: the ampi manager's creation waits for the ampiParent manager on each PE.
+    CkEntryOptions worldOpts;
+    worldOpts.setGroupDepID(parentAid);
+    CProxy_ampi::ckNew(parentAid, worldComm, opts, CkCallback(array_created, r), &worldOpts);
     while (!r->arrayCreated) co_await suspend();
   }
 

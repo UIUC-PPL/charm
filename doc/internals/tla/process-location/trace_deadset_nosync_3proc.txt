@@ -1,0 +1,277 @@
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<-1>>
+/\ migs = 0
+/\ net = {}
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 0
+/\ creates = 0
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 2: <Create line 348, col 5 to line 362, col 69 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 0, pe |-> 0, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<-1>>
+/\ migs = 0
+/\ net = {}
+/\ holder = 0
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {}
+/\ dels = 0
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 3: <Send line 275, col 5 to line 288, col 82 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 0, pe |-> 0, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 0
+/\ net = {[b |-> 0, to |-> 0, type |-> "app", mid |-> 1, hops |-> 0]}
+/\ holder = 0
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 4: <Emigrate line 413, col 5 to line 426, col 86 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [to |-> 1, type |-> "imm", ep |-> 1],
+  [b |-> 0, to |-> 0, type |-> "app", mid |-> 1, hops |-> 0] }
+/\ holder = -1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 5: <Next line 530, col 8 to line 530, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = {[b |-> 0, to |-> 0, type |-> "app", mid |-> 1, hops |-> 0]}
+/\ holder = 1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 6: <Next line 530, col 8 to line 530, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = {[b |-> 1, to |-> 1, type |-> "app", mid |-> 1, hops |-> 1]}
+/\ holder = 1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 7: <Delete line 370, col 5 to line 384, col 73 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [b |-> 1, to |-> 1, type |-> "app", mid |-> 1, hops |-> 1],
+  [to |-> 0, type |-> "dead", ep |-> 1, pe |-> 1, life |-> 1] }
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 1
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 8: <Next line 530, col 8 to line 530, col 29 of module ProcLoc>
+/\ epoch = 1
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [b |-> 2, to |-> 0, type |-> "app", mid |-> 1, hops |-> 2],
+  [to |-> 0, type |-> "dead", ep |-> 1, pe |-> 1, life |-> 1] }
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 1
+/\ creates = 1
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 9: <Create line 348, col 5 to line 362, col 69 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> 0, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [b |-> 2, to |-> 0, type |-> "app", mid |-> 1, hops |-> 2],
+  [to |-> 0, type |-> "dead", ep |-> 1, pe |-> 1, life |-> 1],
+  [to |-> 0, type |-> "upd", ep |-> 0, idx |-> TRUE, pe |-> 1, life |-> 2] }
+/\ holder = 1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 1
+/\ creates = 2
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 10: <Next line 530, col 8 to line 530, col 29 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> 1, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  1 :> [ep |-> 0, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = { [b |-> 2, to |-> 0, type |-> "app", mid |-> 1, hops |-> 2],
+  [to |-> 0, type |-> "dead", ep |-> 1, pe |-> 1, life |-> 1] }
+/\ holder = 1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 1
+/\ creates = 2
+/\ dead = {}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 11: <Next line 530, col 8 to line 530, col 29 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] @@
+  1 :> [ep |-> 0, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = {[b |-> 2, to |-> 0, type |-> "app", mid |-> 1, hops |-> 2]}
+/\ holder = 1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 1
+/\ creates = 2
+/\ dead = {1}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 12: <Next line 530, col 8 to line 530, col 29 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, w |-> {0}, own |-> FALSE] @@
+  1 :> [ep |-> 0, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = ( 0 :>
+      [ kind |-> "hold",
+        rec |-> [b |-> 2, mid |-> 1, hops |-> 2],
+        first |-> TRUE ] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] )
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = {}
+/\ holder = 1
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 1
+/\ creates = 2
+/\ dead = {1}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 13: <Reread line 251, col 5 to line 269, col 102 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, w |-> {0}, own |-> FALSE] @@
+  1 :> [ep |-> 0, pe |-> 1, w |-> {}, own |-> TRUE] @@
+  2 :> [ep |-> -1, pe |-> -1, w |-> {}, own |-> FALSE] )
+/\ pc = (0 :> [kind |-> "idle"] @@ 1 :> [kind |-> "idle"] @@ 2 :> [kind |-> "idle"])
+/\ msrc = <<0>>
+/\ migs = 1
+/\ net = {}
+/\ holder = 1
+/\ buf = (0 :> {[b |-> 2, mid |-> 1, hops |-> 2]} @@ 1 :> {} @@ 2 :> {})
+/\ hl = {}
+/\ sent = {1}
+/\ dels = 1
+/\ creates = 2
+/\ dead = {1}
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 14: Stuttering
+Finished checking temporal properties in 00s at 2026-11-03 17:35:42
+391553 states generated, 144054 distinct states found, 23119 states left on queue.
+Finished in 01min 03s at (2026-11-03 17:35:42)

@@ -1,0 +1,64 @@
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<-1>>
+/\ migs = 0
+/\ net = {}
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {}
+/\ dels = 0
+/\ creates = 0
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 2: <Send line 217, col 5 to line 230, col 72 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :>
+      [ kind |-> "hold",
+        rec |-> [b |-> 0, mid |-> 1, hops |-> 0],
+        first |-> TRUE ] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<1>>
+/\ migs = 0
+/\ net = {}
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 0
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+
+State 3: <Reread line 193, col 5 to line 211, col 92 of module ProcLoc>
+/\ epoch = 0
+/\ pendReq = {}
+/\ tab = ( 0 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] @@
+  1 :> [ep |-> -1, pe |-> -1, life |-> 0, w |-> {}] )
+/\ pc = ( 0 :> [kind |-> "idle"] @@
+  1 :> [kind |-> "idle"] @@
+  2 :> [kind |-> "idle"] @@
+  3 :> [kind |-> "idle"] )
+/\ msrc = <<1>>
+/\ migs = 0
+/\ net = {}
+/\ holder = -2
+/\ buf = (0 :> {} @@ 1 :> {[b |-> 0, mid |-> 1, hops |-> 0]} @@ 2 :> {} @@ 3 :> {})
+/\ sent = {1}
+/\ dels = 0
+/\ creates = 0
+/\ dcount = <<0>>
+/\ mlarge = <<FALSE>>
+

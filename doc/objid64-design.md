@@ -488,6 +488,15 @@ message when a grant cannot be made).
 This section analyzes which tables stay per PE, and how
 the shared table is kept race-free.
 
+The design as it will be implemented is `doc/internals/process-location-cache.md`
+(2026-10-31). It keeps 7.1 (what is shared), 7.3's race analysis, 7.6's
+guarantees S1-S5 and 7.7's eviction classification, and replaces the shard
+locks of 7.2 with a lock-free lookup path: open-addressing tables whose slot
+words are read with atomic loads and written with single-word compare-and-swap,
+a waiter bitmask per entry in place of the waiter map, an arriving state for an
+element in flight, and location messages addressed to processes. Where this
+section and that chapter differ, the chapter holds.
+
 ### 7.1 Tables today (all per PE) and where they go
 
 | table | keyed by | holds | today | PR 3 |
@@ -695,6 +704,171 @@ evictable. Authoritative entries are never in that position.
 Measure before choosing the per-PE read cache at all: if one shard read per
 index-addressed send is cheap enough on a 64-PE node, the read cache can be dropped
 and only the shared table needs the cap.
+
+### 7.8 The re-creation rules after the TLA+ check: cost, contract, options (2026-11-03)
+
+Kale's question after the check of PR #4123: the location protocol has grown
+(chapter section 3.0 lists five rules for deletion and re-creation that the
+first version did not have); is a simplification being missed, does the
+machinery cost the program that never deletes, and should the full protocol be
+an option an array declares? This section answers from the code as merged
+(2f144b0e7), the chapter, and the model (`doc/internals/tla/process-location/`,
+configurations `*_norec*`).
+
+**Where the complexity is.** Entirely in deletion followed by re-insertion of
+the same index while messages about the earlier life are still in flight. The
+protocol for a program that never deletes is the first design: the table, the
+epoch compare, the waiter bits, one request per process (chapter 3.0, "why this
+is enough without deaths"). Of the five rules, two cost nothing and are
+protective for every array: the mark on values written from messages with
+"own writes stay" (rule 3), and the drop of replies and repairs by id in the
+home's process (rule 4, which removes writes). Rule 5 (clear by match) is one
+comparison. The cost is in rules 1 and 2: the life tag and the home's record.
+
+**What they cost a program that never deletes.**
+
+| item | cost | where |
+|---|---|---|
+| extra messages | none | the record is updated from messages the protocol already sends |
+| message size | 8 bytes on each home update (`informHome`), reply by index, migration message and death notice | `CkLocEntry::life`, `CkArrayElementMigrateMessage::life` |
+| home CPU | one hash-map lookup or insert and a scan of a one-element vector per home update | `CkLocMgr::homeNoteLocation` |
+| home memory | about 100 bytes per element, at its home PE only (an `unordered_map` node holding a one-entry `std::vector<CkLocEntry>`); for comparison, a table slot is 24 bytes at a load of at most one half, in every process that addressed the element, and a `CkLocRec` plus the element itself is hundreds of bytes | `CkLocMgr::homeLives` |
+| growth | the dead-tag set grows with deletions and is never pruned (chapter section 9); without deletions it is empty | `CkLocMgr::deadLives` |
+| holder memory | 8 bytes per element | `CkLocRec::life` |
+
+So there is no parallel messaging overhead in the base scenario. The argument
+for separate code paths on messaging grounds does not hold; what remains is
+memory at the home and a second per-element structure beside the table.
+
+**Is the record the minimum for the no-contract setting?** Yes, with the
+network as it is. Reconverse delivers in any order, a life's messages come from
+whichever PEs it visited, and two lives are minted on different processes, so
+no tag carried by a message orders two lives, and the home cannot tell, when a
+creation update at epoch 0 meets an entry at a higher epoch, whether it is a
+stale update of the same life or the first word of a new one. One scalar "life
+of the entry" at the home is not enough: an old life's stale update can arrive
+after the new life's update and before the old life's notice, and the home must
+still remember the new life's location when the notice clears the entry. The
+set of lives not known dead, with one location each, is that memory; in
+practice it holds one entry, two during a race. The alternative of deciding at
+the home by asking the PE the entry names ("do you hold x at epoch e?") would
+replace tags and record by a probe message on each ambiguous update and each
+notice; it keeps no per-element state but adds a round trip per deletion and a
+pending list, and has not been modeled. Not pursued.
+
+**The contract alternative.** The question is different if a program promises
+that an index deleted is inserted again only after a synchronization that
+follows the deletion (a reduction or quiescence after the `ckDestroy` calls;
+re-creating the whole array also satisfies it), so that no runtime message
+about the old life is in flight when the new life is created. The model has
+this as `Sync`, and two reduced protocols: `Rec = FALSE` (no record, no tags:
+the compare-and-clear on a notice plus the two free rules) and `DeadSet` (tags
+kept; the home keeps only the set of dead lives, drops their updates, and clears
+its entry unconditionally on a notice; no per-life location, no reinstall).
+
+| configuration | protocol | contract | checks | result |
+|---|---|---|---|---|
+| `MC_death_safety_norec` | no record | no | `Inv`: holder's entry exact, held messages covered, requests outstanding | pass, 1,877,252 states |
+| `MC_death_liveness_norec_noinv` | no record | no | delivery, home convergence, quiescence | violated (the race of finding 3) |
+| `MC_death_3proc_norec` | no record | no | delivery, quiescence | violated |
+| `MC_death_safety_norec_sync` | no record | yes | `Inv` | pass, 206,549 |
+| `MC_death_stale_norec_sync` | no record | yes | stale and settled forms of the holder's entry | pass, 206,549 |
+| `MC_death_liveness_norec_sync` | no record | yes | `Inv` + the three liveness properties | **violated**: finding 8 |
+| `MC_death_3proc_norec_sync` | no record | yes | delivery, quiescence | **violated**: finding 8, a message bounces for ever |
+| `MC_death_only` (code as written, no re-creation at all) | | | the network drains | **violated**: finding 8 |
+| `MC_death_only_fix` (merged code) | record | | the network drains | pass, 91,558 |
+| `MC_death_safety_deadset_sync` | dead set | yes | `Inv` | pass, 168,346 |
+| `MC_death_stale_deadset_sync` | dead set | yes | stale and settled forms | pass, 168,346 |
+| `MC_death_liveness_deadset_sync` | dead set | yes | `Inv` + the three liveness properties | pass, 168,346 |
+| `MC_death_3proc_deadset_sync` | dead set | yes | delivery, quiescence | pass, 40,036 |
+| `MC_death_3proc_deadset`, `MC_death_liveness_deadset_noinv` | dead set | no | liveness | violated (finding 3: the unconditional clear removes the new life's entry) |
+
+Three facts come out of this:
+
+- The safety properties hold without the record and without the contract: the
+  two free rules alone keep the holder's process entry exact, so the move's CAS
+  cannot abort and same-process sends go to the right PE. The record is needed
+  for liveness only.
+- The contract alone does not make the no-record protocol live, because of an
+  ordering that has nothing to do with re-insertion (finding 8 in the model's
+  README, `trace_dead_bounce.txt`): the element dies, its death notice reaches
+  the home before one of the life's own earlier home updates (its creation or
+  a move), the notice finds nothing to clear, and the late update revives the
+  home's entry naming the dead PE. A message sent to the element afterwards
+  goes to the home, which forwards it to the dead PE, whose process has no
+  entry and sends it to the home: it bounces for ever. A later re-creation does
+  not correct the home, since the new life's epoch 0 loses the compare. The
+  per-PE code of recharm has the same ordering with the same outcome (the home
+  PE's cache is erased by the notice and revived by the update); 339753ce0 is
+  the first version without it. Closing it needs the home to remember that the
+  life is dead when a late update of that life arrives, and to recognize the
+  life: the tag and the dead set are the minimum.
+- With the tag and the dead set, the contract is enough: the per-life location
+  record and the reinstall step exist only for the no-contract race (a new
+  life's creation update reaching the home before the old life's notice,
+  finding 3), which the contract excludes. Without the contract the dead-set
+  protocol loses that message.
+
+**Options.**
+
+- *A. Keep the full protocol for every array* (the code as merged). No contract
+  to document; the cost in the table above. Most code, simplest rule for users:
+  delete and re-insert whenever you like.
+- *B. The per-life record as an array option.* `CkArrayOptions::setReinsertion(bool)`,
+  beside `setAnytimeMigration` and `setStaticInsertion`: an array that may
+  re-insert a deleted index without a synchronization in between declares it,
+  and only its `CkLocMgr` keeps `homeLives` and runs `homeReinstall`; every
+  array keeps the tags and the dead set (finding 8 needs them regardless), and
+  clears by match or unconditionally depending on the flag. The default is the
+  dead-set protocol with the contract in the manual. Saves the per-element home
+  memory for every other array; adds a flag and a branch, so more code than A,
+  not less.
+- *C. Remove the per-life record, adopt the contract.* Deletes `homeLives`,
+  `homeReinstall`, the older-than-record rule and the clear by match (about 80
+  lines and one concept, the record), keeps the tags, the dead set and the two
+  free rules. Model-checked as `DeadSet` with `Sync`. Returns to a lost message
+  (a silent hang) when a program breaks the contract, as recharm does today in
+  that race, with the abort of finding 5 and the own-entry corruption of
+  finding 6 closed. The contract goes in the manual next to `ckDestroy`.
+
+In every option the dead set grows with the deletions and is never pruned
+(chapter section 9); pruning needs a bound on how late a message of a dead life
+can arrive, which the contract would supply (prune at the synchronization) but
+the runtime cannot see.
+
+**A weaker contract that does not work.** Kale asked whether "the program
+processes every message to the element before deleting it" would do instead of
+quiescence. It does not: it orders application messages against the deletion,
+while the race is between two runtime messages, the old life's death notice and
+the new life's creation update, which travel from different PEs to the home.
+Modeled as `AppSync` (`MC_death_3proc_deadset_appsync`,
+`MC_death_liveness_deadset_noinv_appsync`): the dead-set protocol still loses a
+message in 12 steps (`trace_appsync_lost_message_3proc.txt`). The condition is
+still what makes a message to a dead element an error of the program rather
+than something the runtime must define; no discard rule follows from it, since
+a message held at the home for an id without location may be for the next life
+and is released by that life's update.
+
+**Decision (Kale, 2026-11-03): A**, the protocol as merged and checked, for
+every array. The per-array version was judged to make the runtime harder to
+read for the maintainer (two protocols, two sets of tests and configurations)
+while only the application programmer gains a simpler model. **C is kept ready
+as the fallback** if shrink/expand, heterogeneous nodes (processes with
+different PE counts) or another feature make the general protocol too complex
+to carry; its contract is the quiescence paragraph above (the weaker condition
+is not enough), and its model configurations (`DeadSet` with `Sync`) stay in
+the model folder so it can be rechecked against whatever the spec has become.
+Switching to C is: delete `homeLives`, `homeReinstall`, the older-than-record
+rule and the clear by match in `homeNoteDeath` (clear unconditionally); keep
+the tags, `deadLives` and the two free rules; add the manual paragraph next to
+`ckDestroy`; rewrite `objid_recreate`'s finding-3 scenario to expect the held
+message; update chapter sections 3.0 and 3.5. Neither shrink/expand nor
+heterogeneous processes change the rules of A as far as this analysis can see:
+the tables are per process and are rebuilt on restart from the re-creations
+(chapter section 5), a restart is a synchronization, so no message of an
+earlier life survives it and the dead set starts empty; and nothing in the
+protocol assumes equal PE counts per process (`CkNodeOf`, the per-process rank
+in the waiter word).
 
 ## 8. Diagnostics and limits (PR 0, can land first)
 
@@ -1019,3 +1193,42 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
 - 2026-10-18 (fix after #4015): a deleted index re-created on a PE that never saw it gets a new id; the home keeps a retired-id table and re-addresses messages sent to the old id; section 3.4.
 - 2026-10-19 (#4057 review, Aditya): the home records every dead element's id in the retired-id table, so the index scan is gone; a PE that releases messages held under an old id re-addresses them itself; objid_insert phase 7; section 3.4.
 - 2026-10-19 (#4058 review, Ritvik, fixed forward after the merge): the LB comm record of a bound array uses the manager's id; the ObjID constructor's range check is always on; checkpoint layout marker OBJ2; the per-PE registry of managers is gone (UpdateLocation uses the record's object-manager id); objid_wide's grep cases run through testrun; advice text follows the layout widths; section 12.
+
+- 2026-10-31: PR 3 lookup path is lock-free, not shard-locked (Kale's requirement: never a
+  coarse lock on the lookup path). Reads are atomic loads on open-addressing tables, writes
+  single-word CAS with the epoch compare, waiters a bitmask per entry, growth by chained
+  segments without moving keys. Eviction (7.7) deferred to a second version. The two residue
+  items of Aditya's e417584dd (compressor overflow message, miss counters) ride with PR 3.
+  Design chapter: doc/internals/process-location-cache.md.
+- 2026-11-02 (PR 3 implemented): location table, index table and retired ids per process
+  (src/ck-core/cklocnode.{h,C}); one location request per process via waiter bits; the
+  emigration is recorded before the migration message is sent. Left out of the first
+  version, with reasons in the chapter's section 9: the arriving state, epoch-carrying
+  tombstones, process-addressed messages (the CkLocNode nodegroup), eviction. Kale's
+  proposal of 2026-10-31, no home update for a move within a process, is section 3.7 of
+  the chapter and a later step.
+- 2026-11-03 (TLA+ check of PR 3, #4123): five rules for deletion and re-creation under the
+  same id (life tags, the home's record of lives, own writes stay, by-id drop in the home's
+  process, clear by match), each from a model counterexample; model and traces in
+  doc/internals/tla/process-location. Section 7.8 added: the rules cost no messages in the
+  base scenario, about 100 bytes per element at the home; the record is needed only for
+  liveness in the race and only without a synchronization between deletion and
+  re-insertion; finding 8 (a death notice outrun by the life's own earlier update revives the
+  home's entry and a message then bounces between the home and the dead PE for ever, in
+  recharm's per-PE code too, no re-insertion needed) makes the tag and the dead set necessary
+  in every variant; options A (keep), B (array option), C (remove the per-life record, adopt
+  the contract). Decided A (Kale, 2026-11-03), C kept as the documented fallback with the
+  quiescence contract; the weaker "all messages to the element processed before deletion"
+  condition was modeled (`AppSync`) and shown insufficient.
+- 2026-11-04 (#4123 review, Ritvik): whether a location request is out is a flag of its own
+  in the table slot, set by the rank whose re-read found nothing and cleared by the fill,
+  instead of "the waiter word was 0 before": a fill between two misses and their
+  registrations followed by a death left a process holding messages with no request out.
+  The model's atomic send step hid the ordering. Chapter section 3.3; model README finding 9.
+- 2026-11-04 (#4123 review, Ritvik): every received update clears the request flag, whether
+  or not it writes. A claim that came after a fill the rank's re-read had missed sent a
+  request whose reply wrote nothing, which left the flag set with no request out. Chapter
+  section 3.3; `objid_loctable` phase 10.
+- 2026-11-04 (Kale): PR 3 (#4123) retargeted from objid-redesign to recharm, with recharm
+  merged into it first. objid-redesign carried nothing beyond recharm except PR 3, so the
+  separate "part 3" PR of section 9.1 would have been a second review of the same change.
