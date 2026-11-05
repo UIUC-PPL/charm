@@ -3299,7 +3299,11 @@ struct AmpiMigrateAction {
   AmpiMigrateKind kind;
   char dir[MPI_MAX_INFO_VAL]; // CKPT_TO_FILE: the checkpoint directory
 };
-#define AMPI_MIGRATE_MAX_ACTIONS 8
+// An MPI_Info holds one value per key and the parser adds at most one action
+// per key it recognizes (ampi_load_balance, ampi_checkpoint), so two entries
+// are enough. Each entry holds a directory name of MPI_MAX_INFO_VAL bytes and
+// thread AMPI keeps the array on the rank's stack, so it has no spare entries.
+#define AMPI_MIGRATE_MAX_ACTIONS 2
 int ampiParseMigrateInfo(MPI_Info hints, AmpiMigrateAction *out, int max) noexcept;
 // Aborts if a nonblocking collective on MPI_COMM_WORLD is outstanding and
 // +ampiMigrateWithCollectives is off (see ampi.C).
