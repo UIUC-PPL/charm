@@ -1244,8 +1244,10 @@ void removeUnimportantArrayObjsfromPeCache() noexcept {
      element is not on this PE. AMPI_Migrate calls this the moment the rank
      resumes on a new PE, and the element bound to it need not have arrived
      yet. Nothing is lost by skipping it: this whole function is cache pruning,
-     and an element that is not here has nothing in this PE's cache to prune. */
-  ampi* self = getAmpiInstance(MPI_COMM_SELF);
+     and an element that is not here has nothing in this PE's cache to prune.
+     The lookup calls comm2ampi directly because getAmpiInstance aborts on a
+     null result in a checked build, before the test below could run. */
+  ampi* self = pptr->comm2ampi(MPI_COMM_SELF);
   if (self != NULL) arrayObjs.erase(self->ckGetID().getID());
 }
 
