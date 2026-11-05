@@ -89,10 +89,13 @@ New on this line since the split from classic:
 
 - Re-creating a destroyed array element by [createhere] from a PE whose
   process still held the dead element's location created it on the PE
-  the element died on (#4031, defect 1; predates the redesign). An
-  insertion now follows the index's entry only for bound arrays, where
-  the entry is a live sibling's. objid_insert phase 6 re-creates half
-  of the destroyed elements this way.
+  the element died on (#4031, defect 1; predates the redesign). A
+  demand creation the home approved no longer follows the requester's
+  entry (the approval means no element of the id is alive, for bound
+  arrays too), and an explicit insertion follows it only for bound
+  arrays, where the entry is a live sibling's. objid_insert phase 6
+  re-creates half of the destroyed elements this way; the new test
+  objid_boundrecreate covers a bound array over two processes.
 
 - Broadcasts and [nokeep] entry methods: fixes for message reuse and
   copies (#4000-#4012). Checkpoint restart no longer hangs with more

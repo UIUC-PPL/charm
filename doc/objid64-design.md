@@ -1240,5 +1240,11 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   (the other processes keep it after a death, section 3.5 of the process-location chapter),
   and a `createhere` re-creation followed it to the PE the element died on. `objid_insert`
   phase 6 now re-creates half of the destroyed elements by `createhere` from a PE outside
-  the home's process. Defect 2 of #4031 (a re-created life's updates rejected by processes
-  holding the old life's higher epoch; a detour, not a misdelivery) stays open.
+  the home's process. Review (Ritvik): bound arrays had it too once every sibling died, so
+  a demand creation the home approved does not follow the entry at all
+  (`insertElement(..., homeApproved)`): the home grants it only with no location for the id,
+  which bound arrays share. Test `objid_boundrecreate` (two processes). Left open: an
+  explicit `insert(pe)` into a bound array whose siblings all died still follows the stale
+  entry, since insertions do not go through the home. Defect 2 of #4031 (a re-created life's
+  updates rejected by processes holding the old life's higher epoch; a detour, not a
+  misdelivery) stays open.
