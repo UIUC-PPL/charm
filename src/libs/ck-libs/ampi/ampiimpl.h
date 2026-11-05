@@ -3239,6 +3239,7 @@ bool isAmpiThread() noexcept;
 
 // Pieces of ampiInit/MPI_Finalize shared with campi (coroutine AMPI, campi.C)
 CkArrayOptions ampiInitRootArrayOptions(CkArrayID *threads, int *nchunks) noexcept;
+CkGroupID ampiPeMgrGroupID() noexcept;
 ampiParent *ampiInitWorldLocal(ampi *ptr, int nchunks) noexcept;
 void removeUnimportantArrayObjsfromPeCache() noexcept;
 int ampiFinalizeBody() noexcept;

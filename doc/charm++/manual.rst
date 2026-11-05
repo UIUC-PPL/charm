@@ -9760,12 +9760,16 @@ Charm-MPI Interoperation
 ------------------------
 
 Codes and libraries written in Charm++ and MPI can also be used in an
-interoperable manner. Currently, this functionality is supported only if
-Charm++ is built using MPI, PAMILRTS, or GNI as the network layer (e.g.
-mpi-linux-x86_64 build). An example program to demonstrate the
-interoperation is available in ``examples/charm++/mpi-coexist``. In the
-following text, we will refer to this example program for the ease of
-understanding.
+interoperable manner. The MPI program is compiled and linked with the
+MPI compiler wrapper (``charmc -c++ mpicxx`` and ``-ld++ mpicxx``), and
+Charm++ runs on every MPI rank of the job, with Charm++ process *i* on
+``MPI_COMM_WORLD`` rank *i*. Charm++ does not need to be built with
+MPI: ``CharmLibInit`` starts Charm++'s network layer (LCI) through LCI's
+own TCP bootstrap, with MPI rank 0 as the rendezvous point, so the
+launcher's PMI service is left to MPI. Setting ``LCT_PMI_BACKEND``
+selects a different LCI bootstrap backend instead. An example program to demonstrate the interoperation is available in
+``examples/charm++/mpi-coexist``. In the following text, we will refer to
+this example program for the ease of understanding.
 
 Control Flow and Memory Structure
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -9778,21 +9782,13 @@ function call should be made to initialize Charm++:
 
 **void CharmLibInit(MPI_Comm newComm, int argc, char \**argv)**
 
-If Charm++ is build on top of MPI, ``newComm`` is the MPI communicator
-that Charm++ will use for the setup and communication. All the MPI
-ranks that belong to ``newComm`` should call this function collectively.
-A collection of MPI ranks that make the ``CharmLibInit`` call defines a
-new Charm++ instance. Different MPI ranks that belong to different
-communicators can make this call independently, and separate Charm++
-instances that are not aware of each other will be created. This
-results in a space division. As of now, a particular MPI rank can only
-be part of one unique Charm++ instance. For PAMILRTS and GNI, the
-``newComm`` argument is ignored. These layers do not support the space
-division of given processors, but require all processors to make the
-``CharmLibInit`` call. The mode of interoperating here is called time
-division, and can be used with MPI-based Charm++ also if the size of
-``newComm`` is same as ``MPI_COMM_WORLD``. Arguments ``argc`` and ``argv``
-should contain the information required by Charm++ such as the load balancing
+All MPI ranks must make this call collectively, and ``newComm`` must be
+``MPI_COMM_WORLD`` or congruent to it; any other communicator (for
+example one from an ``MPI_Comm_split`` into several colors) makes the
+call abort with an error message, since running Charm++ on a subset of
+the ranks is not supported. ``CharmLibInit`` checks that Charm++ and MPI
+number the processes the same way and aborts otherwise. Arguments ``argc`` and ``argv`` should
+contain the information required by Charm++ such as the load balancing
 strategy, etc.
 
 During initialization, control is transferred from MPI to the
@@ -9826,6 +9822,10 @@ with a pure MPI program:
 -  Include ``mpi-interoperate.h`` - if not included in the files that call
    ``CkExit``, invoking ``CkExit`` will result in unspecified behavior.
 
+-  Include ``mpi.h`` before ``mpi-interoperate.h``: ``CharmLibInit`` is
+   declared only when ``mpi.h`` has already been included (or
+   ``CMK_INTEROP_USE_MPI`` is defined).
+
 -  Since the ``CharmLibInit`` call invokes the constructors of mainchares,
    the constructors of mainchares should only perform basic set up such
    as creation of chare arrays etc, i.e. the set up should not result in
@@ -9852,7 +9852,7 @@ with a pure MPI program:
           CkPrintf("HelloStart - Starting lib by calling constructor of MainHello\n");
           CProxy_MainHello mainhello = CProxy_MainHello::ckNew(elems);
         }
-        StartCharmScheduler(-1);
+        StartCharmScheduler();
       }
 
    This function creates a new chare (``mainHello``) defined in the *hello*
@@ -9873,10 +9873,17 @@ initial set up of Charm++. It is advisable to call an ``MPI_Barrier`` after
 a control transfer between Charm++ and MPI to avoid any side effects.
 Thereafter, a Charm++ library can be invoked at any point using the
 interface functions. One may look at
-``examples/charm++/mpi-coexist/multirun.cpp`` for a working example. Based
+``examples/charm++/mpi-coexist/multirun_time.cpp`` for a working example. Based
 on the way interfaces are defined, a library can be invoked multiple
 times. In the end, one should call ``CharmLibExit`` to free resources
-reserved by Charm++.
+reserved by Charm++. ``CharmLibExit`` returns; the program can continue to
+use MPI afterwards and must call ``MPI_Finalize`` itself.
+
+Charm++ makes no progress while control is in MPI. Messages still queued
+when ``CkExit`` returns control to MPI stay queued and are delivered when
+Charm++ is next entered (``StartCharmScheduler`` in the next interface
+function call). For a clean boundary between phases, end a Charm++ phase
+with ``CkStartQD`` and call ``CkExit`` from the quiescence callback.
 
 Compilation and Execution
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -9894,6 +9901,21 @@ pass ``-mpi`` as an argument because of which *charmc* performs the
 linking for interoperation. The charm libraries, which one wants to be
 linked, should be passed using ``-module`` option. Refer to
 ``examples/charm++/mpi-coexist/Makefile`` to view a working example.
+
+Launch the program with the launcher your MPI library requires (for
+example, ``srun --mpi=cray_shasta`` for Cray MPICH under Slurm). With a
+launcher that does not match the MPI library, each process becomes its
+own one-rank MPI job; ``CharmLibInit`` prints a warning when it detects
+this.
+
+Under ``srun``, add ``--kill-on-bad-exit``: an abort in one process does
+not yet end the other processes of an interop job, and without the option
+they wait until the job's time limit.
+
+On HPE Slingshot (the CXI libfabric provider), export
+``FI_CXI_RX_MATCH_MODE=hybrid`` in the job script. Reconverse sets it
+before LCI starts, but in an MPI program ``MPI_Init`` has already
+initialized libfabric, so that setting may come too late.
 
 User Driven Mode
 ~~~~~~~~~~~~~~~~

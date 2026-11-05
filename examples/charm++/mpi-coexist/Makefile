@@ -22,7 +22,5 @@ clean:
 	rm -f multirun multirun_time *.o *.a charmrun
 
 test: all
-	mpirun -np 16 ./multirun
-	mpirun -np 16 ./multirun +balancer GreedyLB +LBDebug 1
 	mpirun -np 16 ./multirun_time
 
