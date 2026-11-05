@@ -6,8 +6,8 @@ mainmodule bcast_zcpup {
 
   mainchare Main {
     entry Main(CkArgMsg *m);
-    entry [reductiontarget] void hitDone(int n);
-    entry [reductiontarget] void checked(int total, int bad);
+    entry void hitDone(int round);
+    entry void checkDone(int hits, int bad);
   };
 
   array [1D] Elem {

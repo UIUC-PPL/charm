@@ -9,9 +9,14 @@
 //
 // Every round the main chare broadcasts migrate(), which sends each element
 // to the PE half the machine away, and then, without waiting, a burst of
-// hitsPerRound hit() broadcasts. Each hit() contributes to a reduction; when
-// all of a round's reductions arrive the next round starts. At the end every
+// hitsPerRound hit() broadcasts. Each hit() reports to the main chare; when
+// all of a round's hits are in, the next round starts. At the end every
 // element checks its whole buffer and reports how many hits it saw.
+//
+// Hits and the final check are counted with point-to-point messages to the
+// main chare, not reductions: a reduction contributed right after migrateMe
+// can be lost in one process (a separate defect), and this test is about
+// broadcasts.
 //
 // Usage: ./bcast_zcpup [rounds] [hits per round] [buffer bytes]
 // The interval exists only between processes (TESTRUN_PROCS=2); in one
@@ -33,8 +38,11 @@ class Main : public CBase_Main {
   CProxy_Elem arr;
   int numElems;
   int round = 0;
-  int reductionsThisRound = 0;
+  int hitsThisRound = 0;
   long hitsCounted = 0;
+  int checksIn = 0;
+  long hitsSeen = 0;
+  int badElems = 0;
 
 public:
   Main(CkArgMsg *m) {
@@ -51,27 +59,30 @@ public:
   }
 
   void startRound() {
-    reductionsThisRound = 0;
+    hitsThisRound = 0;
     arr.migrate(round);
     for (int h = 0; h < hitsPerRound; h++) arr.hit(round);
   }
 
-  void hitDone(int n) {
-    if (n != numElems)
-      CkAbort("bcast_zcpup: a hit reduction counted %d elements, expected %d", n, numElems);
-    hitsCounted += n;
-    if (++reductionsThisRound < hitsPerRound) return;
+  void hitDone(int r) {
+    if (r != round)
+      CkAbort("bcast_zcpup: a hit of round %d arrived during round %d", r, round);
+    hitsCounted++;
+    if (++hitsThisRound < hitsPerRound * numElems) return;
     if (++round < numRounds)
       startRound();
     else
       arr.check();
   }
 
-  void checked(int total, int bad) {
+  void checkDone(int hits, int bad) {
+    hitsSeen += hits;
+    badElems += bad;
+    if (++checksIn < numElems) return;
     long expected = (long)numRounds * hitsPerRound * numElems;
-    if (bad != 0 || total != expected || hitsCounted != expected)
-      CkAbort("bcast_zcpup: %d elements with a damaged buffer; hits seen %d, reduced %ld, expected %ld",
-              bad, total, hitsCounted, expected);
+    if (badElems != 0 || hitsSeen != expected || hitsCounted != expected)
+      CkAbort("bcast_zcpup: %d elements with a damaged buffer; hits seen %ld, reported %ld, expected %ld",
+              badElems, hitsSeen, hitsCounted, expected);
     CkPrintf("bcast_zcpup: %ld hits delivered, every buffer intact\n", expected);
     CkPrintf("All tests passed\n");
     CkExit();
@@ -126,17 +137,14 @@ public:
       if (buf[i] != pattern(thisIndex, i))
         CkAbort("bcast_zcpup: element %d byte %d wrong in hit(%d)", thisIndex, i, round);
     hits++;
-    contribute(sizeof(int), &restored, CkReduction::sum_int,
-               CkCallback(CkReductionTarget(Main, hitDone), mainProxy));
+    mainProxy.hitDone(round);
   }
 
   void check() {
     int bad = 0;
     for (int i = 0; i < bufBytes; i++)
       if (buf[i] != pattern(thisIndex, i)) { bad = 1; break; }
-    int v[2] = {hits, bad};
-    contribute(2 * sizeof(int), v, CkReduction::sum_int,
-               CkCallback(CkReductionTarget(Main, checked), mainProxy));
+    mainProxy.checkDone(hits, bad);
   }
 };
 
