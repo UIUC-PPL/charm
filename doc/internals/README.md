@@ -31,12 +31,22 @@ entry, and is planned once there is more than one chapter.
 | [Object ids and element location](object-ids.md) | written 2026-10-17 (64-bit id redesign, charm #3994) |
 | [Routing a send to an array element](array-send-order.md) | written 2026-10-24 (send before the array manager exists, charm #4088) |
 | [Array broadcasts and migrating elements](array-broadcast-migration.md) | written 2026-10-25 (broadcast epochs, stored broadcasts, when `stableLocations` applies; AMPI collective hang, charm #4072) |
+| [The process-level location table](process-location-cache.md) | one lock-free location table and one index table per process, shared by all PEs and arrays; one location request per process; what the first version leaves out (objid PR 3) |
 | Message path: envelope, scheduler, entry method dispatch | not yet written |
 | Chare arrays: creation, insertion, migration, sections | not yet written |
 | Groups and nodegroups | not yet written |
 | Load balancing: the LB framework and TreeLB | not yet written |
 | Checkpoint, restart, shrink/expand | not yet written |
 | The reconverse layer: what Charm++ asks of the machine layer | not yet written |
+
+## Models
+
+`tla/` holds TLA+ models of protocols described in the chapters, with the TLC
+configurations that were run and the counterexamples they produced:
+[`tla/process-location/`](tla/process-location/README.md) for the
+process-level location table (chapter above; checked for PR #4123). A model
+is kept when it found something or when the protocol is likely to change
+again; its README says what is modeled, what is not, and how to rerun it.
 
 To add a chapter, copy the shape of an existing one: a one-paragraph
 summary, a diagram where the structure has one, the data structures, the

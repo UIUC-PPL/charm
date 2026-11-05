@@ -15,6 +15,7 @@ private:
   CkLocMgr *myLocMgr;
   CkArrayIndex idx;/// Element's array index
   CmiUInt8 id;
+  CmiUInt8 life; /// CkLocEntry::life of the element held here
   bool *deletedMarker; /// Set this if we're deleted during processing
   bool running; /// True when inside a startTiming/stopTiming pair
 #if CMK_LBDB_ON
@@ -58,6 +59,8 @@ public:
 #endif
   inline const CkArrayIndex &getIndex(void) const {return idx;}
   inline CmiUInt8 getID() const { return id; }
+  inline CmiUInt8 getLife() const { return life; }
+  inline void setLife(CmiUInt8 l) { life = l; }
   inline CkLocMgr *getLocMgr() const {return myLocMgr; }
 
 #if CMK_LBDB_ON
