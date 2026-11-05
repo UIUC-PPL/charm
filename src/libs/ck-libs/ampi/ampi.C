@@ -11871,7 +11871,11 @@ int ampiParseMigrateInfo(MPI_Info hints, AmpiMigrateAction *out, int max) noexce
     n++;
   };
   int nkeys, exists;
-  char key[MPI_MAX_INFO_KEY], value[MPI_MAX_INFO_VAL];
+  // One byte more than the limits: MPI_Info_get copies MPI_MAX_INFO_VAL
+  // bytes without a terminator and the terminator is written after them;
+  // MPI_Info_get_nthkey writes a MPI_MAX_INFO_KEY-character key plus its
+  // terminator.
+  char key[MPI_MAX_INFO_KEY + 1], value[MPI_MAX_INFO_VAL + 1];
 
   MPI_Info_get_nkeys(hints, &nkeys);
 

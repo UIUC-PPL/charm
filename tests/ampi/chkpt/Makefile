@@ -44,14 +44,16 @@ ifneq ($(filter-out 0 1,$(TESTRUN_PROCS)),)
 endif
 	# A checkpoint written after a load balancing step: RotateLB at step 1
 	# moves every rank to another PE, so rank 0 is not on PE 0 when the
-	# checkpoint is taken at step 2. The restart runs with and without the
-	# balancer; the restart under RotateLB migrates the restored ranks again
-	# at the second load balancing step (step 4).
+	# checkpoint is taken at step 2. A restart gets its balancer from the
+	# checkpoint, not from +balancer (CkRestartMain runs instead of the
+	# mainchare constructors, so LBMgrInit never reads the flag), so both
+	# restarts run RotateLB and migrate the restored ranks again at the
+	# second load balancing step (step 4).
 	-sync
 	rm -rf log
 	$(call run, +p4 ./hello +vp8 +balancer RotateLB )
 	-sync
-	$(call run, +p2 ./hello +vp8 +balancer RotateLB +restart log )
+	$(call run, +p2 ./hello +vp8 +restart log )
 	$(call run, +p4 ./hello +vp8 +restart log )
 
 clean:

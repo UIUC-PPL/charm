@@ -22,8 +22,9 @@
  * At steps 1 and 4 every rank calls AMPI_Migrate(AMPI_INFO_LB_SYNC); run
  * with "+balancer RotateLB", every rank moves to another PE at each of these
  * steps. The checkpoint at step 2 is therefore written by ranks that have
- * migrated, with rank 0 no longer on PE 0, and a restart run with
- * "+balancer RotateLB" migrates the restored ranks again at step 4.
+ * migrated, with rank 0 no longer on PE 0. A restart takes its balancer
+ * from the checkpoint, not from "+balancer", so it migrates the restored
+ * ranks again at step 4 whether or not the flag is given.
  *
  * At the end each rank compares its checksum with the expected value and
  * the array's contents with the values its left neighbour sent, and
