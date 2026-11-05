@@ -441,13 +441,37 @@ program is checkpointed to this directory. One can restart the program
 from the checkpointed state (using the same, more, or fewer physical
 processors than were checkpointed with) by specifying
 ``"+restart directory_name"`` on the command-line. The ranks' stacks and
-heaps return to the addresses they had, so the restart needs address
-space layout randomization off: on Linux, run it under
+heaps return to the addresses they had, and the restart checks that the
+program is loaded at the same addresses as in the run that wrote the
+checkpoint, so both that run and the restart need address space layout
+randomization off: on Linux, run each of them under
 ``setarch $(uname -m) -R``, placed in front of the program, which with
 ``srun`` or ``mpirun`` means inside the launch (``srun ... setarch
 $(uname -m) -R ./pgm +restart dir``). The restart must also run under
 the same stack size limit (``ulimit -s``) as the checkpoint; see the
 restarting section of the Charm++ manual.
+
+The example ``examples/ampi/Cjacobi3D`` shows this. The run
+
+.. code-block:: bash
+
+   $ setarch $(uname -m) -R ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 3
+
+writes a checkpoint of all eight ranks to the directory ``log`` after
+iteration 20 and runs on to iteration 40, and
+
+.. code-block:: bash
+
+   $ setarch $(uname -m) -R ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 4 +restart log
+
+resumes the eight ranks from that checkpoint on four PEs, inside the
+``AMPI_Migrate`` call that wrote it, and runs iterations 21 to 40, ending
+with the same ``final maxerr`` line as the uninterrupted run. The
+program's own arguments are not read again on a restart, because the
+ranks resume with their saved stacks, but ``+vp`` must name the same
+number of ranks. The example's ``make test`` restarts the checkpoint on
+the same, fewer and more PEs, and with ``TESTRUN_PROCS=2`` on two
+processes.
 
 Checkpointing in memory allows applications to transparently tolerate
 failures online. The checkpointing scheme used here is a double
