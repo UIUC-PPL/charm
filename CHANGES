@@ -110,14 +110,20 @@ New on this line since the split from classic:
 - charmxi no longer crashes on serial blocks when run without
   -orig-file (#4027).
 
+- MPI interoperation on reconverse (#4130, reconverse #318): an MPI
+  program calls CharmLibInit(MPI_COMM_WORLD, ...) after MPI_Init, runs
+  Charm++ libraries in phases, and keeps using MPI after CharmLibExit,
+  which now returns. The Charm++ build needs no MPI: LCI starts over
+  its tcp bootstrap with the rendezvous passed by MPI_Bcast. World
+  communicator only; not on Windows. Launch with the launcher the MPI
+  library requires (Cray MPICH under Slurm: srun --mpi=cray_shasta).
+
 Known gaps in the alpha:
 
 - AMPI is not yet ported to reconverse; Windows multicore is not yet
   available.
 
 - CharmDebug is not available.
-
-- MPI interoperation (user-driven interop) is not supported.
 
 - Checkpoint files written by 9.0 alpha may not be readable by later
   9.0 pre-releases, because the object id layout may change before
