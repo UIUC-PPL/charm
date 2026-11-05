@@ -2433,6 +2433,10 @@ class ampiParent final : public CBase_ampiParent {
  private:
   TCharm *thread;
   CProxy_TCharm threads;
+  /* The directory of the checkpoint being started, from startCheckpoint until
+     checkpointAfterBarrier uses it on rank 0; not pupped, nothing reads it
+     after a migration or a restart. */
+  std::string ckptDirName;
 
  public: // Communication state:
   int numBlockedReqs; // number of requests currently blocked on
@@ -2557,6 +2561,7 @@ class ampiParent final : public CBase_ampiParent {
   void pup(PUP::er &p) noexcept;
 
   void startCheckpoint(const char* dname) noexcept;
+  void checkpointAfterBarrier() noexcept;
   void Checkpoint(int len, const char* dname) noexcept;
   void ResumeThread() noexcept;
   TCharm* getTCharmThread() const noexcept {return thread;}
@@ -3234,6 +3239,7 @@ bool isAmpiThread() noexcept;
 
 // Pieces of ampiInit/MPI_Finalize shared with campi (coroutine AMPI, campi.C)
 CkArrayOptions ampiInitRootArrayOptions(CkArrayID *threads, int *nchunks) noexcept;
+CkGroupID ampiPeMgrGroupID() noexcept;
 ampiParent *ampiInitWorldLocal(ampi *ptr, int nchunks) noexcept;
 void removeUnimportantArrayObjsfromPeCache() noexcept;
 int ampiFinalizeBody() noexcept;

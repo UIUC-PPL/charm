@@ -392,10 +392,7 @@ void CkMulticastMgr::resetSection(CProxySection_ArrayBase &proxy)
     // store old tree info
   entry->oldtree.set(oldentry, oldpe);
 
-    // obsolete old tree
-  mCastGrp[oldpe].retire(CkSectionInfo(oldpe, oldentry, 0, entry->getAid()), info);
-
-  // find reduction number
+  // retire the old tree and fetch its reduction number, in one message
   mCastGrp[oldpe].retrieveCookie(CkSectionInfo(oldpe, oldentry, 0, aid), info);
 }
 
@@ -508,6 +505,9 @@ void CkMulticastMgr::initGrpDelegateMgr(CProxySection_Group *proxy, int opts)
 void CkMulticastMgr::retrieveCookie(CkSectionInfo s, CkSectionInfo srcInfo)
 {
   mCastEntry *entry = (mCastEntry *)s.get_val();
+  // Retire first: an obsolete root forwards contributions to the new root,
+  // so its redNo no longer advances and the value sent below is final.
+  retire(s, srcInfo);
   CProxy_CkMulticastMgr  mCastGrp(thisgroup);
   mCastGrp[srcInfo.get_pe()].recvCookieInfo(srcInfo, entry->red.redNo);
 }
