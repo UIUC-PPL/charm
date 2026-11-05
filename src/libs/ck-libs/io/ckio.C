@@ -476,7 +476,7 @@ public:
     {
       string& name = files[token].name;
 #if defined(_WIN32)
-      int fd = CmiOpen(name.c_str(), _O_WRONLY | _O_CREAT, _S_IREAD | _S_IWRITE);
+      int fd = CmiOpen(name.c_str(), _O_WRONLY | _O_CREAT | _O_BINARY, _S_IREAD | _S_IWRITE);
 #else
       int fd = CmiOpen(name.c_str(), O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
 #endif
