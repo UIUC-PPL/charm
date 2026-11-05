@@ -1,0 +1,32 @@
+mainmodule iosessions {
+  include "ckio.h";
+  readonly CProxy_Main mainProxy;
+  readonly int K;
+
+  mainchare Main {
+    entry Main(CkArgMsg* m);
+    entry void opened(Ck::IO::FileReadyMsg* m);
+    entry void writeReady(Ck::IO::SessionReadyMsg* m);
+    entry void written(CkReductionMsg* m);
+    entry void readReady(Ck::IO::SessionReadyMsg* m);
+    entry [reductiontarget] void readsDone();
+    entry void readClosed(CkReductionMsg* m);
+    entry [reductiontarget] void pingsDone(int n);
+    entry void closed(CkReductionMsg* m);
+    entry void checkProgress();
+  };
+
+  array [1D] App {
+    entry App();
+    entry void writeRecord(Ck::IO::Session s, int iter);
+    entry void readRecord(Ck::IO::Session s, int iter);
+    entry void readDone(Ck::IO::ReadCompleteMsg* m);
+  };
+
+  array [1D] Hash {
+    entry Hash();
+    entry void ping(int iter);
+    entry void pass(int iter);
+    entry void report(int total);
+  };
+};
