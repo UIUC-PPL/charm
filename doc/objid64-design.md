@@ -1248,6 +1248,12 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   entry, since insertions do not go through the home. Defect 2 of #4031 (a re-created life's
   updates rejected by processes holding the old life's higher epoch; a detour, not a
   misdelivery) stays open.
+- 2026-11-05 (#4164, zachetienne): `IndexTable::bind` hung on two distinct keys with one
+  64-bit hash: the claim word is the hash, and the insertion loop treated a claim equal to its
+  hash as its own key still being published, without comparing the key words that `probe`
+  compares. Fixed by comparing them after publication. The chance pair needs about n^2/2^65
+  bindings in one process's table; the reporter inverted the hash to make one. Chapter
+  section 2.2; `objid_loctable` phases 11 and 12.
 - 2026-11-05 (#4149, zachetienne): CkIO's per-session arrays take the wide layout
   (`setWideCollection()`, unconditionally, as TCharm does; 16.7 million numbers are enough
   in every build, Kale). 12 collection
