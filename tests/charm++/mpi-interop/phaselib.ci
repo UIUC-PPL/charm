@@ -1,0 +1,17 @@
+mainmodule phaselib {
+  readonly CProxy_PhaseMain phaseMain;
+  readonly CProxy_PhaseElem phaseArray;
+  readonly int phaseNumElems;
+
+  mainchare PhaseMain {
+    entry PhaseMain(CkArgMsg *m);
+    entry void initDone();
+    entry void run(int iter);
+    entry [reductiontarget] void done(long sum);
+  };
+
+  array [1D] PhaseElem {
+    entry PhaseElem();
+    entry void work(int iter);
+  };
+};
