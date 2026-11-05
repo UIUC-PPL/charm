@@ -48,8 +48,10 @@ DIRS = \
   objid_migrate6 \
   objid_loctable \
   objid_recreate \
+  objid_boundrecreate \
   collide \
   qd \
+  bcast_zcpup \
 
 FTDIRS = \
   jacobi3d \
