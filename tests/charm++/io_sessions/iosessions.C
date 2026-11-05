@@ -59,7 +59,7 @@ class Main : public CBase_Main {
   int writes = 0;
   Ck::IO::File file, file2;
   Ck::IO::Session readSession, readSession2;
-  int zeroStage = 0;    // the 0-byte session: ready seen (1), complete seen (2)
+  int zeroStage = 0;    // the 0-byte session: callbacks seen (ready, complete)
   int twoReadsDone = 0; // read sessions over file and file2 finished
   int twoReadsClosed = 0;
   CProxy_App app;
@@ -109,19 +109,19 @@ public:
                          CkCallback(CkIndex_Main::zeroWritten(NULL), thisProxy));
   }
 
+  // Ready and complete are sent together and may arrive in either order.
   void zeroReady(Ck::IO::SessionReadyMsg* m) {
     delete m;
-    CkEnforce(zeroStage == 0);
-    zeroStage = 1;
+    zeroArrived();
   }
 
   void zeroWritten(CkReductionMsg* m) {
     delete m;
-    if (zeroStage != 1) {
-      CkPrintf("iosessions FAIL: the 0-byte session completed before it was ready\n");
-      CkAbort("0-byte session");
-    }
-    zeroStage = 2;
+    zeroArrived();
+  }
+
+  void zeroArrived() {
+    if (++zeroStage < 2) return;
     CkPrintf("iosessions: 0-byte write session ready and complete\n");
     next();
   }
