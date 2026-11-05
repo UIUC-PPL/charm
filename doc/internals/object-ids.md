@@ -201,9 +201,7 @@ tag; delivery keys on the whole id word. The checkpoint records the wide width
 next to C. Collection numbers are not reused when an array is destroyed, so a
 library that creates an array per operation takes the wide layout: TCharm (one
 array per AMPI communicator) and CkIO (one per write session, `WriteSession`,
-and one per read session, `BufferChares`), both under
-`ObjID::wideHasMoreCollections()`, which is false in a build whose standard
-width is 24 bits or more.
+and one per read session, `BufferChares`).
 
 ## 8. Not covered: singleton chares and groups
 

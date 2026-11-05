@@ -92,12 +92,6 @@ class ObjID {
           // are told apart from standard ones by the tag alone.
           WIDE_FIRST     = (STANDARD_LIMIT < WIDE_LIMIT) ? STANDARD_LIMIT : 1
         };
-        /// Whether the wide layout names more collections than the standard one
-        /// (false in a -DCMK_OBJID_COLLECTION_BITS=29 build). A library that creates
-        /// an array per operation chooses the wide layout under this condition.
-        static constexpr bool wideHasMoreCollections() {
-          return (CmiUInt8)WIDE_LIMIT - WIDE_FIRST > (CmiUInt8)STANDARD_LIMIT - 1;
-        }
 
         ObjID(): id(0) {}
         ///

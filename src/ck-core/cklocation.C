@@ -2457,7 +2457,8 @@ CmiUInt8 nextCollectionNumber(bool wide)
   }
   // The wide layout is the way out only where it has the larger range (not in a
   // -DCMK_OBJID_COLLECTION_BITS=29 build).
-  const bool wideHasMore = ObjID::wideHasMoreCollections();
+  const bool wideHasMore = (CmiUInt8)ObjID::limits::WIDE_LIMIT - ObjID::limits::WIDE_FIRST >
+                           (CmiUInt8)ObjID::limits::STANDARD_LIMIT - 1;
   if (_nextStandardCollection >= ObjID::limits::STANDARD_LIMIT)
     CkAbort("Charm++ ran out of collection numbers: %" PRIu64 " chare arrays have been"
             " created (the limit with %d collection bits; numbers are not reused when an"
