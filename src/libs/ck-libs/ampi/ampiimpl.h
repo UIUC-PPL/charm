@@ -317,6 +317,26 @@ class Amm {
 
 PUPfunctionpointer(MPI_User_function*)
 
+/* The address at which the program (the main executable, which libampi is
+ * linked into) is loaded in this process, minus the address it was linked at.
+ * A function of the program minus this value is the same in every process
+ * running the program, whatever address space layout randomization did. */
+uintptr_t ampiProgramLoadAddress() noexcept;
+
+/* In campi mode, functions the program registers with AMPI (MPI_Op_create,
+ * keyval copy and delete functions) are stored as offsets from
+ * ampiProgramLoadAddress(), because a campi rank may move to another process
+ * or restart from a checkpoint in a new process, where the stored address
+ * would be wrong. ampiStoreFunction gives the stored form and
+ * ampiStoredFunction the callable one. Outside campi mode both return their
+ * argument. */
+template <typename F> inline F *ampiStoreFunction(F *f) noexcept {
+  return tcharm_campi ? (F *)((uintptr_t)f - ampiProgramLoadAddress()) : f;
+}
+template <typename F> inline F *ampiStoredFunction(F *f) noexcept {
+  return tcharm_campi ? (F *)((uintptr_t)f + ampiProgramLoadAddress()) : f;
+}
+
 /*
  * OpStruct's are used to lookup an MPI_User_function* and check its commutativity.
  * They are also used to create AmpiOpHeader's, which are transmitted in reductions
@@ -324,7 +344,8 @@ PUPfunctionpointer(MPI_User_function*)
  *
  * Note: when running with PIEglobals, func is stored as its offset from the rank's
  *       base address, so that the real function can be looked up relative to any
- *       rank's base address via ampiPeMgr.
+ *       rank's base address via ampiPeMgr. In campi mode it is stored as its
+ *       offset from the program's load address (ampiStoreFunction).
  */
 class OpStruct {
  public:
@@ -341,7 +362,7 @@ class OpStruct {
       char *basePtr = (char *)heap.start;
       return (MPI_User_function *)((char *)f - basePtr);
     } else {
-      return f;
+      return ampiStoreFunction(f);
     }
   }
 
@@ -742,23 +763,29 @@ class ampiDistGraphTopology final : public ampiTopology {
   inline void setnbors(const std::vector<int> &nbors_) noexcept {nbors = nbors_; nbors.shrink_to_fit();}
 };
 
-/* KeyValue class for attribute caching */
+/* KeyValue class for attribute caching. The copy and delete functions are
+ * kept in the stored form of ampiStoreFunction; call them through copyFn()
+ * and deleteFn(). extra_state is the user's value, passed back unchanged. */
 class KeyvalNode {
- public:
+ private:
   MPI_Copy_function *copy_fn;
   MPI_Delete_function *delete_fn;
+ public:
   void *extra_state;
   int refCount;
 
   KeyvalNode() : copy_fn(NULL), delete_fn(NULL), extra_state(NULL), refCount(1) { }
   KeyvalNode(MPI_Copy_function *cf, MPI_Delete_function *df, void* es) :
-             copy_fn(cf), delete_fn(df), extra_state(es), refCount(1) { }
+             copy_fn(ampiStoreFunction(cf)), delete_fn(ampiStoreFunction(df)),
+             extra_state(es), refCount(1) { }
+  MPI_Copy_function *copyFn() const { return ampiStoredFunction(copy_fn); }
+  MPI_Delete_function *deleteFn() const { return ampiStoredFunction(delete_fn); }
   void incRefCount() { refCount++; }
   int decRefCount() { CkAssert(refCount > 0); refCount--; return refCount; }
   void pup(PUP::er& p) {
-    p((char *)copy_fn, sizeof(void *));
-    p((char *)delete_fn, sizeof(void *));
-    p((char *)extra_state, sizeof(void *));
+    p((char *)&copy_fn, sizeof(void *));
+    p((char *)&delete_fn, sizeof(void *));
+    p((char *)&extra_state, sizeof(void *));
     p|refCount;
   }
 };
@@ -2785,7 +2812,9 @@ class ampiParent final : public CBase_ampiParent {
   inline AmpiOpHeader op2AmpiOpHeader(MPI_Op op, MPI_Datatype type, int count) const noexcept {
     if (opIsPredefined(op)) {
       int size = myDDT.getType(type)->getSize(count);
-      return AmpiOpHeader(predefinedOps[op], type, count, size);
+      // AmpiReducerFunc resolves the header's function with getUserFunction,
+      // so a predefined op's function goes in the stored form as well.
+      return AmpiOpHeader(ampiStoreFunction(predefinedOps[op]), type, count, size);
     }
     else {
       int opIdx = op - 1 - AMPI_MAX_PREDEFINED_OP;

@@ -7,6 +7,11 @@
 
 #include "ampiimpl.h"
 #include "tcharm.h"
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <link.h>
+#endif
 
 
 #if CMK_TRACE_ENABLED
@@ -595,10 +600,32 @@ class ampiPeMgr : public CBase_ampiPeMgr {
       }
     }
     else {
-      return funcOffset;
+      return ampiStoredFunction(funcOffset); // campi mode: an offset from the program's load address
     }
   }
 };
+
+#if defined(__linux__)
+static int ampiFirstObjectAddress(struct dl_phdr_info *info, size_t, void *data) noexcept {
+  *(uintptr_t *)data = (uintptr_t)info->dlpi_addr;
+  return 1; // the first object visited is the main program; stop there
+}
+#endif
+
+uintptr_t ampiProgramLoadAddress() noexcept {
+  static const uintptr_t addr = []() noexcept -> uintptr_t {
+#if defined(__APPLE__)
+    return (uintptr_t)_dyld_get_image_vmaddr_slide(0); // image 0 is the main program
+#elif defined(__linux__)
+    uintptr_t a = 0;
+    dl_iterate_phdr(ampiFirstObjectAddress, &a);
+    return a;
+#else
+    return 0;
+#endif
+  }();
+  return addr;
+}
 
 /*
  * AMPI's generic reducer type, AmpiReducer, is used only
@@ -1780,7 +1807,7 @@ int ampiParent::setUserAttribute(int context, std::unordered_map<int, uintptr_t>
   auto iter = attributes.find(keyval);
   if (iter != attributes.end()) {
     void * val = (void *)iter->second;
-    int ret = (*kv.delete_fn)(context, keyval, val, kv.extra_state);
+    int ret = (*kv.deleteFn())(context, keyval, val, kv.extra_state);
     if (ret != MPI_SUCCESS) {
       return ret;
     }
@@ -1880,7 +1907,7 @@ int ampiParent::dupUserAttributes(int old_context, std::unordered_map<int, uintp
     if (isValid) {
       // Call the user's copy_fn
       KeyvalNode& kv = *kvlist[keyval];
-      int ret = (*kv.copy_fn)(old_context, keyval, kv.extra_state, val_in, &val_out, &flag);
+      int ret = (*kv.copyFn())(old_context, keyval, kv.extra_state, val_in, &val_out, &flag);
       if (ret != MPI_SUCCESS) {
         return ret;
       }
@@ -1898,7 +1925,7 @@ int ampiParent::freeUserAttributes(int context, std::unordered_map<int, uintptr_
     int keyval = attr.first;
     KeyvalNode & kv = *kvlist[keyval];
     void * val = (void *)attr.second;
-    int ret = (*kv.delete_fn)(context, keyval, val, kv.extra_state);
+    int ret = (*kv.deleteFn())(context, keyval, val, kv.extra_state);
     if (ret != MPI_SUCCESS)
       return ret;
 
@@ -1985,7 +2012,7 @@ int ampiParent::deleteAttr(int context, std::unordered_map<int, uintptr_t> & att
 
   KeyvalNode & kv = *kvlist[keyval];
   void * val = (void *)iter->second;
-  int ret = (*kv.delete_fn)(context, keyval, val, kv.extra_state);
+  int ret = (*kv.deleteFn())(context, keyval, val, kv.extra_state);
   if (ret != MPI_SUCCESS)
     return ret;
 

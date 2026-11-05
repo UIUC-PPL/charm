@@ -581,7 +581,14 @@ gives a different result or fails in the first iteration.
 
 Because a restarted campi rank holds no code or data address, migration
 between processes and restart from a checkpoint need neither address space
-layout randomization off nor Isomalloc. ``tests/campi/jacobi3d`` is a worked
+layout randomization off nor Isomalloc. Functions a program registers with
+AMPI (the function of ``MPI_Op_create`` and the copy and delete functions of a
+keyval) are stored as offsets from the program's load address, so they must
+be defined in the program itself, not in a shared library that may be loaded
+at another address. A keyval's ``extra_state`` is passed back unchanged, so a
+program that migrates between processes or restarts from a checkpoint passes
+an ``extra_state`` that is not an address, or a null pointer.
+``tests/campi/jacobi3d`` is a worked
 example: the program of ``examples/ampi/Cjacobi3D`` with its iteration
 state in a ``State``, a load balancing point every ten iterations and a
 checkpoint point. The checkpoint run and a restart from it, on a different
