@@ -17,8 +17,13 @@
 //         standard ids are addressed while wide arrays come and go. The total
 //         is checked at the end.
 //
-// At the end the file is read with stdio and must hold the K records of the
-// last write session. The memory in use by PE 0's process (CmiMemoryUsage) is
+// Before the loop a write session of 0 bytes must become ready and complete (no
+// element exists to report it). After the loop a second file gets one write
+// session, and then two read sessions, one per file, run at the same time: each
+// App element reads its record from both and checks them (the readiness of a
+// read session carries the session's number, so the two cannot take each
+// other's). At the end the file is read with stdio and must hold the K records
+// of the last write session. The memory in use by PE 0's process (CmiMemoryUsage) is
 // sampled at session 1000 and at the end: a session must leave less than M KB
 // behind (-m M, default
 // 4), since each one creates and destroys an array. About 1 KB per session stays
@@ -38,6 +43,7 @@
 
 static const int REC = 16;  // bytes per record
 static const char* FILENAME = "sessions.dat";
+static const char* FILENAME2 = "sessions2.dat";
 
 static std::string record(int iter, int idx) {
   char buf[REC + 1];
@@ -51,8 +57,11 @@ class Main : public CBase_Main {
   int S;
   int iter = 0;   // even: write session, odd: read session
   int writes = 0;
-  Ck::IO::File file;
-  Ck::IO::Session readSession;
+  Ck::IO::File file, file2;
+  Ck::IO::Session readSession, readSession2;
+  int zeroStage = 0;    // the 0-byte session: ready seen (1), complete seen (2)
+  int twoReadsDone = 0; // read sessions over file and file2 finished
+  int twoReadsClosed = 0;
   CProxy_App app;
   CProxy_Hash hash;
   double lastAdvance;
@@ -76,6 +85,7 @@ public:
     CkPrintf("iosessions: %d sessions, %d PEs, %d processes, %d elements per array\n", S,
              CkNumPes(), CkNumNodes(), K);
     remove(FILENAME);
+    remove(FILENAME2);
 
     app = CProxy_App::ckNew(K);  // bounded: standard layout, packed kind
     CkArrayOptions hopts;        // no bounds: standard layout, hashed kind
@@ -94,6 +104,25 @@ public:
   void opened(Ck::IO::FileReadyMsg* m) {
     file = m->file;
     delete m;
+    // A session of 0 bytes: ready and complete, with no element to report either.
+    Ck::IO::startSession(file, 0, 0, CkCallback(CkIndex_Main::zeroReady(NULL), thisProxy),
+                         CkCallback(CkIndex_Main::zeroWritten(NULL), thisProxy));
+  }
+
+  void zeroReady(Ck::IO::SessionReadyMsg* m) {
+    delete m;
+    CkEnforce(zeroStage == 0);
+    zeroStage = 1;
+  }
+
+  void zeroWritten(CkReductionMsg* m) {
+    delete m;
+    if (zeroStage != 1) {
+      CkPrintf("iosessions FAIL: the 0-byte session completed before it was ready\n");
+      CkAbort("0-byte session");
+    }
+    zeroStage = 2;
+    CkPrintf("iosessions: 0-byte write session ready and complete\n");
     next();
   }
 
@@ -101,7 +130,9 @@ public:
     progress();
     if (iter == MEM_ITER) memAtStart = CmiMemoryUsage();
     if (iter == S) {
-      hash.report(K * writes);
+      // Two read sessions at once, one per file: first give file2 its records.
+      Ck::IO::Options opts;
+      Ck::IO::open(FILENAME2, CkCallback(CkIndex_Main::opened2(NULL), thisProxy), opts);
       return;
     }
     if (iter % 500 == 0) CkPrintf("iosessions: session %d\n", iter);
@@ -147,6 +178,64 @@ public:
     next();
   }
 
+  // The second file: one write session, then the two concurrent read sessions.
+  void opened2(Ck::IO::FileReadyMsg* m) {
+    file2 = m->file;
+    delete m;
+    Ck::IO::startSession(file2, REC * K, 0,
+                         CkCallback(CkIndex_Main::writeReady2(NULL), thisProxy),
+                         CkCallback(CkIndex_Main::written2(NULL), thisProxy));
+  }
+
+  void writeReady2(Ck::IO::SessionReadyMsg* m) {
+    progress();
+    app.writeRecord(m->session, S + 1);  // a record no session on FILENAME has
+    delete m;
+  }
+
+  void written2(CkReductionMsg* m) {
+    delete m;
+    progress();
+    CkPrintf("iosessions: two read sessions at once, over %s and %s\n", FILENAME, FILENAME2);
+    Ck::IO::startReadSession(file, REC * K, 0,
+                             CkCallback(CkIndex_Main::readReadyA(NULL), thisProxy));
+    Ck::IO::startReadSession(file2, REC * K, 0,
+                             CkCallback(CkIndex_Main::readReadyB(NULL), thisProxy));
+  }
+
+  void readReadyA(Ck::IO::SessionReadyMsg* m) {
+    progress();
+    readSession = m->session;
+    delete m;
+    app.readRecord2(readSession, (S - 1) / 2 * 2, 0);  // the last write session's records
+  }
+
+  void readReadyB(Ck::IO::SessionReadyMsg* m) {
+    progress();
+    readSession2 = m->session;
+    delete m;
+    app.readRecord2(readSession2, S + 1, 1);
+  }
+
+  void readsDone2(int slot) {
+    progress();
+    if (++twoReadsDone < 2) return;
+    Ck::IO::closeReadSession(readSession, CkCallback(CkIndex_Main::readClosed2(NULL), thisProxy));
+    Ck::IO::closeReadSession(readSession2,
+                             CkCallback(CkIndex_Main::readClosed2(NULL), thisProxy));
+  }
+
+  void readClosed2(CkReductionMsg* m) {
+    delete m;
+    if (++twoReadsClosed < 2) return;
+    Ck::IO::close(file2, CkCallback(CkIndex_Main::closed2(NULL), thisProxy));
+  }
+
+  void closed2(CkReductionMsg* m) {
+    delete m;
+    hash.report(K * writes);
+  }
+
   void pingsDone(int n) {
     progress();
     if (n != K * writes) {
@@ -186,8 +275,10 @@ public:
       }
     }
     fclose(fp);
-    CkPrintf("iosessions PASS: %d sessions (%d write, %d read), %d PEs, %d processes, "
-             "file checked\n", S, writes, S - writes, CkNumPes(), CkNumNodes());
+    remove(FILENAME2);
+    CkPrintf("iosessions PASS: %d sessions (%d write, %d read), a 0-byte session, two read "
+             "sessions at once, %d PEs, %d processes, file checked\n", S, writes, S - writes,
+             CkNumPes(), CkNumNodes());
     CkExit();
   }
 
@@ -204,7 +295,9 @@ static void watchdogFire(void* arg, double t) { mainProxy.checkProgress(); }
 
 class App : public CBase_App {
   char buf[REC];
+  char buf2[2][REC];
   int expectIter = -1;
+  int expect2[2] = {-1, -1};
 
 public:
   App() {}
@@ -222,15 +315,36 @@ public:
   }
 
   void readDone(Ck::IO::ReadCompleteMsg* m) {
-    if (m->bytes != (size_t)REC || m->offset != (size_t)(REC * thisIndex) ||
-        std::string(buf, REC) != record(expectIter, thisIndex)) {
-      CkPrintf("iosessions FAIL: element %d read %zu bytes at %zu: \"%.*s\", expected "
-               "\"%.*s\"\n", thisIndex, m->bytes, m->offset, REC, buf, REC,
-               record(expectIter, thisIndex).c_str());
-      CkAbort("read contents");
-    }
+    check(m, buf, expectIter);
     delete m;
     contribute(CkCallback(CkReductionTarget(Main, readsDone), mainProxy));
+  }
+
+  // Two sessions at once: slot 0 reads the first file, slot 1 the second.
+  void readRecord2(Ck::IO::Session s, int iter, int slot) {
+    expect2[slot] = iter;
+    CkCallback cb(CkIndex_App::readDone2(NULL), thisProxy[thisIndex]);
+    cb.setRefnum(slot);  // which session answered
+    Ck::IO::read(s, REC, REC * thisIndex, buf2[slot], cb);
+  }
+
+  void readDone2(Ck::IO::ReadCompleteMsg* m) {
+    const int slot = CkGetRefNum(m);
+    CkEnforce(slot == 0 || slot == 1);
+    check(m, buf2[slot], expect2[slot]);
+    delete m;
+    contribute(sizeof(int), &slot, CkReduction::max_int,
+               CkCallback(CkReductionTarget(Main, readsDone2), mainProxy));
+  }
+
+  void check(Ck::IO::ReadCompleteMsg* m, const char* b, int iter) {
+    if (m->bytes != (size_t)REC || m->offset != (size_t)(REC * thisIndex) ||
+        std::string(b, REC) != record(iter, thisIndex)) {
+      CkPrintf("iosessions FAIL: element %d read %zu bytes at %zu: \"%.*s\", expected "
+               "\"%.*s\"\n", thisIndex, m->bytes, m->offset, REC, b, REC,
+               record(iter, thisIndex).c_str());
+      CkAbort("read contents");
+    }
   }
 };
 

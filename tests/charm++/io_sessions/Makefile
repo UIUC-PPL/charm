@@ -16,4 +16,4 @@ smptest: iosessions
 	$(call run, ./iosessions +p4)
 
 clean:
-	rm -f *.o *.decl.h *.def.h iosessions sessions.dat charmrun
+	rm -f *.o *.decl.h *.def.h iosessions sessions.dat sessions2.dat charmrun

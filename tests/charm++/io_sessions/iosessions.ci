@@ -6,6 +6,16 @@ mainmodule iosessions {
   mainchare Main {
     entry Main(CkArgMsg* m);
     entry void opened(Ck::IO::FileReadyMsg* m);
+    entry void zeroReady(Ck::IO::SessionReadyMsg* m);
+    entry void zeroWritten(CkReductionMsg* m);
+    entry void opened2(Ck::IO::FileReadyMsg* m);
+    entry void writeReady2(Ck::IO::SessionReadyMsg* m);
+    entry void written2(CkReductionMsg* m);
+    entry void readReadyA(Ck::IO::SessionReadyMsg* m);
+    entry void readReadyB(Ck::IO::SessionReadyMsg* m);
+    entry [reductiontarget] void readsDone2(int slot);
+    entry void readClosed2(CkReductionMsg* m);
+    entry void closed2(CkReductionMsg* m);
     entry void writeReady(Ck::IO::SessionReadyMsg* m);
     entry void written(CkReductionMsg* m);
     entry void readReady(Ck::IO::SessionReadyMsg* m);
@@ -21,6 +31,8 @@ mainmodule iosessions {
     entry void writeRecord(Ck::IO::Session s, int iter);
     entry void readRecord(Ck::IO::Session s, int iter);
     entry void readDone(Ck::IO::ReadCompleteMsg* m);
+    entry void readRecord2(Ck::IO::Session s, int iter, int slot);
+    entry void readDone2(Ck::IO::ReadCompleteMsg* m);
   };
 
   array [1D] Hash {
