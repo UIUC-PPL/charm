@@ -17,12 +17,13 @@
 //         standard ids are addressed while wide arrays come and go. The total
 //         is checked at the end.
 //
-// Before the loop a write session of 0 bytes must become ready and complete (no
-// element exists to report it). After the loop a second file gets one write
-// session, and then two read sessions, one per file, run at the same time: each
-// App element reads its record from both and checks them (the readiness of a
-// read session carries the session's number, so the two cannot take each
-// other's). At the end the file is read with stdio and must hold the K records
+// Before the loop two write sessions of 0 bytes must become ready and complete
+// (no element exists to report either; the two callbacks may arrive in either
+// order): a plain one, and one with commit data, whose bytes must land in the
+// file. After the loop two write sessions run at the same time, one per file,
+// and then two read sessions, one per file: each App element reads its record
+// from both and checks them (the readiness of a read session carries the
+// session's number, so the two cannot take each other's). At the end the file is read with stdio and must hold the K records
 // of the last write session. The memory in use by PE 0's process (CmiMemoryUsage) is
 // sampled at session 1000 and at the end: a session must leave less than M KB
 // behind (-m M, default
@@ -59,7 +60,8 @@ class Main : public CBase_Main {
   int writes = 0;
   Ck::IO::File file, file2;
   Ck::IO::Session readSession, readSession2;
-  int zeroStage = 0;    // the 0-byte session: callbacks seen (ready, complete)
+  int zeroStage = 0;    // the 0-byte sessions: callbacks seen (2 per session)
+  int twoWritesDone = 0;
   int twoReadsDone = 0; // read sessions over file and file2 finished
   int twoReadsClosed = 0;
   CProxy_App app;
@@ -121,9 +123,25 @@ public:
   }
 
   void zeroArrived() {
-    if (++zeroStage < 2) return;
-    CkPrintf("iosessions: 0-byte write session ready and complete\n");
-    next();
+    if (++zeroStage == 2) {
+      CkPrintf("iosessions: 0-byte write session ready and complete\n");
+      // The commit variant with 0 session bytes: the commit bytes must still be
+      // written (a 16-byte header at the start, overwritten by the first session).
+      std::string hdr = record(-1, -1);
+      Ck::IO::startSession(file, 0, 0, CkCallback(CkIndex_Main::zeroReady(NULL), thisProxy),
+                           hdr.data(), REC, 0,
+                           CkCallback(CkIndex_Main::zeroWritten(NULL), thisProxy));
+    } else if (zeroStage == 4) {
+      FILE* fp = fopen(FILENAME, "rb");
+      char buf[REC + 1] = {0};
+      if (!fp || fread(buf, 1, REC, fp) != (size_t)REC || std::string(buf, REC) != record(-1, -1)) {
+        CkPrintf("iosessions FAIL: the 0-byte session's commit data is not in the file\n");
+        CkAbort("0-byte commit");
+      }
+      fclose(fp);
+      CkPrintf("iosessions: 0-byte write session with commit data ready, complete, committed\n");
+      next();
+    }
   }
 
   void next() {
@@ -178,13 +196,24 @@ public:
     next();
   }
 
-  // The second file: one write session, then the two concurrent read sessions.
+  // The second file: two write sessions at once (one per file), then the two
+  // concurrent read sessions.
   void opened2(Ck::IO::FileReadyMsg* m) {
     file2 = m->file;
     delete m;
+    CkPrintf("iosessions: two write sessions at once, over %s and %s\n", FILENAME, FILENAME2);
+    Ck::IO::startSession(file, REC * K, 0,
+                         CkCallback(CkIndex_Main::writeReady1(NULL), thisProxy),
+                         CkCallback(CkIndex_Main::written2(NULL), thisProxy));
     Ck::IO::startSession(file2, REC * K, 0,
                          CkCallback(CkIndex_Main::writeReady2(NULL), thisProxy),
                          CkCallback(CkIndex_Main::written2(NULL), thisProxy));
+  }
+
+  void writeReady1(Ck::IO::SessionReadyMsg* m) {
+    progress();
+    app.writeRecord(m->session, (S - 1) / 2 * 2);  // the last loop write's record again
+    delete m;
   }
 
   void writeReady2(Ck::IO::SessionReadyMsg* m) {
@@ -196,6 +225,7 @@ public:
   void written2(CkReductionMsg* m) {
     delete m;
     progress();
+    if (++twoWritesDone < 2) return;
     CkPrintf("iosessions: two read sessions at once, over %s and %s\n", FILENAME, FILENAME2);
     Ck::IO::startReadSession(file, REC * K, 0,
                              CkCallback(CkIndex_Main::readReadyA(NULL), thisProxy));

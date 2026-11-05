@@ -67,7 +67,7 @@ void open(std::string name, CkCallback opened, Options opts);
 /// defined by the offset and byte length. When the session is set up, a
 /// SessionReadyMsg will be sent to the ready callback. When all of the data
 /// has been written and synced, a message will be sent to the complete
-/// callback. A session of 0 bytes is ready and complete at once, and its two
+/// callback. A session of 0 bytes is ready and complete at once; its two
 /// callbacks may arrive in either order. One session per file at a time;
 /// sessions on different files may be in progress together.
 void startSession(File file, size_t bytes, size_t offset, CkCallback ready,
@@ -97,7 +97,7 @@ void close(File file, CkCallback closed);
  * into memory. The ready callback is invoked once all buffer chares have been created and
  * their reads have been initiated (but the reads are not guaranteed to be complete at
  * this point). One read session per file at a time; read sessions on different files
- * may be in progress together.
+ * may be in progress together. A read session of 0 bytes aborts.
  */
 void startReadSession(File file, size_t bytes, size_t offset, CkCallback ready);
 

@@ -9,6 +9,7 @@ mainmodule iosessions {
     entry void zeroReady(Ck::IO::SessionReadyMsg* m);
     entry void zeroWritten(CkReductionMsg* m);
     entry void opened2(Ck::IO::FileReadyMsg* m);
+    entry void writeReady1(Ck::IO::SessionReadyMsg* m);
     entry void writeReady2(Ck::IO::SessionReadyMsg* m);
     entry void written2(CkReductionMsg* m);
     entry void readReadyA(Ck::IO::SessionReadyMsg* m);

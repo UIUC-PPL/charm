@@ -208,7 +208,7 @@ class Director : public CBase_Director
 	      
 
     CkCallback sessionInitDone(CkIndex_Director::sessionReady(NULL), thisProxy);
-    sessionInitDone.setRefnum(sessionID);
+    sessionInitDone.setRefnum(id);
     sessionOpts.setInitCallback(sessionInitDone);
 
     // sessionOpts.setMap(managers);
@@ -249,7 +249,7 @@ class Director : public CBase_Director
       sessionOpts.setMap(bnm);
     }
     CkCallback sessionInitDone(CkIndex_Director::sessionReady(0), thisProxy);
-    sessionInitDone.setRefnum(sessionID);
+    sessionInitDone.setRefnum(id);
     sessionOpts.setInitCallback(
         sessionInitDone);  // invoke the sessionInitDone callback after all the elements
                            // of the chare array are created
