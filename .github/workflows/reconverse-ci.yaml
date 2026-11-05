@@ -55,6 +55,8 @@ env:
   # atsync_reduction (2026-10-25): reductions in flight across an AtSync
   # balancing step, and arrays with stable locations (-s -d) keeping their
   # no-broadcast-in-flight promise (#4072).
+  # reduction_migrate_ahead: migrants that already contributed to later
+  # reductions on their old PE (#4145).
   # bcast_zcpup: broadcasts to elements that migrate to another process with
   # pup_buffer data; the 2-process step is the one that reaches the case.
   TEST_DIRS: >-
@@ -75,6 +77,7 @@ env:
     tests/charm++/delegation/multicast
     tests/charm++/atsync_reduction
     tests/charm++/threaded_redn
+    tests/charm++/reduction_migrate_ahead
     tests/charm++/qd
     tests/charm++/within_node_bcast
     tests/charm++/zerocopy/zerocopy_with_qd
