@@ -17,6 +17,7 @@ DIRS = \
   topology \
   io \
   io_read \
+  io_sessions \
   sparse \
   reductionTesting \
   partitions \

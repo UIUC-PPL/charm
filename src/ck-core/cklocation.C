@@ -2995,6 +2995,8 @@ CkLocMgr::~CkLocMgr()
   lbmgr->UnregisterOM(myLBHandle);
 #endif
   map->unregisterArray(mapHandle);
+  delete compressor;
+  delete cache;  // the CkLocCache branch CkCreateArray made for this manager
 }
 
 void CkLocMgr::pup(PUP::er& p)

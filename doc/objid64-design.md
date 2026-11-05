@@ -1235,8 +1235,9 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
 - 2026-11-05 (#4149, zachetienne): CkIO's per-session arrays take the wide layout
   (`setWideCollection()`, unconditionally, as TCharm does; 16.7 million numbers are enough
   in every build, Kale). 12 collection
-  bits counting arrays only is a lifetime limit of 4,095 arrays, down from about 2 million
-  on classic (21 bits on the group id), and a library that creates an array per operation
+  bits counting arrays only is a lifetime limit of 4,095 arrays, down from about 500,000
+  on classic (21 bits on the group id, four groups per array), and a library that creates
+  an array per operation
   reaches it. Reusing numbers on destroy stays out: a late message, a stale location entry
   or a section cookie of the destroyed array would reach the new one. Test `io_sessions`,
   in the CI tier.

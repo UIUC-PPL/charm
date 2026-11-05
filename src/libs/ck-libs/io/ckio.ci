@@ -49,9 +49,10 @@ module CkIO_impl
   when sessionReady[files[file].sessionID](CkReductionMsg* m) serial
   {  // after the ReadSession chare array is set up, invoke the ready callback
     delete m;
-    Session s(file, bytes, offset, files[file].read_session);
-    CProxy_ReadAssembler ra = CProxy_ReadAssembler::ckNew(s);
-    managers.addSessionReadAssemblerMapping(s, ra, ready);
+    // Each ReadAssembler branch registers with its PE's Manager and contributes to
+    // addSessionReadAssemblerFinished, so the session is ready only when every
+    // branch exists.
+    CProxy_ReadAssembler::ckNew(Session(file, bytes, offset, files[file].read_session));
   }
 
   when addSessionReadAssemblerFinished(CkReductionMsg* msg) serial
@@ -71,9 +72,10 @@ module CkIO_impl
   when sessionReady[files[file].sessionID](CkReductionMsg* m) serial
   {  // after the ReadSession chare array is set up, invoke the ready callback
     delete m;
-    Session s(file, bytes, offset, files[file].read_session);
-    CProxy_ReadAssembler ra = CProxy_ReadAssembler::ckNew(s);
-    managers.addSessionReadAssemblerMapping(s, ra, ready);
+    // Each ReadAssembler branch registers with its PE's Manager and contributes to
+    // addSessionReadAssemblerFinished, so the session is ready only when every
+    // branch exists.
+    CProxy_ReadAssembler::ckNew(Session(file, bytes, offset, files[file].read_session));
   }
 
   when addSessionReadAssemblerFinished(CkReductionMsg* msg) serial
@@ -160,7 +162,7 @@ group[migratable] Manager
                               FileToken token, std::string name, Options opts);
           entry void close(unsigned int opnum, FileToken token, CkCallback closed);
 
-	  entry void addSessionReadAssemblerMapping(Session session, CProxy_ReadAssembler ra, CkCallback ready);
+          entry void removeSessionReadAssembler(Session session);
         };
 
         array [1D] WriteSession

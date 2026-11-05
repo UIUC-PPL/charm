@@ -356,6 +356,7 @@ public:
 namespace ck {
   class ArrayIndexCompressor {
   public:
+    virtual ~ArrayIndexCompressor() = default;
     virtual CmiUInt8 compress(const CkArrayIndex &idx) = 0;
     virtual CkArrayIndex decompress(CmiUInt8 id) = 0;
   };

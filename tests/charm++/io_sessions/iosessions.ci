@@ -27,6 +27,6 @@ mainmodule iosessions {
     entry Hash();
     entry void ping(int iter);
     entry void pass(int iter);
-    entry void report();
+    entry void report(int total);
   };
 };

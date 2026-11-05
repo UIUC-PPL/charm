@@ -18,8 +18,14 @@
 //         is checked at the end.
 //
 // At the end the file is read with stdio and must hold the K records of the
-// last write session. Options: -s S sessions (default 4200; must exceed 4095 to
-// cover the defect), -k K elements per array (default 8).
+// last write session. The resident size of PE 0's process is sampled at session
+// 1000 and at the end: a session must leave less than M KB behind (-m M, default
+// 4), since each one creates and destroys an array. About 1 KB per session stays
+// by design: broadcast copies kept until the periodic spring cleaning, and the
+// per-id slots of the group table, the load balancer and the array map, which
+// are not reused. Options: -s S sessions
+// (default 4200; must exceed 4095 to cover the defect), -k K elements per array
+// (default 8).
 #include <stdio.h>
 #include <string.h>
 #include <string>
@@ -50,6 +56,9 @@ class Main : public CBase_Main {
   CProxy_Hash hash;
   double lastAdvance;
   int wdSecs = 60;
+  double maxKB = 4.0;             // -m: allowed growth per session
+  static const int MEM_ITER = 1000;
+  CmiUInt8 memAtStart = 0;
 
 public:
   Main(CkArgMsg* m) {
@@ -59,6 +68,7 @@ public:
     CmiGetArgInt(m->argv, "-s", &S);
     CmiGetArgInt(m->argv, "-k", &K);
     CmiGetArgInt(m->argv, "-w", &wdSecs);
+    CmiGetArgDouble(m->argv, "-m", &maxKB);
     delete m;
     CkEnforce(S >= 2 && K >= 1);
     mainProxy = thisProxy;
@@ -88,8 +98,9 @@ public:
 
   void next() {
     progress();
+    if (iter == MEM_ITER) memAtStart = CmiMemoryUsage();
     if (iter == S) {
-      hash.report();
+      hash.report(K * writes);
       return;
     }
     if (iter % 500 == 0) CkPrintf("iosessions: session %d\n", iter);
@@ -147,9 +158,19 @@ public:
 
   void closed(CkReductionMsg* m) {
     delete m;
+    if (S > MEM_ITER && maxKB > 0) {
+      double perSession = (double)((CmiInt8)CmiMemoryUsage() - (CmiInt8)memAtStart) / 1024.0 /
+                          (S - MEM_ITER);
+      CkPrintf("iosessions: resident size grew %.2f KB per session between session %d and "
+               "%d (limit %.1f)\n", perSession, MEM_ITER, S, maxKB);
+      if (perSession > maxKB) {
+        CkPrintf("iosessions FAIL: memory left behind by sessions\n");
+        CkAbort("memory growth");
+      }
+    }
     // The file holds the records of the last write session.
     const int last = (S - 1) / 2 * 2;
-    FILE* fp = fopen(FILENAME, "r");
+    FILE* fp = fopen(FILENAME, "rb");
     if (!fp) CkAbort("iosessions: cannot open %s", FILENAME);
     for (int i = 0; i < K; i++) {
       char buf[REC + 1] = {0};
@@ -214,15 +235,27 @@ public:
 
 class Hash : public CBase_Hash {
   int received = 0;
+  int expected = -1;  // set by report(); the element contributes when it has them all
+
+  void maybeReport() {
+    if (expected < 0 || received < expected) return;
+    contribute(sizeof(int), &received, CkReduction::sum_int,
+               CkCallback(CkReductionTarget(Main, pingsDone), mainProxy));
+    expected = -1;
+  }
 
 public:
   Hash() {}
   Hash(CkMigrateMessage* m) {}
   void ping(int iter) { thisProxy[(thisIndex + 1) % K].pass(iter); }
-  void pass(int iter) { received++; }
-  void report() {
-    contribute(sizeof(int), &received, CkReduction::sum_int,
-               CkCallback(CkReductionTarget(Main, pingsDone), mainProxy));
+  void pass(int iter) {
+    received++;
+    maybeReport();
+  }
+  // total: every element's share, so the last pass messages are waited for
+  void report(int total) {
+    expected = total / K;
+    maybeReport();
   }
 };
 
