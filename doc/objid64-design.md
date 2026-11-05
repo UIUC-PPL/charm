@@ -1232,6 +1232,8 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
 - 2026-11-04 (Kale): PR 3 (#4123) retargeted from objid-redesign to recharm, with recharm
   merged into it first. objid-redesign carried nothing beyond recharm except PR 3, so the
   separate "part 3" PR of section 9.1 would have been a second review of the same change.
+- 2026-11-04: #4123 squash-merged into recharm as 4cf20af1c (Ritvik's approval). The three
+  parts of the redesign are on the reviewed line; objid-redesign carries nothing beyond it.
 - 2026-11-04 (#4031, defect 1): `CkArray::insertElement` forwards an insertion to the PE the
   index's entry names only when the location manager serves bound arrays
   (`CkLocMgr::servesBoundArrays`). For a single array such an entry is a dead element's
@@ -1255,5 +1257,3 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
   reaches it. Reusing numbers on destroy stays out: a late message, a stale location entry
   or a section cookie of the destroyed array would reach the new one. Test `io_sessions`,
   in the CI tier.
-- 2026-11-04: #4123 squash-merged into recharm as 4cf20af1c (Ritvik's approval). The three
-  parts of the redesign are on the reviewed line; objid-redesign carries nothing beyond it.
