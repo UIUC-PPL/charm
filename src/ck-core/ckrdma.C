@@ -1985,19 +1985,19 @@ void zcPupGetCompleted(NcpyOperationInfo *info) {
   if(info->ackMode == CMK_SRC_DEST_ACK || info->ackMode == CMK_DEST_ACK) {
     zcPupPendingRgetsMsg *ref = (zcPupPendingRgetsMsg *)(info->destRef);
 
+    // pendingZCOps is shared by the node's PEs, and on reconverse any PE
+    // thread runs this completion while another issues gets (zcPupIssueRgets),
+    // so the lookup is under the same lock as the insert and the erase.
+    CmiLock(CksvAccess(_nodeZCPendingLock));
     auto iter = CksvAccess(pendingZCOps).find(ref->id);
     if(iter != CksvAccess(pendingZCOps).end()) { // Entry found in pendingZCOps
 
-      CmiLock(CksvAccess(_nodeZCPendingLock));
       int counter = --iter->second;
+      if(counter == 0) // All Rgets have completed: remove this entry from the map
+        CksvAccess(pendingZCOps).erase(iter);
       CmiUnlock(CksvAccess(_nodeZCPendingLock));
 
-      if(counter == 0) { // All Rgets have completed
-
-        CmiLock(CksvAccess(_nodeZCPendingLock));
-        // remove this entry from the map
-        CksvAccess(pendingZCOps).erase(iter);
-        CmiUnlock(CksvAccess(_nodeZCPendingLock));
+      if(counter == 0) {
 
 #if CMK_SMP
         // Send a message to all PEs on this node to handle all buffered messages
@@ -2012,6 +2012,7 @@ void zcPupGetCompleted(NcpyOperationInfo *info) {
         CmiFree(ref);
       }
     } else {
+      CmiUnlock(CksvAccess(_nodeZCPendingLock));
       CmiAbort("zcPupGetCompleted: object not found\n");
     }
     if(info->ackMode == CMK_SRC_DEST_ACK) {

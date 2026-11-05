@@ -33,6 +33,15 @@ the element is in the store and is delivered on arrival; one that reached the
 source PE before the element left was delivered there, and its epoch tells
 the destination to skip it.
 
+An element whose pup used `pup_buffer` and arrived from another process is
+in the local element table before its zero-copy reads complete, and its
+`ckJustMigrated` runs only when they have (`CkLocMgr::immigrateWithDevice`,
+`processAfterActiveRgetsCompleted`). While the reads are pending the element
+is listed in the location manager's `bufferedActiveRgetMsgs`, where ordinary
+messages to it wait. `attemptDelivery` skips such an element without
+advancing its epoch, so the broadcast stays in the store and the catch-up on
+`ckJustMigrated` delivers it.
+
 The store (`BcastQueue`, ckarray.h) keeps one slot per epoch from its head
 upward. A slot records whether its broadcast has arrived (seen), the message
 while the store still owns it, and whether the message is held by a zero-copy
@@ -142,6 +151,9 @@ migration, at the memory cost of broadcasts kept until spring cleaning.
 - src/ck-core/init.C: `+noAnytimeMigration`.
 - src/libs/ck-libs/ampi/ampi.C: `isMigrateWithCollsEnabled`,
   `checkNoCollectiveOutstanding`, the `setAnytimeMigration` calls.
+- tests/charm++/bcast_zcpup: broadcasts while elements with `pup_buffer`
+  data migrate to another process; the handler checks that `ckJustMigrated`
+  ran first.
 - tests/charm++/atsync_reduction: reductions in flight across an AtSync
   balancing step; with `-s -d`, an array with stable locations keeping the
   promise; `-o` checks the delivery order; `-z` starts each step with a
