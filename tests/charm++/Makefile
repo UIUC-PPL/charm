@@ -51,6 +51,7 @@ DIRS = \
   collide \
   qd \
   reduction_migrate_ahead \
+  bcast_zcpup \
 
 FTDIRS = \
   jacobi3d \
