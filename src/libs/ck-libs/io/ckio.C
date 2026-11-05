@@ -183,6 +183,9 @@ class Director : public CBase_Director
       numStripes++;
 
     CkArrayOptions sessionOpts(numStripes);
+    // One array per session, never reused: the wide layout's collection range
+    // (doc/internals/object-ids.md, section 7).
+    sessionOpts.setWideCollection(ck::ObjID::wideHasMoreCollections());
     sessionOpts.setStaticInsertion(true);
     sessionOpts.setAnytimeMigration(false);
 	      
@@ -221,6 +224,7 @@ class Director : public CBase_Director
 
     CkArrayOptions sessionOpts(
         num_readers);  // set the number of elements in the chare array
+    sessionOpts.setWideCollection(ck::ObjID::wideHasMoreCollections());  // as above
     // if there is a non-empty mapping provided, do the mapping
     if (!pes_to_map.empty())
     {

@@ -1232,3 +1232,10 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
 - 2026-11-04 (Kale): PR 3 (#4123) retargeted from objid-redesign to recharm, with recharm
   merged into it first. objid-redesign carried nothing beyond recharm except PR 3, so the
   separate "part 3" PR of section 9.1 would have been a second review of the same change.
+- 2026-11-05 (#4149, zachetienne): CkIO's per-session arrays take the wide layout
+  (`setWideCollection(ObjID::wideHasMoreCollections())`), as TCharm does. 12 collection
+  bits counting arrays only is a lifetime limit of 4,095 arrays, down from about 2 million
+  on classic (21 bits on the group id), and a library that creates an array per operation
+  reaches it. Reusing numbers on destroy stays out: a late message, a stale location entry
+  or a section cookie of the destroyed array would reach the new one. Test `io_sessions`,
+  in the CI tier.

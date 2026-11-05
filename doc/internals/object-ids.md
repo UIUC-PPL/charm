@@ -198,7 +198,12 @@ standard array out of numbers), and a 37-bit payload that must be a packed
 index; a wide array without bounds that pack into 37 bits aborts at creation.
 Only the decoder of the collection field (the global location update) needs the
 tag; delivery keys on the whole id word. The checkpoint records the wide width
-next to C.
+next to C. Collection numbers are not reused when an array is destroyed, so a
+library that creates an array per operation takes the wide layout: TCharm (one
+array per AMPI communicator) and CkIO (one per write session, `WriteSession`,
+and one per read session, `BufferChares`), both under
+`ObjID::wideHasMoreCollections()`, which is false in a build whose standard
+width is 24 bits or more.
 
 ## 8. Not covered: singleton chares and groups
 

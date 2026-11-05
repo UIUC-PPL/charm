@@ -87,6 +87,13 @@ New on this line since the split from classic:
   or to the checkpoint format. New tests objid_loctable,
   objid_migrate6 and objid_recreate.
 
+- CkIO creates a chare array per write session and per read session,
+  and collection numbers are not reused, so a program that ran more
+  than 4,095 sessions aborted (#4149; classic allowed about 2 million).
+  The session arrays use the wide-collection layout (16.7 million
+  numbers). New test tests/charm++/io_sessions: 4,200 sessions next to
+  two standard arrays, file contents checked.
+
 - Broadcasts and [nokeep] entry methods: fixes for message reuse and
   copies (#4000-#4012). Checkpoint restart no longer hangs with more
   than one process and more than one PE per process (#4019). The

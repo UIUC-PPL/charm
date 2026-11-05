@@ -2449,19 +2449,19 @@ CmiUInt8 nextCollectionNumber(bool wide)
   {
     if (_nextWideCollection >= ObjID::limits::WIDE_LIMIT)
       CkAbort("Charm++ ran out of wide-collection numbers: %" PRIu64 " chare arrays with"
-              " setWideCollection() exist (the limit with %d collection bits).\n",
+              " setWideCollection() have been created (the limit with %d collection"
+              " bits; numbers are not reused when an array is destroyed).\n",
               (CmiUInt8)ObjID::limits::WIDE_LIMIT - ObjID::limits::WIDE_FIRST,
               (int)ObjID::bits::WIDE_COLLECTION_BITS);
     return _nextWideCollection++;
   }
   // The wide layout is the way out only where it has the larger range (not in a
   // -DCMK_OBJID_COLLECTION_BITS=29 build).
-  const bool wideHasMore = (CmiUInt8)ObjID::limits::WIDE_LIMIT - ObjID::limits::WIDE_FIRST >
-                           (CmiUInt8)ObjID::limits::STANDARD_LIMIT - 1;
+  const bool wideHasMore = ObjID::wideHasMoreCollections();
   if (_nextStandardCollection >= ObjID::limits::STANDARD_LIMIT)
-    CkAbort("Charm++ ran out of collection numbers: %" PRIu64 " chare arrays exist (the"
-            " limit with %d collection bits). %sRebuild with"
-            " -DCMK_OBJID_COLLECTION_BITS=N.\n",
+    CkAbort("Charm++ ran out of collection numbers: %" PRIu64 " chare arrays have been"
+            " created (the limit with %d collection bits; numbers are not reused when an"
+            " array is destroyed). %sRebuild with -DCMK_OBJID_COLLECTION_BITS=N.\n",
             (CmiUInt8)ObjID::limits::STANDARD_LIMIT - 1, (int)ObjID::bits::COLLECTION_BITS,
             wideHasMore ? "Create small bounded arrays with CkArrayOptions::setWideCollection(), or " : "");
   if (wideHasMore && !_wideSuggestionPrinted &&
