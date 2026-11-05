@@ -401,6 +401,11 @@ jobs:
         run: TESTRUN_PROCS=2 timeout 900 make -C examples/ampi test
       - name: tests/campi (single process)
         run: make -C tests/campi test
+      # Two processes with address randomization left on: a campi rank holds
+      # no code or data address, so it migrates between processes and restarts
+      # without setarch -R, which this step checks.
+      - name: tests/campi (2 processes, lcrun, randomization on)
+        run: TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 900 make -C tests/campi test
       - name: migratable_threads
         run: |
           set -e
