@@ -55,6 +55,8 @@ env:
   # atsync_reduction (2026-10-25): reductions in flight across an AtSync
   # balancing step, and arrays with stable locations (-s -d) keeping their
   # no-broadcast-in-flight promise (#4072).
+  # bcast_zcpup: broadcasts to elements that migrate to another process with
+  # pup_buffer data; the 2-process step is the one that reaches the case.
   TEST_DIRS: >-
     tests/charm++/megatest
     tests/charm++/simplearrayhello
@@ -81,6 +83,7 @@ env:
     tests/charm++/zerocopy/dereg_and_nodereg
     tests/charm++/zerocopy/zc_post_async
     tests/charm++/zerocopy/pup_buffer
+    tests/charm++/bcast_zcpup
     examples/charm++/user-driven-interop
     examples/charm++/hello/local
 

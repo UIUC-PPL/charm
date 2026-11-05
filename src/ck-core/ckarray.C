@@ -1414,6 +1414,13 @@ bool CkArrayBroadcaster::attemptDelivery(CkArrayMessage* bcast, ArrayElement* el
   DEBB((AA "Attempting to deliver broadcast %d to element %s (el bcast#:%d)\n" AB,
         bcastEpoch, idx2str(el), elBcastNo));
 
+  // An element that arrived by migration and is still reading its zero-copy
+  // pup buffers has not run ckJustMigrated. An ordinary message to it waits in
+  // bufferedActiveRgetMsgs (_processArrayEltMsg); a broadcast waits in the
+  // store, and ckElementArriving delivers it after ckJustMigrated.
+  if (owner->getLocMgr()->bufferedActiveRgetMsgs.count(el->CkMigratable::ckGetID()) != 0)
+    return false;
+
   // If this is a ZC all done msg, then we should already have seen this epoch since we're
   // now at the last part of the ZC delivery, so don't increment the elBcastNo
   if (CMI_ZC_MSGTYPE(UsrToEnv(bcast)) == CMK_ZC_BCAST_RECV_ALL_DONE_MSG)

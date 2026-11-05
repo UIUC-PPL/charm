@@ -51,6 +51,7 @@ DIRS = \
   objid_boundrecreate \
   collide \
   qd \
+  bcast_zcpup \
 
 FTDIRS = \
   jacobi3d \
