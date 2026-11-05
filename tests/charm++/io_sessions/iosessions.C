@@ -18,8 +18,9 @@
 //         is checked at the end.
 //
 // At the end the file is read with stdio and must hold the K records of the
-// last write session. The resident size of PE 0's process is sampled at session
-// 1000 and at the end: a session must leave less than M KB behind (-m M, default
+// last write session. The memory in use by PE 0's process (CmiMemoryUsage) is
+// sampled at session 1000 and at the end: a session must leave less than M KB
+// behind (-m M, default
 // 4), since each one creates and destroys an array. About 1 KB per session stays
 // by design: broadcast copies kept until the periodic spring cleaning, and the
 // per-id slots of the group table, the load balancer and the array map, which
@@ -161,7 +162,7 @@ public:
     if (S > MEM_ITER && maxKB > 0) {
       double perSession = (double)((CmiInt8)CmiMemoryUsage() - (CmiInt8)memAtStart) / 1024.0 /
                           (S - MEM_ITER);
-      CkPrintf("iosessions: resident size grew %.2f KB per session between session %d and "
+      CkPrintf("iosessions: memory in use grew %.2f KB per session between session %d and "
                "%d (limit %.1f)\n", perSession, MEM_ITER, S, maxKB);
       if (perSession > maxKB) {
         CkPrintf("iosessions FAIL: memory left behind by sessions\n");
