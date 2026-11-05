@@ -1600,6 +1600,10 @@ void ampiParent::setUserJustMigratedFn(MPI_MigrateFn f) noexcept {
 }
 
 void ampiParent::ckAboutToMigrate() noexcept {
+  /* Tells the array's listeners the element is leaving; without it the
+     reduction manager on this PE keeps counting the element and a later
+     reduction over the ampiParent array (a checkpoint) never completes. */
+  ArrayElement1D::ckAboutToMigrate();
   if (userAboutToMigrateFn) {
     const auto oldTCharm = CtvAccess(_curTCharm);
     const auto oldAMPI = CtvAccess(ampiPtr);
@@ -1700,32 +1704,21 @@ TCharm *ampiParent::registerAmpi(ampi *ptr,const ampiCommStruct &s,bool forMigra
 }
 
 // reduction client data - preparation for checkpointing
-class ckptClientStruct {
- public:
-  const char *dname;
-  ampiParent *ampiPtr;
-  ckptClientStruct(const char *s, ampiParent *a) noexcept : dname(s), ampiPtr(a) {}
-};
-
-static void checkpointClient(void *param,void *msg) noexcept
-{
-  ckptClientStruct *client = (ckptClientStruct*)param;
-  const char *dname = client->dname;
-  ampiParent *ampiPtr = client->ampiPtr;
-  ampiPtr->Checkpoint(strlen(dname), dname);
-  delete client;
-}
-
+/* The ranks reach a checkpoint through a reduction whose callback is an entry
+   method of rank 0, wherever rank 0 sits: a reduction client set on rank 0's
+   PE (the earlier code) is never run once a load balancing step has moved
+   rank 0 off PE 0, where the reduction completes, and the ranks blocked
+   forever. The call is collective with one directory name, so rank 0's own
+   copy is the one used. */
 void ampiParent::startCheckpoint(const char* dname) noexcept {
-  if (thisIndex==0) {
-    ckptClientStruct *clientData = new ckptClientStruct(dname, this);
-    CkCallback *cb = new CkCallback(checkpointClient, clientData);
-    thisProxy.ckSetReductionClient(cb);
-  }
-  contribute();
+  ckptDirName = dname;
+  contribute(CkCallback(CkIndex_ampiParent::checkpointAfterBarrier(), thisProxy[0]));
 
   ampiParent* unused = block();
+}
 
+void ampiParent::checkpointAfterBarrier() noexcept {
+  Checkpoint(ckptDirName.size(), ckptDirName.c_str());
 }
 
 void ampiParent::Checkpoint(int len, const char* dname) noexcept {
