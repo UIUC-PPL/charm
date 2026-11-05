@@ -43,12 +43,10 @@
 //           PE that has no record of the element, and for the hashed kind
 //           cannot name its index; only the home can (section 3.4). Half of
 //           them (deadHere) come back by reviveHere (createhere) from ONE
-//           sender, a PE in a process other than the home's when there is one:
-//           that process still holds the dead element's location unless the
-//           element died there, and the creating PE's insertElement must not
-//           follow that entry (charm #4031, defect 1). The rest come back by
-//           revive (createhome, every PE sends). Each must be created exactly
-//           once, on its createhere sender or at its home. Then phase 2 over
+//           sender, a PE outside the home's process when there is one
+//           (doc/internals/object-ids.md, section 3); the rest by revive
+//           (createhome, every PE sends). Each must be created exactly once,
+//           on its createhere sender or at its home. Then phase 2 over
 //           everything and a final count.
 //  Phase 7  Re-creation under a new id (needs 3 or more PEs). Phase 1 also
 //           inserts K "fresh" elements (700+pe,k) on each PE. One PE per fresh
@@ -72,12 +70,6 @@
 //           reply by index names the new id, and re-addressed there
 //           (CkLocMgr::retiredIds, CkArray::releaseRetiredMsgs). A second ping
 //           round runs over the bindings the first one taught.
-//           Of the two defects charm #4031 names for a re-creation by
-//           createhere, phase 6 checks the first (placement). The second, a
-//           re-created element's updates rejected by processes that still
-//           hold the old life's higher epoch, costs those processes a detour
-//           through the home on every send; delivery stays correct and this
-//           test does not measure it.
 //
 // Options: -b packed kind; -k K elements per PE per pattern (default 16);
 //          +messageBufferingThreshold 0 (runtime option): every message is held
@@ -148,8 +140,7 @@ static Kind kindOf(int x) {
   return INSERTED;  // (pe,k) and (pe+100,k), inserted in phase 1
 }
 // Whether a demand creation of (x,y) uses createhere: the (500+pe,k) indices of
-// phase 4b, and half of the elements destroyed in phase 5 (phase 6; a bit of the
-// hash that chose them, other than the one diesAt reads).
+// phase 4b, and half of the elements destroyed in phase 5 (phase 6).
 static bool deadHere(int x, int y) { return (mixIdx(x, y, destroySeed) >> 8) & 1; }
 static bool createsHere(int x, int y) {
   return kindOf(x) == CREATEHERE || (kindOf(x) == INSERTED && deadHere(x, y));
@@ -186,9 +177,8 @@ static int freshSkippers(int x, int y) {
   return freshIsolated(x, y) ? CkNodeSize(CkNodeOf(freshPe(x, y))) : 1;
 }
 // The single PE that sends a createhere message to (x,y): the PE after its home
-// for phase 4b; for a re-creation (phase 6) the first PE after the home in a
-// process other than the home's, when there is one, so that its process still
-// holds the dead element's location (the home's process cleared it at the death).
+// (phase 4b); for a re-creation (phase 6) the first PE after the home outside the
+// home's process, when there is one (object-ids.md, section 3).
 static int hereSender(int x, int y) {
   int P = CkNumPes(), h = homeOf(x, y);
   if (kindOf(x) == INSERTED)

@@ -1094,9 +1094,8 @@ bool CkArray::insertElement(CkArrayMessage* m, const CkArrayIndex& idx,
 {
   CK_MAGICNUMBER_CHECK
   int onPe;
-  // Bound arrays: the sibling already lives somewhere else, so insert there instead.
-  // For a single array an entry naming another PE is a dead element's (charm #4031;
-  // doc/internals/object-ids.md, section 3), and the element is created here.
+  // Bound arrays: a sibling lives elsewhere, so insert there; otherwise create here
+  // (doc/internals/object-ids.md, section 3).
   // TODO: What if it's remote but we don't know it? Creation is not necessarily routed
   // through home like demand creation is, which can cause problems.
   if (locMgr->servesBoundArrays() && locMgr->isRemote(idx, &onPe))
