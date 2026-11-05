@@ -939,6 +939,8 @@ void CkCreateLocalNodeGroup(CkGroupID groupID, int epIdx, envelope *env)
   _STATS_RECORD_PROCESS_NODE_GROUP_1();
 }
 
+inline bool isGroupDepUnsatisfied(const CkCoreState *ck, const envelope *env);
+
 void _createGroup(CkGroupID groupID, envelope *env)
 {
   _CHECK_USED(env);
@@ -957,6 +959,14 @@ void _createGroup(CkGroupID groupID, envelope *env)
     CkUnpackMessage(&env);
   }
   _STATS_RECORD_CREATE_GROUP_1();
+  // The creating PE's branch waits for the groups this creation depends on, as the
+  // other PEs' branches do in _processBocInitMsg, which also processes the held
+  // copy later (and counts it for quiescence).
+  if (isGroupDepUnsatisfied(CkpvAccess(_coreState), env)) {
+    CmiSetHandler(env, _bocHandlerIdx);
+    CpvAccess(_qd)->create();
+    return;
+  }
   CkCreateLocalGroup(groupID, epIdx, env);
 }
 
@@ -978,6 +988,11 @@ void _createNodeGroup(CkGroupID groupID, envelope *env)
     CkUnpackMessage(&env);
   }
   _STATS_RECORD_CREATE_NODE_GROUP_1();
+  if (isGroupDepUnsatisfied(CkpvAccess(_coreState), env)) {  // as in _createGroup
+    CmiSetHandler(env, _bocHandlerIdx);
+    CpvAccess(_qd)->create();
+    return;
+  }
   CkCreateLocalNodeGroup(groupID, epIdx, env);
 }
 
