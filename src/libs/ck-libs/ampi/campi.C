@@ -92,8 +92,15 @@ struct Rank {
   bool destroyingFrames = false;   // frame_guard destructors leave sites alone
   bool migrateDone = false;        // set by campi_migrate_resumed
   bool fakeRestart = false;        // rebuild in campi_resume (+campi_fakemigrate)
-  bool dead = false;               // the element is gone; ignore queued wakes
+  bool dead = false;               // the element is gone; a wake is still queued
 };
+
+// The record of a rank whose element is gone, once no wake message refers to it.
+static void free_rank(Rank *r) {
+  CAMPI_DBG("rank record %p freed (%s)\n", (void *)r, r->dead ? "after its queued wake" : "with its element");
+  CmiFreeArgs(r->argv); // CmiCopyArgs copies the array, not the strings
+  delete r;
+}
 
 main_fn registered_main = nullptr;
 static const state_ops *registered_ops = nullptr;
@@ -156,7 +163,10 @@ static thread_local int wakeHandlerIdx = -1;
 static void wakeHandler(void *msg) {
   Rank *r = ((WakeMsg *)msg)->rank;
   CmiFree(msg);
-  if (r->dead) return; // the element migrated away or was destroyed
+  if (r->dead) { // the element migrated away or was destroyed after this was queued
+    free_rank(r);
+    return;
+  }
   r->wakeQueued = false;
   campi_resume(r);
 }
@@ -265,15 +275,19 @@ static void campi_pup(TCharm *tc, PUP::er &p) {
 }
 
 // tcharm hook, from ~TCharm (the element migrated away or is destroyed).
-// The record itself is kept, marked dead, because a wake message may still
-// be queued for it.
+// Besides the element, only a queued wake message refers to the record (the
+// awaiters that refer to it are in the frames destroyed here). Without one
+// the record is freed now; with one it is marked dead and wakeHandler frees
+// it when the message arrives.
 static void campi_destroy(void *rp) {
   Rank *r = (Rank *)rp;
+  CkAssert(!r->running); // an element is not destroyed from inside its own rank
   destroy_frames(r);
   if (r->state != nullptr) registered_ops->destroy(r->state);
   r->state = nullptr;
-  r->dead = true;
   r->tc = nullptr;
+  if (r->wakeQueued) r->dead = true;
+  else free_rank(r);
 }
 
 static void finish_rank(Rank *r) {
