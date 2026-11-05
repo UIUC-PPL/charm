@@ -504,6 +504,128 @@ by the Charm++ runtime system. For more information about
 checkpoint/restart mechanisms please refer to the Charm++
 manual: :numref:`sec:checkpoint`.
 
+Coroutine Ranks (campi)
+-----------------------
+
+campi runs each AMPI rank as a C++20 coroutine instead of a user-level
+thread. A program selects it by including ``campi.h`` after ``mpi.h`` and
+defining its main with ``CAMPI_MAIN`` or ``CAMPI_MAIN_STATE``, and is
+compiled with ``-std=c++20``; it links the same AMPI library as a
+thread-based program. ``campi.h`` redefines the blocking MPI routines
+(``MPI_Send``, ``MPI_Recv``, ``MPI_Wait``, the blocking collectives, ...)
+as ``co_await`` expressions, so every function that calls one, directly or
+through another function, must itself be a coroutine returning
+``campi::task<T>`` and be awaited; the compiler rejects a blocking call from
+an ordinary function. Blocking routines campi does not provide yet fail to
+compile by name. Unlike thread AMPI, ``MPI_Finalize`` does not end the
+rank: the process exit code is the value main ``co_return``\ s.
+
+A campi rank migrates and is checkpointed only at ``AMPI_Migrate``, and it
+does not carry its coroutine frames with it. Its state across a migration
+point is a state object that campi creates, passes to main by reference,
+and serializes with the rank through the object's ``pup`` routine (see
+Serialization above). When the rank arrives on another PE, restarts from a
+checkpoint, or is rebuilt by the validator below, its main is called again
+from the top, and a ``switch`` at the top of each resumable function jumps
+to the migration point the rank was at, where ``AMPI_Migrate`` returns:
+
+.. code-block:: c++
+
+   #include "mpi.h"
+   #include "campi.h"
+
+   struct State {
+     int step, nsteps;
+     std::vector<double> u;
+     void pup(PUP::er &p) { p | step; p | nsteps; p | u; }
+   };
+
+   CAMPI_MAIN_STATE(State, argc, argv, s) {
+     CAMPI_RESUMABLE();                  // jump to the recorded site
+     MPI_Init(&argc, &argv);             // skipped when the rank restarts
+     s.nsteps = 100;
+     s.u.assign(1000, 0.0);
+     for (s.step = 0; s.step < s.nsteps; s.step++) {
+       // ... computation and MPI calls; locals here are fine ...
+       CAMPI_MIGRATE(AMPI_INFO_LB_SYNC); // a migration point
+     }
+     MPI_Finalize();
+     CAMPI_END();
+     co_return 0;
+   }
+
+The macros:
+
+- ``CAMPI_MAIN_STATE(State, argc, argv, s)`` declares main with a state
+  object ``s`` of type ``State``, which must be default constructible and
+  have a ``pup`` routine. ``CAMPI_MAIN(argc, argv)`` is main without one.
+- ``CAMPI_RESUMABLE()`` and ``CAMPI_END()`` open and close the switch of a
+  resumable function. Every function on the path from main to a migration
+  point has its own pair.
+- ``CAMPI_MIGRATE(info)`` is ``AMPI_Migrate(info)`` at a migration point.
+  A bare ``AMPI_Migrate`` aborts at run time.
+- ``CAMPI_CALL(f(...))`` awaits a resumable function that contains a
+  migration point, directly or in a function it awaits;
+  ``CAMPI_CALL_TO(x, f(...))`` does the same and assigns the result to
+  ``x``.
+
+A migration point is identified by its source line, so two of them must
+not share a line, and none may be inside a ``switch`` statement of the
+program's own. Each of the three site macros is one statement, so a
+migration point may be the body of an ``if`` or a loop without braces, as
+in ``if (s.step % 10 == 9) CAMPI_MIGRATE(AMPI_INFO_LB_SYNC);``. Three rules
+follow from the restart:
+
+1. Values carried across a migration point live in the state object, not in
+   local variables. The compiler rejects a jump past the declaration of a
+   local with an initializer or with a non-trivial type, which catches most
+   violations; a scalar declared without an initializer is not caught.
+2. No request is outstanding at a migration point (``AMPI_Migrate`` aborts
+   otherwise): its buffers would not survive the move.
+3. Code before a migration point in a resumable function is skipped when
+   the rank restarts, so its results, such as parsed arguments, allocated
+   arrays and created ``MPI_Info`` objects, are kept in the state object.
+
+``AMPI_Register_pup``, ``AMPI_Get_pup_data``,
+``AMPI_Register_about_to_migrate``, ``AMPI_Register_just_migrated`` and
+``TCHARM_Register`` are compile errors in a campi program: the state object
+replaces them, and code that must run after each arrival goes after the
+migration point. The supported ``AMPI_Migrate`` hints are
+``"ampi_load_balance"`` set to ``"sync"`` and ``"ampi_checkpoint"`` set to
+``"to_file=directory_name"``, one action per call; ``"async"``,
+``"in_memory"`` and ``"message_logging"`` abort.
+
+Running a program with ``+campi_fakemigrate`` makes every migration point
+rebuild the rank in place, whatever its hints: the state object is packed
+and unpacked into a new object, the coroutine frames are destroyed, and
+main runs again to the migration point. This is the same code path a
+migrated or restarted rank takes, on one PE and without a load balancer, so
+a program that keeps a needed value in a local across a migration point
+gives a different result or fails in the first iteration.
+
+Because a restarted campi rank holds no code or data address, migration
+between processes and restart from a checkpoint need neither address space
+layout randomization off nor Isomalloc. Functions a program registers with
+AMPI (the function of ``MPI_Op_create`` and the copy and delete functions of a
+keyval) are stored as offsets from the program's load address, so they must
+be defined in the program itself, not in a shared library that may be loaded
+at another address. A keyval's ``extra_state`` is passed back unchanged, so a
+program that migrates between processes or restarts from a checkpoint passes
+an ``extra_state`` that is not an address, or a null pointer.
+``tests/campi/jacobi3d`` is a worked
+example: the program of ``examples/ampi/Cjacobi3D`` with its iteration
+state in a ``State``, a load balancing point every ten iterations and a
+checkpoint point. The checkpoint run and a restart from it, on a different
+number of PEs, are:
+
+.. code-block:: bash
+
+   $ ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 4 +balancer RotateLB
+   $ ./jacobi 2 2 2 40 -chkpt 20 log +vp8 +pe 2 +balancer RotateLB +restart log
+
+Both print the same final line, ``jacobi: 40 iterations, final maxerr
+447.52236056642141``, which is also the thread-based program's.
+
 Memory Efficiency
 -----------------
 

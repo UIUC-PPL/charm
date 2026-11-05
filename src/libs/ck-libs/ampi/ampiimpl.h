@@ -317,6 +317,26 @@ class Amm {
 
 PUPfunctionpointer(MPI_User_function*)
 
+/* The address at which the program (the main executable, which libampi is
+ * linked into) is loaded in this process, minus the address it was linked at.
+ * A function of the program minus this value is the same in every process
+ * running the program, whatever address space layout randomization did. */
+uintptr_t ampiProgramLoadAddress() noexcept;
+
+/* In campi mode, functions the program registers with AMPI (MPI_Op_create,
+ * keyval copy and delete functions) are stored as offsets from
+ * ampiProgramLoadAddress(), because a campi rank may move to another process
+ * or restart from a checkpoint in a new process, where the stored address
+ * would be wrong. ampiStoreFunction gives the stored form and
+ * ampiStoredFunction the callable one. Outside campi mode both return their
+ * argument. */
+template <typename F> inline F *ampiStoreFunction(F *f) noexcept {
+  return tcharm_campi ? (F *)((uintptr_t)f - ampiProgramLoadAddress()) : f;
+}
+template <typename F> inline F *ampiStoredFunction(F *f) noexcept {
+  return tcharm_campi ? (F *)((uintptr_t)f + ampiProgramLoadAddress()) : f;
+}
+
 /*
  * OpStruct's are used to lookup an MPI_User_function* and check its commutativity.
  * They are also used to create AmpiOpHeader's, which are transmitted in reductions
@@ -324,7 +344,8 @@ PUPfunctionpointer(MPI_User_function*)
  *
  * Note: when running with PIEglobals, func is stored as its offset from the rank's
  *       base address, so that the real function can be looked up relative to any
- *       rank's base address via ampiPeMgr.
+ *       rank's base address via ampiPeMgr. In campi mode it is stored as its
+ *       offset from the program's load address (ampiStoreFunction).
  */
 class OpStruct {
  public:
@@ -341,7 +362,7 @@ class OpStruct {
       char *basePtr = (char *)heap.start;
       return (MPI_User_function *)((char *)f - basePtr);
     } else {
-      return f;
+      return ampiStoreFunction(f);
     }
   }
 
@@ -742,23 +763,29 @@ class ampiDistGraphTopology final : public ampiTopology {
   inline void setnbors(const std::vector<int> &nbors_) noexcept {nbors = nbors_; nbors.shrink_to_fit();}
 };
 
-/* KeyValue class for attribute caching */
+/* KeyValue class for attribute caching. The copy and delete functions are
+ * kept in the stored form of ampiStoreFunction; call them through copyFn()
+ * and deleteFn(). extra_state is the user's value, passed back unchanged. */
 class KeyvalNode {
- public:
+ private:
   MPI_Copy_function *copy_fn;
   MPI_Delete_function *delete_fn;
+ public:
   void *extra_state;
   int refCount;
 
   KeyvalNode() : copy_fn(NULL), delete_fn(NULL), extra_state(NULL), refCount(1) { }
   KeyvalNode(MPI_Copy_function *cf, MPI_Delete_function *df, void* es) :
-             copy_fn(cf), delete_fn(df), extra_state(es), refCount(1) { }
+             copy_fn(ampiStoreFunction(cf)), delete_fn(ampiStoreFunction(df)),
+             extra_state(es), refCount(1) { }
+  MPI_Copy_function *copyFn() const { return ampiStoredFunction(copy_fn); }
+  MPI_Delete_function *deleteFn() const { return ampiStoredFunction(delete_fn); }
   void incRefCount() { refCount++; }
   int decRefCount() { CkAssert(refCount > 0); refCount--; return refCount; }
   void pup(PUP::er& p) {
-    p((char *)copy_fn, sizeof(void *));
-    p((char *)delete_fn, sizeof(void *));
-    p((char *)extra_state, sizeof(void *));
+    p((char *)&copy_fn, sizeof(void *));
+    p((char *)&delete_fn, sizeof(void *));
+    p((char *)&extra_state, sizeof(void *));
     p|refCount;
   }
 };
@@ -2560,6 +2587,12 @@ class ampiParent final : public CBase_ampiParent {
 
   void pup(PUP::er &p) noexcept;
 
+  // Checkpoint to the directory dname (empty: in memory). postCheckpoint
+  // copies the name and contributes to the reduction whose target,
+  // checkpointAfterBarrier on rank 0, starts the checkpoint; ResumeThread is
+  // the checkpoint's callback. startCheckpoint is postCheckpoint followed by
+  // blocking the thread.
+  void postCheckpoint(const char* dname) noexcept;
   void startCheckpoint(const char* dname) noexcept;
   void checkpointAfterBarrier() noexcept;
   void Checkpoint(int len, const char* dname) noexcept;
@@ -2779,7 +2812,9 @@ class ampiParent final : public CBase_ampiParent {
   inline AmpiOpHeader op2AmpiOpHeader(MPI_Op op, MPI_Datatype type, int count) const noexcept {
     if (opIsPredefined(op)) {
       int size = myDDT.getType(type)->getSize(count);
-      return AmpiOpHeader(predefinedOps[op], type, count, size);
+      // AmpiReducerFunc resolves the header's function with getUserFunction,
+      // so a predefined op's function goes in the stored form as well.
+      return AmpiOpHeader(ampiStoreFunction(predefinedOps[op]), type, count, size);
     }
     else {
       int opIdx = op - 1 - AMPI_MAX_PREDEFINED_OP;
@@ -3248,6 +3283,32 @@ void campi_parent_attached(TCharm *tc, ampiParent *parent) noexcept;
 // Defined in campi.C: per-PE campi setup, called from ampiProcInit on every
 // PE before any rank starts (registers campi's Converse handlers)
 void campi_proc_init() noexcept;
+// Defined in campi.C: ampiParent::resumeAfterMigration and ResumeThread report
+// in campi mode that the load balancing step or checkpoint the rank waits on
+// in AMPI_Migrate is over, before they wake the rank.
+void campi_migrate_resumed(TCharm *tc) noexcept;
+
+// The actions an AMPI_Migrate info asks for, in the order of its keys
+// (shared by AMPI_Migrate and campi::Migrate). Values "false" add nothing;
+// unknown keys and values are reported with a warning and skipped.
+// ampiParseMigrateInfo writes at most max actions to out (aborting if the
+// info asks for more) and returns their number. AmpiMigrateAction is plain
+// data, so that thread AMPI can keep the list on the rank's stack, which
+// migrates with the thread, unlike blocks of the process heap.
+enum class AmpiMigrateKind { LB_SYNC, LB_ASYNC, CKPT_TO_FILE, CKPT_IN_MEMORY, CKPT_MESSAGE_LOGGING };
+struct AmpiMigrateAction {
+  AmpiMigrateKind kind;
+  char dir[MPI_MAX_INFO_VAL]; // CKPT_TO_FILE: the checkpoint directory
+};
+// An MPI_Info holds one value per key and the parser adds at most one action
+// per key it recognizes (ampi_load_balance, ampi_checkpoint), so two entries
+// are enough. Each entry holds a directory name of MPI_MAX_INFO_VAL bytes and
+// thread AMPI keeps the array on the rank's stack, so it has no spare entries.
+#define AMPI_MIGRATE_MAX_ACTIONS 2
+int ampiParseMigrateInfo(MPI_Info hints, AmpiMigrateAction *out, int max) noexcept;
+// Aborts if a nonblocking collective on MPI_COMM_WORLD is outstanding and
+// +ampiMigrateWithCollectives is off (see ampi.C).
+void ampiCheckNoCollectiveOutstanding() noexcept;
 CMI_WARN_UNUSED_RESULT ampi *getAmpiInstance(MPI_Comm comm) noexcept;
 void checkComm(MPI_Comm comm) noexcept;
 void checkRequest(MPI_Request req) noexcept;

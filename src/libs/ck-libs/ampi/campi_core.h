@@ -25,6 +25,7 @@
 #include <type_traits>
 #include <utility>
 #include "mpi.h"
+#include "pup.h"
 
 namespace campi {
 
@@ -121,13 +122,72 @@ inline task<void> promise<void>::get_return_object() noexcept {
 }
 } // namespace detail
 
-/* ---------------- rank main registration ---------------- */
+/* ---------------- rank main and its state object ---------------- */
 
-using main_fn = task<int> (*)(int argc, char **argv);
+// The rank's state object: everything that must survive a migrate site
+// (CAMPI_MIGRATE). campi creates one per rank before main starts, passes it
+// to main by reference, packs it with the rank (PUP) when the rank migrates
+// or is checkpointed, and unpacks it into a new object on arrival or restart.
+// state_ops is the type-erased table for one State type (CAMPI_MAIN_STATE).
+struct state_ops {
+  void *(*create)();
+  void (*destroy)(void *state);
+  void (*pup)(PUP::er &p, void *state);
+};
+
+template <class S> struct state_ops_for {
+  static void *create() { return new S(); }
+  static void destroy(void *s) { delete static_cast<S *>(s); }
+  static void pup(PUP::er &p, void *s) { p | *static_cast<S *>(s); }
+  static constexpr state_ops ops{&create, &destroy, &pup};
+};
+
+// The state type of a program written with CAMPI_MAIN: no state.
+struct no_state {
+  void pup(PUP::er &) {}
+};
+
+using main_fn = task<int> (*)(int argc, char **argv, void *state);
 extern main_fn registered_main; // non-null selects campi mode
-void register_main(main_fn f) noexcept;
+void register_main(main_fn f, const state_ops *ops) noexcept;
 struct main_registrar {
-  explicit main_registrar(main_fn f) noexcept { register_main(f); }
+  main_registrar(main_fn f, const state_ops *ops) noexcept { register_main(f, ops); }
+};
+
+/* ---------------- restart sites ---------------- */
+
+// One per resumable function (CAMPI_RESUMABLE). The rank keeps a chain of
+// site ids, one per active frame_guard depth: entry d is the last site
+// (CAMPI_MIGRATE or CAMPI_CALL, both identified by __LINE__) noted by the
+// function at depth d. A restarted rank (after migration, restart from a
+// checkpoint, or +campi_fakemigrate) runs main again from the top, and each
+// function on the recorded path switches to its recorded site: site()
+// returns it while the rank is restarting, and 0 (the function's start)
+// otherwise.
+class frame_guard;
+
+// Record line as the site of g's function: a migrate site (call == false,
+// followed by co_await Migrate) or a call site (call == true, followed by
+// co_await of a resumable function). On a restarting rank it checks that
+// line is the recorded site instead.
+void note_site(frame_guard &g, int line, bool call = false) noexcept;
+// The recorded site of a restarting rank is not a case in g's function.
+[[noreturn]] void abort_no_site(const frame_guard &g) noexcept;
+
+class frame_guard {
+ public:
+  frame_guard() noexcept;
+  ~frame_guard();
+  frame_guard(const frame_guard &) = delete;
+  frame_guard &operator=(const frame_guard &) = delete;
+  int site() const noexcept { return site_; }
+
+ private:
+  friend void note_site(frame_guard &g, int line, bool call) noexcept;
+  friend void abort_no_site(const frame_guard &g) noexcept;
+  Rank *r_;
+  unsigned depth_;
+  int site_;
 };
 
 /* ---------------- suspension primitive ---------------- */
@@ -287,9 +347,12 @@ task<int> Comm_create(MPI_Comm comm, MPI_Group group, MPI_Comm *newcomm);
 task<int> Init(int *argc, char ***argv);
 task<int> Init_thread(int *argc, char ***argv, int required, int *provided);
 task<int> Finalize();
-// Increment 1: migration is not supported; this keeps converted programs
-// (AMPI_Migrate calls) compiling and returns MPI_SUCCESS at once.
-inline ready_int Migrate(MPI_Info) noexcept { return ready_int{MPI_SUCCESS}; }
+// AMPI_Migrate: load balancing (ampi_load_balance=sync) or a checkpoint to
+// files (ampi_checkpoint=to_file=DIR). Must be reached through CAMPI_MIGRATE
+// (campi.h) inside CAMPI_RESUMABLE/CAMPI_END. A rank that moves, or restarts
+// from the checkpoint, does not return from here: its frame is destroyed and
+// main runs again from the top to this site, where Migrate returns at once.
+task<int> Migrate(MPI_Info hints);
 
 } // namespace campi
 

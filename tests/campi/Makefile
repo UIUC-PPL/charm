@@ -10,6 +10,7 @@ DIRS = \
   pingpong \
   until \
   jacobi3d \
+  migrate \
 
 else
 DIRS =
