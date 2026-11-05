@@ -1245,6 +1245,12 @@ CkArrayOptions ampiInitRootArrayOptions(CkArrayID *threads, int *nchunks) noexce
   return opts;
 }
 
+// The group the ampiParent array manager's creation depends on (element 0 only).
+CkGroupID ampiPeMgrGroupID() noexcept
+{
+  return ampiPeMgrProxy.ckGetGroupID();
+}
+
 // Every rank, once its MPI_COMM_WORLD ampi object exists: mark init done and
 // contribute to the allInitDone reduction (which sets ampiInitCallDone).
 ampiParent *ampiInitWorldLocal(ampi *ptr, int nchunks) noexcept
@@ -1286,7 +1292,11 @@ static ampi *ampiInit(char **argv) noexcept
 
     ck::future<CkArrayID> newAmpiFuture;
     CkCallback cb(newAmpiFuture.handle());
-    CProxy_ampiParent::ckNew(threads, _nchunks, opts, cb);
+    // ampiParent::init() uses this PE's ampiPeMgr branch, so on every PE the
+    // array manager's creation waits for the group's.
+    CkEntryOptions parentOpts;
+    parentOpts.setGroupDepID(ampiPeMgrGroupID());
+    CProxy_ampiParent::ckNew(threads, _nchunks, opts, cb, &parentOpts);
     parent = newAmpiFuture.get();
     newAmpiFuture.release();
 
@@ -1302,7 +1312,11 @@ static ampi *ampiInit(char **argv) noexcept
 
     ck::future<CkArrayID> newAmpiFuture;
     CkCallback cb(newAmpiFuture.handle());
-    CProxy_ampi::ckNew(parent, worldComm, opts, cb);
+    // ampi's constructor uses this PE's ampiParent element, so on every PE the
+    // array manager's creation waits for the ampiParent array manager's.
+    CkEntryOptions worldOpts;
+    worldOpts.setGroupDepID(parent.ckGetArrayID());
+    CProxy_ampi::ckNew(parent, worldComm, opts, cb, &worldOpts);
     /* CProxy_ampi arr = */ newAmpiFuture.get();
     newAmpiFuture.release();
 
