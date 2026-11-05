@@ -33,6 +33,10 @@
 //  10  rank 0, in order: a rank misses and registers, a fill lands before its
 //      claim, it claims and sends, and the reply writes nothing (the entry is
 //      already as new); after a death the next miss must be told to send
+//  11  index table: every PE binds two distinct indices whose keys share one
+//      64-bit hash (#4164); exactly one bind per key reports "no previous
+//      binding", both are found with their own ids, and the table holds two
+//  12  rank 0 rebinds one of them: it is told the old id and the other is unchanged
 //
 // doc/internals/process-location-cache.md, sections 2 and 3.
 
@@ -41,7 +45,14 @@
 /*readonly*/ int nKeys;
 /*readonly*/ int nRounds;
 
-static const int PHASES = 10;
+static const int PHASES = 12;
+
+// Two distinct indices whose index-table keys (collection 1, three ints) have the
+// same 64-bit hash (charm #4164). The table claims a slot with the hash; the
+// second key must not wait for the first one's slot forever.
+static_assert(CK_ARRAYINDEX_MAXLEN == 3, "the colliding pair is for the 3-int index layout");
+static const CkArrayIndex3D collideA(0, 0, 0);
+static const CkArrayIndex3D collideB(700590855, 72443997, 4);
 
 class Tables : public CBase_Tables
 {
@@ -49,7 +60,8 @@ public:
   ck::objid::LocTable big;    // sized for nKeys: no growth
   ck::objid::LocTable small;  // 16 slots: grows
   ck::objid::IndexTable index;
-  Tables() : big(16), small(4), index(4) {}
+  ck::objid::IndexTable collide;  // 16 slots: the colliding pair, phases 11 and 12
+  Tables() : big(16), small(4), index(4), collide(4) {}
 };
 
 class Main : public CBase_Main
@@ -96,6 +108,8 @@ public:
       case 8: what = "index lookups give the new id"; break;
       case 9: what = "fill between miss and registration, then a death: the request is still sent"; break;
       case 10: what = "a reply that writes nothing still reopens the claim"; break;
+      case 11: what = "two keys with one hash: both bound, once each, found apart"; wantExtra = 2 * N; break;
+      case 12: what = "two keys with one hash: rebinding one leaves the other"; wantExtra = N; break;
     }
     CkPrintf("phase %d: %s: %ld checked, %ld violations, extra %ld (expect %ld)\n", phase,
              what, checked, violations, extra, wantExtra);
@@ -255,6 +269,35 @@ public:
             if (!t->big.clear(key, c, 0)) ++violations;      // the element dies on c
             if (!t->big.claimRequest(key)) ++violations;     // the next miss must send
           }
+        break;
+      case 11:
+        // Every PE binds both keys; in each process exactly one bind per key
+        // returns 0 (unbound before), the rest return the id another PE bound.
+        for (int which = 0; which < 2; ++which)
+        {
+          ++checked;
+          const CkArrayIndex3D& idx = which ? collideB : collideA;
+          const uint64_t id = (which ? 2000 : 1000) + (uint64_t)rank;
+          const uint64_t prev = t->collide.bind(1, idx, id);
+          if (prev == 0) ++extra;
+          else if (prev / 1000 != (which ? 2 : 1)) ++violations;  // the other key's id
+          uint64_t got = 0;
+          if (!t->collide.lookup(1, idx, got) || got / 1000 != (which ? 2 : 1)) ++violations;
+        }
+        if (rank == 0 && t->collide.used() != 2) ++violations;
+        break;
+      case 12:
+        if (rank == 0)
+        {
+          ++checked;
+          const uint64_t prev = t->collide.bind(1, collideA, 3000);
+          if (prev / 1000 == 1) ++extra;
+          else ++violations;
+          uint64_t got = 0;
+          if (!t->collide.lookup(1, collideA, got) || got != 3000) ++violations;
+          if (!t->collide.lookup(1, collideB, got) || got / 1000 != 2) ++violations;
+          if (t->collide.used() != 2) ++violations;
+        }
         break;
     }
     long v[3] = {checked, violations, extra};
