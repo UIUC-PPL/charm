@@ -1251,8 +1251,9 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
 - 2026-11-05 (#4164, zachetienne): `IndexTable::bind` hung on two distinct keys with one
   64-bit hash: the claim word is the hash, and the insertion loop treated a claim equal to its
   hash as its own key still being published, without comparing the key words that `probe`
-  compares. Fixed by comparing them after publication. The chance pair needs about n^2/2^65
-  bindings in one process's table; the reporter inverted the hash to make one. Chapter
+  compares. Fixed by comparing them after publication. The chance of such a pair among n
+  bindings in one process's table is about n^2/2^64 (the claim word keeps 63 hash bits); the
+  reporter inverted the hash to make one. Chapter
   section 2.2; `objid_loctable` phases 11 and 12.
 - 2026-11-05 (#4149, zachetienne): CkIO's per-session arrays take the wide layout
   (`setWideCollection()`, unconditionally, as TCharm does; 16.7 million numbers are enough
