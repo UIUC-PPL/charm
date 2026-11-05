@@ -49,6 +49,8 @@ bool tcharm_nothreads=false;
 bool tcharm_campi=false;
 TCharmCampiStartFn tcharm_campi_start_fn=nullptr;
 TCharmCampiResumeFn tcharm_campi_resume_fn=nullptr;
+TCharmCampiPupFn tcharm_campi_pup_fn=nullptr;
+TCharmCampiDestroyFn tcharm_campi_destroy_fn=nullptr;
 #ifndef TCHARM_STACKSIZE_DEFAULT
 #define TCHARM_STACKSIZE_DEFAULT 1048576 /*Default stack size is 1MB*/
 #endif
@@ -112,12 +114,11 @@ void TCharm::procInit()
   tcharm_nothreads=CmiGetArgFlagDesc(argv,"+tcharm_nothread","Disable thread support (debugging)");
   tcharm_nothreads=(CmiGetArgFlagDesc(argv,"+tcharm_nothreads",NULL)) ? true : tcharm_nothreads;
   // campi mode: the application registered a coroutine main (campi.h), which
-  // installed the start hook during static initialization. No thread exists,
-  // and migration is not supported yet.
+  // installed the start hook during static initialization. No thread exists;
+  // the elements stay migratable (a rank migrates by being rebuilt, campi.C).
   tcharm_campi = (tcharm_campi_start_fn != nullptr);
   if (tcharm_campi) {
     tcharm_nothreads = true;
-    tcharm_nomig = true;
   }
   char *traceLibName=NULL;
   while (CmiGetArgStringDesc(argv,"+tcharm_trace",&traceLibName,"Print each call to this library"))
@@ -146,7 +147,7 @@ void TCharm::procInit()
   }
   if (CkMyPe()==0) { // Echo various debugging options:
     if (tcharm_nomig && !tcharm_campi) CmiPrintf("TCHARM> Disabling migration support, for debugging\n");
-    if (tcharm_campi) CmiPrintf("TCHARM> campi: ranks run as C++20 coroutines (no threads, no migration)\n");
+    if (tcharm_campi) CmiPrintf("TCHARM> campi: ranks run as C++20 coroutines\n");
     else if (tcharm_nothreads) CmiPrintf("TCHARM> Disabling thread support, for debugging\n");
   }
   if (!CkpvAccess(mapCreated)) {
@@ -275,6 +276,16 @@ void TCharm::pup(PUP::er &p) {
   	CkAbort("TCharm::pup> Cannot migrate with unconsumed semaphores!\n");
   }
 
+  if (tcharm_campi) {
+    // No thread, user data or globals: campi packs the rank's state object
+    // and restart sites, and on unpacking builds the rank anew.
+    if (p.isUnpacking()) tid = CthSelf();
+    checkPupMismatch(p,5136,"before campi rank");
+    tcharm_campi_pup_fn(this, p);
+    checkPupMismatch(p,5140,"after TCHARM");
+    return;
+  }
+
   DBG("Packing thread");
 #if CMK_ERROR_CHECKING
   if (!p.isSizing() && !isStopped && !CmiMemoryIs(CMI_MEMORY_IS_ISOMALLOC)){
@@ -387,7 +398,13 @@ void TCharm::UserData::pup(PUP::er &p)
 
 TCharm::~TCharm()
 {
-  CthFree(tid);
+  if (tcharm_campi) {
+    // tid is the scheduler's thread; the rank's coroutine frames and state
+    // object are campi's.
+    if (campiRank != nullptr) tcharm_campi_destroy_fn(campiRank);
+  } else {
+    CthFree(tid);
+  }
   delete initMsg;
 }
 
@@ -423,7 +440,9 @@ void TCharm::ckJustMigrated() {
 	// faults. Doing it here rather than in ResumeFromSync covers the
 	// asynchronous path too (TCHARM_Migrate_to / AMPI_Migrate_to_pe resume
 	// from right below, never passing through the sync barrier).
-	CmiIsomallocContextJustMigrated(CmiIsomallocGetThreadContext(getThread()));
+	// A campi rank has no thread of its own (tid is the scheduler's thread).
+	if (!tcharm_campi)
+		CmiIsomallocContextJustMigrated(CmiIsomallocGetThreadContext(getThread()));
     if (asyncMigrate) {
         asyncMigrate = false;
         resume();
@@ -434,7 +453,8 @@ void TCharm::ckJustRestored() {
 	ArrayElement::ckJustRestored();
 	// Restored from an in-memory checkpoint: the context was unpacked again,
 	// so its page protections need the same replay as on migration arrival.
-	CmiIsomallocContextJustMigrated(CmiIsomallocGetThreadContext(getThread()));
+	if (!tcharm_campi)
+		CmiIsomallocContextJustMigrated(CmiIsomallocGetThreadContext(getThread()));
 }
 
 // If a Tcharm object is about to migrate it should be suspended first
@@ -446,13 +466,16 @@ void TCharm::ckAboutToMigrate(){
 // clear the data before restarting from disk
 void TCharm::clear()
 {
-  CthFree(tid);
+  if (!tcharm_campi) CthFree(tid); // campi: tid is the scheduler's thread
   delete initMsg;
 }
 
 //Register user data to be packed with the thread
 int TCharm::add(const TCharm::UserData &d) noexcept
 {
+  if (tcharm_campi)
+    CkAbort("campi: TCHARM_Register and AMPI_Register_pup are not supported; "
+            "keep the data in the rank's state object (CAMPI_MAIN_STATE)\n");
   if (nUd>=maxUserData)
     CkAbort("TCharm: Registered too many user data fields!\n");
 

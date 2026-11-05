@@ -31,8 +31,7 @@ int main(int argc, char **argv){
     return 1;
   }
 
-// Currently, only MPI builds support this style of interop
-#if CMK_CONVERSE_MPI
+  // One color: newComm is congruent to MPI_COMM_WORLD.
   MPI_Comm_split(MPI_COMM_WORLD, 1, peid, &newComm);
 
   //initialize Charm for each set
@@ -72,14 +71,19 @@ int main(int argc, char **argv){
 
   CharmLibExit();
 
-  //final synchronization
+  // MPI keeps working after CharmLibExit returns.
+  int one = 1, sum = 0;
+  MPI_Allreduce(&one, &sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
   MPI_Barrier(MPI_COMM_WORLD);
-#else
-  if (peid == 0) {
-    printf("This test program is a no-op with non-MPI builds\n");
+  if (sum != numpes) {
+    printf("FAIL: rank %d: allreduce after CharmLibExit gave %d, expected %d\n",
+           peid, sum, numpes);
+    MPI_Abort(MPI_COMM_WORLD, 1);
   }
-#endif
+  if (!peid)
+    printf("PASS: MPI works after CharmLibExit (%d ranks)\n", numpes);
 
   MPI_Finalize();
+  if (!peid) printf("MPI_Finalize returned\n");
   return 0;  
 }

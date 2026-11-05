@@ -64,6 +64,8 @@ static void testType(Ctx& c, MPI_Datatype dt, const char* name)
   // Lock epoch. disp 5: match. disp 6: no match. disp 2 again: compare with
   // the value swapped in above, so the swap happens again.
   T res5 = (T)-1, res6 = (T)-1, res2 = (T)-1;
+  // The target's fence-epoch checks above must finish before element 2 is written again.
+  MPI_Barrier(MPI_COMM_WORLD);
   MPI_Win_lock(MPI_LOCK_EXCLUSIVE, target, 0, win);
   orig = (T)(3000 + rank); comp = (T)(target * 100 + 5);
   MPI_Compare_and_swap(&orig, &comp, &res5, dt, target, 5, win);

@@ -7,6 +7,11 @@
 
 #include "ampiimpl.h"
 #include "tcharm.h"
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#elif defined(__linux__)
+#include <link.h>
+#endif
 
 
 #if CMK_TRACE_ENABLED
@@ -595,10 +600,32 @@ class ampiPeMgr : public CBase_ampiPeMgr {
       }
     }
     else {
-      return funcOffset;
+      return ampiStoredFunction(funcOffset); // campi mode: an offset from the program's load address
     }
   }
 };
+
+#if defined(__linux__)
+static int ampiFirstObjectAddress(struct dl_phdr_info *info, size_t, void *data) noexcept {
+  *(uintptr_t *)data = (uintptr_t)info->dlpi_addr;
+  return 1; // the first object visited is the main program; stop there
+}
+#endif
+
+uintptr_t ampiProgramLoadAddress() noexcept {
+  static const uintptr_t addr = []() noexcept -> uintptr_t {
+#if defined(__APPLE__)
+    return (uintptr_t)_dyld_get_image_vmaddr_slide(0); // image 0 is the main program
+#elif defined(__linux__)
+    uintptr_t a = 0;
+    dl_iterate_phdr(ampiFirstObjectAddress, &a);
+    return a;
+#else
+    return 0;
+#endif
+  }();
+  return addr;
+}
 
 /*
  * AMPI's generic reducer type, AmpiReducer, is used only
@@ -1245,6 +1272,12 @@ CkArrayOptions ampiInitRootArrayOptions(CkArrayID *threads, int *nchunks) noexce
   return opts;
 }
 
+// The group the ampiParent array manager's creation depends on (element 0 only).
+CkGroupID ampiPeMgrGroupID() noexcept
+{
+  return ampiPeMgrProxy.ckGetGroupID();
+}
+
 // Every rank, once its MPI_COMM_WORLD ampi object exists: mark init done and
 // contribute to the allInitDone reduction (which sets ampiInitCallDone).
 ampiParent *ampiInitWorldLocal(ampi *ptr, int nchunks) noexcept
@@ -1286,7 +1319,11 @@ static ampi *ampiInit(char **argv) noexcept
 
     ck::future<CkArrayID> newAmpiFuture;
     CkCallback cb(newAmpiFuture.handle());
-    CProxy_ampiParent::ckNew(threads, _nchunks, opts, cb);
+    // ampiParent::init() uses this PE's ampiPeMgr branch, so on every PE the
+    // array manager's creation waits for the group's.
+    CkEntryOptions parentOpts;
+    parentOpts.setGroupDepID(ampiPeMgrGroupID());
+    CProxy_ampiParent::ckNew(threads, _nchunks, opts, cb, &parentOpts);
     parent = newAmpiFuture.get();
     newAmpiFuture.release();
 
@@ -1302,7 +1339,11 @@ static ampi *ampiInit(char **argv) noexcept
 
     ck::future<CkArrayID> newAmpiFuture;
     CkCallback cb(newAmpiFuture.handle());
-    CProxy_ampi::ckNew(parent, worldComm, opts, cb);
+    // ampi's constructor uses this PE's ampiParent element, so on every PE the
+    // array manager's creation waits for the ampiParent array manager's.
+    CkEntryOptions worldOpts;
+    worldOpts.setGroupDepID(parent.ckGetArrayID());
+    CProxy_ampi::ckNew(parent, worldComm, opts, cb, &worldOpts);
     /* CProxy_ampi arr = */ newAmpiFuture.get();
     newAmpiFuture.release();
 
@@ -1586,6 +1627,10 @@ void ampiParent::setUserJustMigratedFn(MPI_MigrateFn f) noexcept {
 }
 
 void ampiParent::ckAboutToMigrate() noexcept {
+  /* Tells the array's listeners the element is leaving; without it the
+     reduction manager on this PE keeps counting the element and a later
+     reduction over the ampiParent array (a checkpoint) never completes. */
+  ArrayElement1D::ckAboutToMigrate();
   if (userAboutToMigrateFn) {
     const auto oldTCharm = CtvAccess(_curTCharm);
     const auto oldAMPI = CtvAccess(ampiPtr);
@@ -1619,6 +1664,7 @@ void ampiParent::resumeAfterMigration() noexcept {
     CtvAccess(ampiPtr) = oldAMPI;
   }
 
+  if (tcharm_campi) campi_migrate_resumed(thread);
   thread->start();
 }
 
@@ -1686,32 +1732,24 @@ TCharm *ampiParent::registerAmpi(ampi *ptr,const ampiCommStruct &s,bool forMigra
 }
 
 // reduction client data - preparation for checkpointing
-class ckptClientStruct {
- public:
-  const char *dname;
-  ampiParent *ampiPtr;
-  ckptClientStruct(const char *s, ampiParent *a) noexcept : dname(s), ampiPtr(a) {}
-};
-
-static void checkpointClient(void *param,void *msg) noexcept
-{
-  ckptClientStruct *client = (ckptClientStruct*)param;
-  const char *dname = client->dname;
-  ampiParent *ampiPtr = client->ampiPtr;
-  ampiPtr->Checkpoint(strlen(dname), dname);
-  delete client;
+/* The ranks reach a checkpoint through a reduction whose callback is an entry
+   method of rank 0, wherever rank 0 sits: a reduction client set on rank 0's
+   PE (the earlier code) is never run once a load balancing step has moved
+   rank 0 off PE 0, where the reduction completes, and the ranks blocked
+   forever. The call is collective with one directory name, so rank 0's own
+   copy is the one used. */
+void ampiParent::postCheckpoint(const char* dname) noexcept {
+  ckptDirName = dname;
+  contribute(CkCallback(CkIndex_ampiParent::checkpointAfterBarrier(), thisProxy[0]));
 }
 
 void ampiParent::startCheckpoint(const char* dname) noexcept {
-  if (thisIndex==0) {
-    ckptClientStruct *clientData = new ckptClientStruct(dname, this);
-    CkCallback *cb = new CkCallback(checkpointClient, clientData);
-    thisProxy.ckSetReductionClient(cb);
-  }
-  contribute();
-
+  postCheckpoint(dname);
   ampiParent* unused = block();
+}
 
+void ampiParent::checkpointAfterBarrier() noexcept {
+  Checkpoint(ckptDirName.size(), ckptDirName.c_str());
 }
 
 void ampiParent::Checkpoint(int len, const char* dname) noexcept {
@@ -1730,6 +1768,7 @@ void ampiParent::Checkpoint(int len, const char* dname) noexcept {
 }
 
 void ampiParent::ResumeThread() noexcept {
+  if (tcharm_campi) campi_migrate_resumed(thread);
   thread->resume();
 }
 
@@ -1782,7 +1821,7 @@ int ampiParent::setUserAttribute(int context, std::unordered_map<int, uintptr_t>
   auto iter = attributes.find(keyval);
   if (iter != attributes.end()) {
     void * val = (void *)iter->second;
-    int ret = (*kv.delete_fn)(context, keyval, val, kv.extra_state);
+    int ret = (*kv.deleteFn())(context, keyval, val, kv.extra_state);
     if (ret != MPI_SUCCESS) {
       return ret;
     }
@@ -1882,7 +1921,7 @@ int ampiParent::dupUserAttributes(int old_context, std::unordered_map<int, uintp
     if (isValid) {
       // Call the user's copy_fn
       KeyvalNode& kv = *kvlist[keyval];
-      int ret = (*kv.copy_fn)(old_context, keyval, kv.extra_state, val_in, &val_out, &flag);
+      int ret = (*kv.copyFn())(old_context, keyval, kv.extra_state, val_in, &val_out, &flag);
       if (ret != MPI_SUCCESS) {
         return ret;
       }
@@ -1900,7 +1939,7 @@ int ampiParent::freeUserAttributes(int context, std::unordered_map<int, uintptr_
     int keyval = attr.first;
     KeyvalNode & kv = *kvlist[keyval];
     void * val = (void *)attr.second;
-    int ret = (*kv.delete_fn)(context, keyval, val, kv.extra_state);
+    int ret = (*kv.deleteFn())(context, keyval, val, kv.extra_state);
     if (ret != MPI_SUCCESS)
       return ret;
 
@@ -1987,7 +2026,7 @@ int ampiParent::deleteAttr(int context, std::unordered_map<int, uintptr_t> & att
 
   KeyvalNode & kv = *kvlist[keyval];
   void * val = (void *)iter->second;
-  int ret = (*kv.delete_fn)(context, keyval, val, kv.extra_state);
+  int ret = (*kv.deleteFn())(context, keyval, val, kv.extra_state);
   if (ret != MPI_SUCCESS)
     return ret;
 
@@ -11792,7 +11831,7 @@ CLINKAGE int AMPI_Get_argc()
 // element through the location manager, and every other communicator lives
 // on a child array (ampi::createNewChildAmpiSync, dynamic insertion) whose
 // broadcasts the runtime stores; neither is checked.
-static void checkNoCollectiveOutstanding() noexcept
+void ampiCheckNoCollectiveOutstanding() noexcept
 {
   if (CkpvAccess(isMigrateWithCollsEnabled)) return;
   ampiParent *parent = getAmpiParent();
@@ -11807,9 +11846,20 @@ static void checkNoCollectiveOutstanding() noexcept
   }
 }
 
-CLINKAGE int AMPI_Migrate(MPI_Info hints)
+int ampiParseMigrateInfo(MPI_Info hints, AmpiMigrateAction *out, int max) noexcept
 {
-  AMPI_API("AMPI_Migrate", hints);
+  int n = 0;
+  auto add = [&](AmpiMigrateKind kind, const char *dir) {
+    if (n == max)
+      CkAbort("AMPI> Error: AMPI_Migrate info asks for more than %d actions\n", max);
+    out[n].kind = kind;
+    out[n].dir[0] = '\0';
+    if (dir != nullptr) {
+      strncpy(out[n].dir, dir, sizeof(out[n].dir) - 1);
+      out[n].dir[sizeof(out[n].dir) - 1] = '\0';
+    }
+    n++;
+  };
   int nkeys, exists;
   char key[MPI_MAX_INFO_KEY], value[MPI_MAX_INFO_VAL];
 
@@ -11824,20 +11874,10 @@ CLINKAGE int AMPI_Migrate(MPI_Info hints)
     else if (strncmp(key, "ampi_load_balance", MPI_MAX_INFO_KEY) == 0) {
 
       if (strncmp(value, "sync", MPI_MAX_INFO_VAL) == 0) {
-        checkNoCollectiveOutstanding();
-        int oldPe = CkMyPe();
-        TCHARM_Migrate();
-        if (oldPe != CkMyPe()) {
-          removeUnimportantArrayObjsfromPeCache();
-        }
+        add(AmpiMigrateKind::LB_SYNC, nullptr);
       }
       else if (strncmp(value, "async", MPI_MAX_INFO_VAL) == 0) {
-        checkNoCollectiveOutstanding();
-        int oldPe = CkMyPe();
-        TCHARM_Async_Migrate();
-        if (oldPe != CkMyPe()) {
-          removeUnimportantArrayObjsfromPeCache();
-        }
+        add(AmpiMigrateKind::LB_ASYNC, nullptr);
       }
       else if (strncmp(value, "false", MPI_MAX_INFO_VAL) == 0) {
         /* do nothing */
@@ -11861,21 +11901,13 @@ CLINKAGE int AMPI_Migrate(MPI_Info hints)
         else {
           CkAbort("AMPI> Error: No checkpoint directory name given to AMPI_Migrate\n");
         }
-        ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
-        ptr->getParent()->startCheckpoint(&value[offset]);
+        add(AmpiMigrateKind::CKPT_TO_FILE, &value[offset]);
       }
       else if (strncmp(value, "in_memory", MPI_MAX_INFO_VAL) == 0) {
-#if CMK_MEM_CHECKPOINT
-        ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
-        ptr->getParent()->startCheckpoint("");
-#else
-        CkPrintf("AMPI> Error: In-memory checkpoint/restart is not enabled!\n");
-        CkAbort("AMPI> Error: Recompile Charm++/AMPI with CMK_MEM_CHECKPOINT.\n");
-#endif
+        add(AmpiMigrateKind::CKPT_IN_MEMORY, nullptr);
       }
       else if (strncmp(value, "message_logging", MPI_MAX_INFO_VAL) == 0) {
-        CkPrintf("AMPI> Error: Message logging is not enabled!\n");
-        CkAbort("AMPI> Error: Recompile Charm++/AMPI with CMK_MESSAGE_LOGGING.\n");
+        add(AmpiMigrateKind::CKPT_MESSAGE_LOGGING, nullptr);
       }
       else if (strncmp(value, "false", MPI_MAX_INFO_VAL) == 0) {
         /* do nothing */
@@ -11888,7 +11920,60 @@ CLINKAGE int AMPI_Migrate(MPI_Info hints)
       CkPrintf("WARNING: Unknown MPI_Info key given to AMPI_Migrate: %s\n", key);
     }
   }
+  return n;
+}
 
+CLINKAGE int AMPI_Migrate(MPI_Info hints)
+{
+  AMPI_API("AMPI_Migrate", hints);
+
+  // Plain data on the rank's stack: the stack moves with the thread across
+  // TCHARM_Migrate and a restart from a checkpoint, a process-heap block
+  // (std::vector, std::string) does not.
+  AmpiMigrateAction actions[AMPI_MIGRATE_MAX_ACTIONS];
+  const int nactions = ampiParseMigrateInfo(hints, actions, AMPI_MIGRATE_MAX_ACTIONS);
+  for (int i = 0; i < nactions; i++) {
+    const AmpiMigrateAction &a = actions[i];
+    switch (a.kind) {
+      case AmpiMigrateKind::LB_SYNC: {
+        ampiCheckNoCollectiveOutstanding();
+        int oldPe = CkMyPe();
+        TCHARM_Migrate();
+        if (oldPe != CkMyPe()) {
+          removeUnimportantArrayObjsfromPeCache();
+        }
+        break;
+      }
+      case AmpiMigrateKind::LB_ASYNC: {
+        ampiCheckNoCollectiveOutstanding();
+        int oldPe = CkMyPe();
+        TCHARM_Async_Migrate();
+        if (oldPe != CkMyPe()) {
+          removeUnimportantArrayObjsfromPeCache();
+        }
+        break;
+      }
+      case AmpiMigrateKind::CKPT_TO_FILE: {
+        ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
+        ptr->getParent()->startCheckpoint(a.dir);
+        break;
+      }
+      case AmpiMigrateKind::CKPT_IN_MEMORY: {
+#if CMK_MEM_CHECKPOINT
+        ampi * ptr = getAmpiInstance(MPI_COMM_WORLD)->barrier();
+        ptr->getParent()->startCheckpoint("");
+#else
+        CkPrintf("AMPI> Error: In-memory checkpoint/restart is not enabled!\n");
+        CkAbort("AMPI> Error: Recompile Charm++/AMPI with CMK_MEM_CHECKPOINT.\n");
+#endif
+        break;
+      }
+      case AmpiMigrateKind::CKPT_MESSAGE_LOGGING:
+        CkPrintf("AMPI> Error: Message logging is not enabled!\n");
+        CkAbort("AMPI> Error: Recompile Charm++/AMPI with CMK_MESSAGE_LOGGING.\n");
+        break;
+    }
+  }
 
   return MPI_SUCCESS;
 }
