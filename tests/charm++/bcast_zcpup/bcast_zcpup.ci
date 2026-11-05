@@ -1,0 +1,19 @@
+mainmodule bcast_zcpup {
+  readonly CProxy_Main mainProxy;
+  readonly int numRounds;
+  readonly int hitsPerRound;
+  readonly int bufBytes;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void hitDone(int n);
+    entry [reductiontarget] void checked(int total, int bad);
+  };
+
+  array [1D] Elem {
+    entry Elem();
+    entry void migrate(int round);
+    entry void hit(int round);
+    entry void check();
+  };
+};
