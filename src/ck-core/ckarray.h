@@ -539,6 +539,8 @@ public:
     e->AtSync();
     if (UsrToEnv(impl_msg)->isVarSysMsg() == 0)
       CkFreeSysMsg(impl_msg);
+    else
+      CkFreeMsg(impl_msg);
   }
 
   static void __CkMigrateMessage(void* impl_msg, void* impl_obj_void)
