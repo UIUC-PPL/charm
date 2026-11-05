@@ -1889,7 +1889,7 @@ void _initCharm(int unused_argc, char **argv)
 /* Hand converse the per-PE init hooks that reconverse's ConverseInit invokes
  * and classic convcore calls through its own path (ConverseCommonInit).
  * Every Charm++ entry into ConverseInit calls this -- charm_main, and the
- * interop entry points CharmBeginInit and CharmLibInit, which bypass
+ * interop entry points CharmBeginInit and CharmLibInitWorld, which bypass
  * charm_main.
  *  - traceInit: without it the trace array is never created and _initCharm
  *    dereferences a null CkpvAccess(_traces).
