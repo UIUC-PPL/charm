@@ -19,10 +19,11 @@
  * Makefile restarts the same checkpoint on the same, fewer and more PEs and
  * processes than the checkpoint run used.
  *
- * At step 1 every rank calls AMPI_Migrate(AMPI_INFO_LB_SYNC); run with
- * "+balancer RotateLB", every rank moves to another PE there, so the
- * checkpoint at step 2 is written by ranks that have migrated, with rank 0
- * no longer on PE 0.
+ * At steps 1 and 4 every rank calls AMPI_Migrate(AMPI_INFO_LB_SYNC); run
+ * with "+balancer RotateLB", every rank moves to another PE at each of these
+ * steps. The checkpoint at step 2 is therefore written by ranks that have
+ * migrated, with rank 0 no longer on PE 0, and a restart run with
+ * "+balancer RotateLB" migrates the restored ranks again at step 4.
  *
  * At the end each rank compares its checksum with the expected value and
  * the array's contents with the values its left neighbour sent, and
@@ -38,6 +39,7 @@
 
 #define NSTEPS 6
 #define LB_STEP 1
+#define LB_STEP2 4 /* after the checkpoint, so restarted ranks migrate too */
 #define CHKPT_STEP 2
 
 static double value0(int rank, int step) { return rank + 0.01 * step; }
@@ -97,7 +99,7 @@ int main(int argc, char **argv) {
       printf("[%d]step %d,a={%f,%f},b={%f,%f}\n", myrank, step, a[0], a[1],
              b[0], b[1]);
 #ifdef AMPI
-    if (step == LB_STEP) {
+    if (step == LB_STEP || step == LB_STEP2) {
       AMPI_Migrate(AMPI_INFO_LB_SYNC);
     }
 #endif

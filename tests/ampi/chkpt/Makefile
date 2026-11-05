@@ -45,7 +45,8 @@ endif
 	# A checkpoint written after a load balancing step: RotateLB at step 1
 	# moves every rank to another PE, so rank 0 is not on PE 0 when the
 	# checkpoint is taken at step 2. The restart runs with and without the
-	# balancer.
+	# balancer; the restart under RotateLB migrates the restored ranks again
+	# at the second load balancing step (step 4).
 	-sync
 	rm -rf log
 	$(call run, +p4 ./hello +vp8 +balancer RotateLB )
