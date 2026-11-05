@@ -856,9 +856,10 @@ public:
   void remoteDoneInserting(void);
   void remoteBeginInserting(void);
 
-  /// Create manually:
+  /// Create manually. homeApproved: a demand creation the home granted, which
+  /// means no element of this id is alive, so the index's entry is not followed.
   bool insertElement(CkArrayMessage*, const CkArrayIndex& idx,
-                     int listenerData[CK_ARRAYLISTENER_MAXLEN]);
+                     int listenerData[CK_ARRAYLISTENER_MAXLEN], bool homeApproved = false);
   void insertElement(CkMarshalledMessage&&, const CkArrayIndex& idx,
                      int listenerData[CK_ARRAYLISTENER_MAXLEN]);
 

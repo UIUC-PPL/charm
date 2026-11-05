@@ -70,6 +70,7 @@ env:
     tests/charm++/objid_loctable
     tests/charm++/objid_recreate
     tests/charm++/io_sessions
+    tests/charm++/objid_boundrecreate
     tests/charm++/anytime_bcastred
     tests/charm++/delegation/multicast
     tests/charm++/atsync_reduction
