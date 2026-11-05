@@ -2562,7 +2562,6 @@ class ampiParent final : public CBase_ampiParent {
 
   void startCheckpoint(const char* dname) noexcept;
   void checkpointAfterBarrier() noexcept;
-  void Checkpoint(int len, const char* dname) noexcept;
   void ResumeThread() noexcept;
   TCharm* getTCharmThread() const noexcept {return thread;}
   CMI_WARN_UNUSED_RESULT inline ampiParent* blockOnRecv() noexcept;
