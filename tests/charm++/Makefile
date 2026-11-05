@@ -51,6 +51,7 @@ DIRS = \
   objid_boundrecreate \
   collide \
   qd \
+  reduction_migrate_ahead \
   bcast_zcpup \
 
 FTDIRS = \
