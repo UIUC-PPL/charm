@@ -64,7 +64,11 @@ env:
     tests/charm++/dynamic_insertion_deletion
     tests/charm++/objid_insert
     tests/charm++/objid_wide
+    tests/charm++/objid_migrate6
+    tests/charm++/objid_loctable
+    tests/charm++/objid_recreate
     tests/charm++/anytime_bcastred
+    tests/charm++/delegation/multicast
     tests/charm++/atsync_reduction
     tests/charm++/threaded_redn
     tests/charm++/qd
@@ -105,7 +109,7 @@ jobs:
       - name: test (single process)
         run: |
           set -e
-          for d in $TEST_DIRS; do TESTRUN_VA_RANDOMIZATION=1 make -C $d test; done
+          for d in $TEST_DIRS; do TESTRUN_VA_RANDOMIZATION=1 timeout 900 make -C $d test; done
       - name: test (2 processes, lcrun)
         run: |
           set -e
@@ -134,7 +138,7 @@ jobs:
       - name: test (single process)
         run: |
           set -e
-          for d in $TEST_DIRS; do make -C $d test; done
+          for d in $TEST_DIRS; do timeout 900 make -C $d test; done
       - name: test (2 processes, lcrun)
         run: |
           set -e
@@ -160,7 +164,7 @@ jobs:
       - name: test (single process)
         run: |
           set -e
-          for d in $TEST_DIRS; do make -C $d test; done
+          for d in $TEST_DIRS; do gtimeout 900 make -C $d test; done
       - name: test (2 processes, lcrun)
         run: |
           set -e

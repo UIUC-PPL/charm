@@ -49,12 +49,17 @@
 //           inserts K "fresh" elements (700+pe,k) on each PE. One PE per fresh
 //           index, freshPe(x,y) (neither its inserter nor its home), never
 //           sends to it, and fresh elements never migrate or die in phase 5,
-//           so that PE never learns the index's id. Phase 7 destroys every
-//           fresh element, then freshPe(x,y) inserts (x,y) locally: in the
-//           hashed kind that PE has no idx -> id binding and mints a NEW id
-//           (main enforces it differs from the old one; in the packed kind it
-//           must be equal), while every other PE still holds the old id and a
-//           stale location. Then every PE pings every element, so each old-id
+//           so that PE never learns the index's id. Index bindings are shared
+//           by the PEs of a process (doc/internals/process-location-cache.md),
+//           so when a process holds neither the inserter nor the home the
+//           fresh PE is taken from it and its whole process abstains. Phase 7
+//           destroys every fresh element, then freshPe(x,y) inserts (x,y)
+//           locally: with such an isolated process the hashed kind has no
+//           idx -> id binding there and mints a NEW id (main enforces it
+//           differs from the old one), while every other process still holds
+//           the old id and a stale location; without one (fewer than three
+//           processes) the binding is known and the old id must be reused, as
+//           in the packed kind, where the id is the packed index. Then every PE pings every element, so each old-id
 //           holder's message lands on a PE with no element for that id and
 //           must reach the new one: forwarded to the home and re-addressed
 //           there by default, or, under +messageBufferingThreshold 0 (every
@@ -146,10 +151,31 @@ static int homeOf(int x, int y) {
 }
 // Phase 7: the PE that never addresses fresh index (x,y) before re-inserting it
 // there: not its inserter (x-700) and not its home, which always knows the id.
+// Index -> id bindings are per process (the shared index table), so the PE is
+// taken from a process holding neither the inserter nor the home when one exists
+// (freshIsolated); then no PE of that process addresses (x,y) and the re-insertion
+// mints a new id. With fewer processes the fresh PE's process knows the binding
+// and the re-insertion reuses the old id, which is checked instead.
 static int freshPe(int x, int y) {
-  int P = CkNumPes(), ins = x - 700, h = homeOf(x, y), f = (ins + 1) % P;
+  int P = CkNumPes(), ins = x - 700, h = homeOf(x, y);
+  for (int f = (ins + 1) % P, n = 0; n < P; f = (f + 1) % P, n++)
+    if (CkNodeOf(f) != CkNodeOf(ins) && CkNodeOf(f) != CkNodeOf(h)) return f;
+  int f = (ins + 1) % P;
   while (f == ins || f == h) f = (f + 1) % P;
   return f;
+}
+static bool freshIsolated(int x, int y) {
+  int f = freshPe(x, y);
+  return CkNodeOf(f) != CkNodeOf(x - 700) && CkNodeOf(f) != CkNodeOf(homeOf(x, y));
+}
+// The PEs that leave fresh (x,y) alone before its re-insertion: the fresh PE's
+// whole process when it is isolated, else the fresh PE only.
+static bool skipsFresh(int x, int y, int pe) {
+  int f = freshPe(x, y);
+  return freshIsolated(x, y) ? CkNodeOf(pe) == CkNodeOf(f) : pe == f;
+}
+static int freshSkippers(int x, int y) {
+  return freshIsolated(x, y) ? CkNodeSize(CkNodeOf(freshPe(x, y))) : 1;
 }
 // The single PE that sends a createhere message to (x,y): the PE after its home.
 static int hereSender(int x, int y) { return (homeOf(x, y) + 1) % CkNumPes(); }
@@ -360,17 +386,22 @@ public:
         CkAbort("re-insertion on the wrong PE");
       }
       bool same = it->second.id == e.second;
-      if (same != (bounded != 0)) {
+      bool expectSame = bounded || !freshIsolated(key.first, key.second);
+      if (same != expectSame) {
         CkPrintf("objid_insert FAIL: phase 7: (%d,%d) re-inserted on PE %d with id %llx, "
                  "old id %llx: %s\n", key.first, key.second, it->second.pe,
                  (unsigned long long)it->second.id, (unsigned long long)e.second,
                  bounded ? "a packed id must not change"
-                         : "the fresh PE reused the old id, so it had seen the index");
+                 : expectSame ? "the fresh PE's process knew the index, so the id must be reused"
+                              : "the fresh PE's process reused the old id, so it had seen the index");
         CkAbort("re-insertion id");
       }
     }
     CkPrintf("objid_insert: phase 7: %zu fresh elements re-inserted, %s\n",
-             oldFreshIds.size(), bounded ? "ids unchanged (packed)" : "all under new ids");
+             oldFreshIds.size(),
+             bounded ? "ids unchanged (packed)"
+             : freshIsolated(700, 0) ? "all under new ids (isolated fresh processes)"
+                                     : "ids reused (the fresh PEs' processes knew the bindings)");
     arrProxy.doneInserting();
     freshOpen = true;
   }
@@ -489,7 +520,8 @@ public:
   // Senders of a ping round to (x,y): every PE, except that freshPe(x,y) leaves
   // a fresh element alone until it has re-inserted it (phase 7).
   int pingSenders(const Key& key) const {
-    return (kindOf(key.first) == FRESH && !freshOpen) ? P - 1 : P;
+    return (kindOf(key.first) == FRESH && !freshOpen) ? P - freshSkippers(key.first, key.second)
+                                                      : P;
   }
 
   void pingDone(int nElems, int nPings) {
@@ -561,7 +593,7 @@ public:
     for (size_t i = 0; i < xs.size(); i++) {
       int x = xs[i], y = ys[i];
       // Phase 7: this PE must not learn a fresh index's id before re-inserting it.
-      if (kindOf(x) == FRESH && !freshOpen && CkMyPe() == freshPe(x, y)) continue;
+      if (kindOf(x) == FRESH && !freshOpen && skipsFresh(x, y, CkMyPe())) continue;
       arrProxy(x, y).ping(round, CkMyPe());
     }
   }
@@ -670,8 +702,11 @@ public:
     seen[fromPe] = 1;
     int n = 0;
     for (char c : seen) n += c;
-    // A fresh element's first incarnation is never pinged by its freshPe.
-    int want = (kindOf(thisIndex.x) == FRESH && !reinserted) ? CkNumPes() - 1 : CkNumPes();
+    // A fresh element's first incarnation is never pinged by its freshPe (or its
+    // freshPe's whole process when that process is isolated).
+    int want = (kindOf(thisIndex.x) == FRESH && !reinserted)
+                   ? CkNumPes() - freshSkippers(thisIndex.x, thisIndex.y)
+                   : CkNumPes();
     if (n == want) {
       pending.erase(round);
       lastRound = round;
