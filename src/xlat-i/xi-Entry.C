@@ -2211,13 +2211,13 @@ void Entry::genDefs(XStr& str) {
   }
 
   if (param->isVoid() && !isNoKeep()) {
-    /* Reuse the message using CkFreeSysMsg by putting it in the msgpool if it is a fixed
-     * sized message. The message is a fixed sized message if it has no priority bytes. A
-     * message with priority bytes will not be reused and will be deallocated similar to
-     * other marshalled messages.
+    /* A fixed-size system message (no priority bytes, no group dependence) goes back
+     * to the pool; a variable-size one (allocated for a CkEntryOptions) is freed.
      */
     postCall << "  if(UsrToEnv(impl_msg)->isVarSysMsg() == 0)\n";
     postCall << "    CkFreeSysMsg(impl_msg);\n";
+    postCall << "  else\n";
+    postCall << "    CkFreeMsg(impl_msg);\n";
   }
 
   if (!isConstructor() && fortranMode) {  // Fortran90

@@ -137,7 +137,15 @@ the element died on the home and from `reclaimRemote` otherwise); a message that
 still reaches a PE by id for a deleted element is handed to the home, which
 recovers the index from that table, in constant time, and holds the message by
 index until an element of that index exists again (or creates one, if the message
-asks for demand creation).
+asks for demand creation). The other processes keep the dead element's location,
+and one of them may be told to create it again. A demand creation the home
+approved (`CkArray::demandCreateElement`) is created on the requesting PE without
+looking at that entry: the home grants it only when its table has no location
+for the id, and bound arrays share the id, so no sibling is alive.
+`CkArray::insertElement` forwards an explicit insertion to the PE the entry names
+only when the location manager serves bound arrays
+(`CkLocMgr::servesBoundArrays`), where the entry is a live sibling's; when every
+sibling has died the entry is stale and the insertion is misplaced (#4031).
 
 Re-creation under a new id: an element inserted without a PE argument lands on
 the map's PE, which for the hashed kind is not its home, so a deleted index
@@ -198,7 +206,10 @@ standard array out of numbers), and a 37-bit payload that must be a packed
 index; a wide array without bounds that pack into 37 bits aborts at creation.
 Only the decoder of the collection field (the global location update) needs the
 tag; delivery keys on the whole id word. The checkpoint records the wide width
-next to C.
+next to C. Collection numbers are not reused when an array is destroyed, so a
+library that creates an array per operation takes the wide layout: TCharm (one
+array per AMPI communicator) and CkIO (one per write session, `WriteSession`,
+and one per read session, `BufferChares`).
 
 ## 8. Not covered: singleton chares and groups
 

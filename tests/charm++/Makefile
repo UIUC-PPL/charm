@@ -17,6 +17,7 @@ DIRS = \
   topology \
   io \
   io_read \
+  io_sessions \
   sparse \
   reductionTesting \
   partitions \
@@ -48,8 +49,10 @@ DIRS = \
   objid_migrate6 \
   objid_loctable \
   objid_recreate \
+  objid_boundrecreate \
   collide \
   qd \
+  reduction_migrate_ahead \
   bcast_zcpup \
 
 FTDIRS = \
