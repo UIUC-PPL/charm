@@ -71,6 +71,7 @@ env:
     tests/charm++/objid_migrate6
     tests/charm++/objid_loctable
     tests/charm++/objid_recreate
+    tests/charm++/objid_boundrecreate
     tests/charm++/anytime_bcastred
     tests/charm++/delegation/multicast
     tests/charm++/atsync_reduction
