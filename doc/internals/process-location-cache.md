@@ -141,7 +141,11 @@ word. A writer claims the slot by CAS on the hash word, then stores the index
 words, then publishes the id with release ordering; a reader loads the id with
 acquire ordering, and compares the index words only after it has seen a
 non-zero id, so it never reads a half-written key. Index words are immutable
-once published; the id word may change.
+once published; the id word may change. The hash word is a claim, not an
+identity: two keys can share a 64-bit hash (#4164 gave a pair), so a writer
+that meets a claim equal to its own hash also waits for that slot's
+publication and compares the key words; only its own key sends it back to the
+lookup, another key with the same hash is probed past.
 
 The id word holds the full id (collection number included): an element id alone
 can be 0, which is the "not yet published" marker. A writer that finds the slot
