@@ -539,6 +539,8 @@ public:
     e->AtSync();
     if (UsrToEnv(impl_msg)->isVarSysMsg() == 0)
       CkFreeSysMsg(impl_msg);
+    else
+      CkFreeMsg(impl_msg);
   }
 
   static void __CkMigrateMessage(void* impl_msg, void* impl_obj_void)
@@ -854,9 +856,10 @@ public:
   void remoteDoneInserting(void);
   void remoteBeginInserting(void);
 
-  /// Create manually:
+  /// Create manually. homeApproved: a demand creation the home granted, which
+  /// means no element of this id is alive, so the index's entry is not followed.
   bool insertElement(CkArrayMessage*, const CkArrayIndex& idx,
-                     int listenerData[CK_ARRAYLISTENER_MAXLEN]);
+                     int listenerData[CK_ARRAYLISTENER_MAXLEN], bool homeApproved = false);
   void insertElement(CkMarshalledMessage&&, const CkArrayIndex& idx,
                      int listenerData[CK_ARRAYLISTENER_MAXLEN]);
 

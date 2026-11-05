@@ -19,6 +19,12 @@
  *    request_awaiter (no coroutine frame); a rank blocked in one is polled
  *    by campi_resume and resumed only when its requests are complete.
  *  - Init/Finalize and communicator creation.
+ *  - Migration (design 4A): a rank never moves a coroutine frame. Its state
+ *    object and its chain of restart sites are packed with the TCharm
+ *    element; on arrival (or restart from a checkpoint, or the
+ *    +campi_fakemigrate rebuild) the rank's main is created again and runs
+ *    from the top, each resumable function switching to its recorded site,
+ *    until the innermost recorded migrate site, where Migrate returns.
  */
 #include "ampiimpl.h"
 #include "tcharm_impl.h"
@@ -28,12 +34,15 @@
 // libampi is built without campi, and no program can select campi mode.
 void campi_parent_attached(TCharm *, ampiParent *) noexcept {}
 void campi_proc_init() noexcept {}
+void campi_migrate_resumed(TCharm *) noexcept {}
 #else
 
 #include "campi_core.h"
 
 #include <cstdlib>
 #include <cstring>
+#include <vector>
+#include "pup_stl.h"
 
 CtvExtern(ampiParent*, ampiPtr);
 CtvExtern(bool, ampiInitDone);
@@ -70,18 +79,48 @@ struct Rank {
   // Init on element 0: completion of an array creation (CkCallback target)
   bool arrayCreated = false;
   CkArrayID createdAid;
+  // Init on element 0 off PE 0: PE 0 has its ampiPeMgr branch (CkCallback target)
+  bool peMgrOnPe0 = false;
+
+  // Migration and restart (design 4A).
+  void *state = nullptr;           // the user's state object (registered_ops)
+  std::vector<int> sites;          // restart site per frame_guard depth; pupped
+  std::vector<char> linked;        // per depth: entered through a noted call site
+  unsigned depth = 0;              // active frame_guards
+  bool restarting = false;         // main runs again toward the recorded site
+  bool noted = false;              // a site was noted and its await is next
+  bool notedCall = false;          // ... a call site (else a migrate site)
+  unsigned notedDepth = 0;         // ... by the function at this depth
+  bool destroyingFrames = false;   // frame_guard destructors leave sites alone
+  bool migrateDone = false;        // set by campi_migrate_resumed
+  bool fakeRestart = false;        // rebuild in campi_resume (+campi_fakemigrate)
+  bool dead = false;               // the element is gone; a wake is still queued
 };
 
+// The record of a rank whose element is gone, once no wake message refers to it.
+static void free_rank(Rank *r) {
+  CAMPI_DBG("rank record %p freed (%s)\n", (void *)r, r->dead ? "after its queued wake" : "with its element");
+  CmiFreeArgs(r->argv); // CmiCopyArgs copies the array, not the strings
+  delete r;
+}
+
 main_fn registered_main = nullptr;
+static const state_ops *registered_ops = nullptr;
+static bool fakeMigrate = false; // +campi_fakemigrate
 
 static void campi_start(TCharm *tc);
 static void campi_wake(void *rank);
+static void campi_pup(TCharm *tc, PUP::er &p);
+static void campi_destroy(void *rank);
 
-void register_main(main_fn f) noexcept {
+void register_main(main_fn f, const state_ops *ops) noexcept {
   registered_main = f;
+  registered_ops = ops;
   // Selects campi mode in TCharm::procInit (tcharm cannot refer to campi).
   tcharm_campi_start_fn = campi_start;
   tcharm_campi_resume_fn = campi_wake;
+  tcharm_campi_pup_fn = campi_pup;
+  tcharm_campi_destroy_fn = campi_destroy;
 }
 
 [[noreturn]] void abort_unhandled_exception() noexcept {
@@ -126,12 +165,16 @@ static thread_local int wakeHandlerIdx = -1;
 static void wakeHandler(void *msg) {
   Rank *r = ((WakeMsg *)msg)->rank;
   CmiFree(msg);
+  if (r->dead) { // the element migrated away or was destroyed after this was queued
+    free_rank(r);
+    return;
+  }
   r->wakeQueued = false;
   campi_resume(r);
 }
 
 static void enqueue_wake(Rank *r) {
-  if (r->wakeQueued || r->finished) return;
+  if (r->wakeQueued || r->finished || r->dead) return;
   r->wakeQueued = true;
   WakeMsg *m = (WakeMsg *)CmiAlloc(sizeof(WakeMsg));
   m->rank = r;
@@ -145,8 +188,108 @@ static void campi_wake(void *rp) {
   Rank *r = (Rank *)rp;
   CAMPI_DBG("wake rank %d (running %d, queued %d)\n", r ? r->tc->getElement() : -1,
             r ? (int)r->running : -1, r ? (int)r->wakeQueued : -1);
-  if (r == nullptr || r->finished) return;
+  if (r == nullptr || r->finished || r->dead) return;
   enqueue_wake(r);
+}
+
+/* ====================== rebuild (restart from the state) ====================== */
+
+// Destroy the rank's coroutine frames. The frame_guard destructors that run
+// leave the recorded sites alone.
+static void destroy_frames(Rank *r) {
+  if (r->root) {
+    r->destroyingFrames = true;
+    r->root.destroy();
+    r->destroyingFrames = false;
+  }
+  r->root = {};
+  r->h = {};
+  r->waiter = nullptr;
+  r->depth = 0;
+  r->linked.clear();
+  r->noted = false;
+}
+
+// Create main's frame again over the current state object; the rank resumes
+// from the top toward its recorded site the next time it is woken.
+// initial_suspend is suspend_always, so no user code runs here.
+static void start_restart(Rank *r) {
+  destroy_frames(r);
+  r->restarting = !r->sites.empty();
+  if (!r->restarting)
+    CkAbort("campi: rank %d rebuilt with no recorded site", r->tc->getElement());
+  r->root = registered_main(r->argv ? CkGetArgc() : 0, r->argv, r->state).release();
+  r->h = r->root;
+}
+
+// The rank's part of TCharm's pup: its restart sites and its state object.
+static void pup_rank_data(PUP::er &p, Rank *r) {
+  p | r->sites;
+  registered_ops->pup(p, r->state);
+}
+
+// +campi_fakemigrate: what a migration does to the rank, without moving it:
+// round-trip the state through PUP into a new object, destroy the frames,
+// and start main again toward the recorded site.
+static void fake_migrate(Rank *r) {
+  r->fakeRestart = false;
+  PUP::sizer ps;
+  pup_rank_data(ps, r);
+  std::vector<char> buf(ps.size());
+  PUP::toMem pt(buf.data());
+  pup_rank_data(pt, r);
+  void *old = r->state;
+  destroy_frames(r); // before the old state goes: the frames refer to it
+  registered_ops->destroy(old);
+  r->state = registered_ops->create();
+  r->sites.clear();
+  PUP::fromMem pf(buf.data());
+  pup_rank_data(pf, r);
+  CAMPI_DBG("rank %d rebuilt in place (%zu bytes, site chain of %zu)\n",
+            r->tc->getElement(), buf.size(), r->sites.size());
+  start_restart(r);
+  enqueue_wake(r);
+}
+
+// tcharm hook, from TCharm::pup. Packing: the sites and the state. Unpacking
+// (migration arrival, restart from a checkpoint): a new rank record for this
+// element, restarting toward the unpacked site. Its parent is set by
+// campi_parent_attached (ampiParent::ckJustMigrated) before it is woken.
+static void campi_pup(TCharm *tc, PUP::er &p) {
+  Rank *r = (Rank *)tc->getCampiRank();
+  if (p.isUnpacking()) {
+    if (r != nullptr) CkAbort("campi: unpacking a TCharm element that has a rank");
+    r = new Rank;
+    r->tc = tc;
+    r->state = registered_ops->create();
+    pup_rank_data(p, r);
+    r->initDone = true; // AMPI_Migrate is called only after MPI_Init
+    r->finalized = false;
+    r->argv = CmiCopyArgs(CkGetArgv());
+    tc->setCampiRank(r);
+    start_restart(r);
+    CAMPI_DBG("rank %d unpacked (site chain of %zu)\n", tc->getElement(), r->sites.size());
+  } else {
+    if (r == nullptr || r->finished || r->state == nullptr)
+      CkAbort("campi: packing a TCharm element whose rank is not running");
+    pup_rank_data(p, r);
+  }
+}
+
+// tcharm hook, from ~TCharm (the element migrated away or is destroyed).
+// Besides the element, only a queued wake message refers to the record (the
+// awaiters that refer to it are in the frames destroyed here). Without one
+// the record is freed now; with one it is marked dead and wakeHandler frees
+// it when the message arrives.
+static void campi_destroy(void *rp) {
+  Rank *r = (Rank *)rp;
+  CkAssert(!r->running); // an element is not destroyed from inside its own rank
+  destroy_frames(r);
+  if (r->state != nullptr) registered_ops->destroy(r->state);
+  r->state = nullptr;
+  r->tc = nullptr;
+  if (r->wakeQueued) r->dead = true;
+  else free_rank(r);
 }
 
 static void finish_rank(Rank *r) {
@@ -169,6 +312,9 @@ static void campi_resume(Rank *r) {
   do {
     r->resumePending = false;
     if (!r->h) CkAbort("campi: rank woken with no resume point");
+    if (r->restarting && r->parent == nullptr)
+      CkAbort("campi: rank %d restarted before its ampiParent arrived "
+              "(campi_parent_attached was not called)", r->tc->getElement());
 
     // Save the current context and install the rank's.
     TCharm *oldTc = CtvAccess(_curTCharm);
@@ -203,6 +349,8 @@ static void campi_resume(Rank *r) {
       finish_rank(r);
     else if (!r->h)
       CkAbort("campi: rank suspended at an awaitable that is not campi's");
+    else if (r->fakeRestart)
+      fake_migrate(r);
 
 #if CMK_LBDB_ON
     r->tc->getCkLocRec()->stopTiming();
@@ -227,6 +375,7 @@ static void campi_start(TCharm *tc) {
   Rank *r = new Rank;
   r->tc = tc;
   tc->setCampiRank(r);
+  r->state = registered_ops->create();
 
   r->argv = CmiCopyArgs(CkGetArgv());
   int argc = CkGetArgc();
@@ -235,7 +384,7 @@ static void campi_start(TCharm *tc) {
   CtvAccess(stackBottom) = &r->argv;
 
   // initial_suspend is suspend_always: no user code runs here.
-  r->root = registered_main(r->argv ? argc : 0, r->argv).release();
+  r->root = registered_main(r->argv ? argc : 0, r->argv, r->state).release();
   r->h = r->root;
   campi_wake(r);
 }
@@ -247,7 +396,17 @@ static void campi_start(TCharm *tc) {
 // keeps handler indices the same on every PE, including PEs with no rank.
 void campi_proc_init() noexcept {
   if (campi::registered_main == nullptr) return; // not a campi program
+  campi::fakeMigrate = CmiGetArgFlagDesc(CkGetArgv(), "+campi_fakemigrate",
+                                         "campi: rebuild each rank in place at every migrate site");
+  if (campi::fakeMigrate && CkMyPe() == 0)
+    CmiPrintf("campi> +campi_fakemigrate: every migrate site rebuilds the rank in place\n");
   campi::wakeHandlerIdx = CmiRegisterHandler((CmiHandler)campi::wakeHandler);
+}
+
+// ampi.C hook: the load balancing step or checkpoint is over for this rank.
+void campi_migrate_resumed(TCharm *tc) noexcept {
+  campi::Rank *r = (campi::Rank *)tc->getCampiRank();
+  if (r != nullptr) r->migrateDone = true;
 }
 
 // ampi.C hook: ampiParent::prepareCtv in campi mode.
@@ -264,6 +423,148 @@ task<void> yield() {
   Rank *r = current();
   enqueue_wake(r);
   co_await suspend();
+}
+
+/* ====================== restart sites ====================== */
+
+frame_guard::frame_guard() noexcept : r_(current()), depth_(0), site_(0) {
+  if (r_ == nullptr) CkAbort("campi: CAMPI_RESUMABLE outside a campi rank");
+  depth_ = r_->depth++;
+  if (r_->linked.size() < r_->depth) r_->linked.resize(r_->depth);
+  // Entered through a call site noted by the caller (the root needs none).
+  r_->linked[depth_] = depth_ == 0 || (r_->noted && r_->notedCall && r_->notedDepth == depth_ - 1);
+  r_->noted = false;
+  if (r_->restarting) {
+    if (depth_ >= r_->sites.size())
+      CkAbort("campi: rank %d: restart reached a function that was not on the recorded "
+              "path (depth %u, %zu sites recorded)", r_->tc->getElement(), depth_,
+              r_->sites.size());
+    site_ = r_->sites[depth_];
+  }
+}
+
+frame_guard::~frame_guard() {
+  if (r_->destroyingFrames) return; // the frames are destroyed for a rebuild
+  r_->depth--;
+  // A finished function's sites (and its callees') are not on any later path.
+  if (!r_->restarting && r_->sites.size() > depth_) r_->sites.resize(depth_);
+}
+
+void note_site(frame_guard &g, int line, bool call) noexcept {
+  Rank *r = g.r_;
+  const unsigned d = g.depth_;
+  if (r->restarting) {
+    if (d >= r->sites.size() || r->sites[d] != line)
+      CkAbort("campi: rank %d: restart reached site %d, recorded site %d (depth %u)",
+              r->tc->getElement(), line, d < r->sites.size() ? r->sites[d] : -1, d);
+    const bool innermost = (d + 1 == r->sites.size());
+    if (innermost == call)
+      CkAbort("campi: rank %d: recorded site %d (depth %u) is a %s site but the recorded "
+              "path %s", r->tc->getElement(), line, d, call ? "call" : "migrate",
+              call ? "ends there" : "continues into a call");
+  } else {
+    if (r->sites.size() < d + 1) r->sites.resize(d + 1);
+    r->sites[d] = line;
+    r->sites.resize(d + 1);
+  }
+  r->noted = true;
+  r->notedCall = call;
+  r->notedDepth = d;
+}
+
+void abort_no_site(const frame_guard &g) noexcept {
+  CkAbort("campi: rank %d: recorded restart site %d is not a site of the resumable "
+          "function at depth %u", g.r_->tc->getElement(), g.site_, g.depth_);
+  std::abort();
+}
+
+/* ====================== AMPI_Migrate ====================== */
+
+// AMPI_Migrate's checks for a campi rank: the site was noted by
+// CAMPI_MIGRATE in a resumable function reached through noted call sites.
+static void check_migrate_site(Rank *r) {
+  bool ok = r->noted && !r->notedCall && r->depth > 0 && r->notedDepth == r->depth - 1;
+  for (unsigned d = 0; ok && d < r->depth; d++) ok = r->linked[d];
+  if (!ok)
+    CkAbort("campi: AMPI_Migrate must be written CAMPI_MIGRATE inside CAMPI_RESUMABLE/CAMPI_END "
+            "(and each resumable function on the way awaited with CAMPI_CALL)");
+  r->noted = false;
+}
+
+// The buffers of a pending request are in the frame or in the state object,
+// and a frame does not survive a migration.
+static void check_no_outstanding_request(ampiParent *parent) {
+  ampiCheckNoCollectiveOutstanding();
+  AmpiRequestList &reqs = parent->getReqs();
+  for (int i = 0; i < reqs.size(); i++) {
+    AmpiRequest *req = reqs[i];
+    if (req != nullptr && !req->test(MPI_STATUS_IGNORE))
+      CkAbort("campi: AMPI_Migrate with an outstanding request (rank %d, MPI_Request %d)",
+              parent->thisIndex, i);
+  }
+}
+
+task<int> Migrate(MPI_Info hints) {
+  Rank *r = current();
+  if (r == nullptr) CkAbort("campi: AMPI_Migrate outside a campi rank");
+  check_migrate_site(r);
+  if (r->restarting) {
+    // The rank was rebuilt (migration, restart, fake migration) and has
+    // reached the recorded site: AMPI_Migrate returns here.
+    r->restarting = false;
+    CAMPI_DBG("rank %d restarted at site %d\n", r->tc->getElement(), r->sites.back());
+    removeUnimportantArrayObjsfromPeCache();
+    co_return MPI_SUCCESS;
+  }
+
+  AmpiMigrateAction actions[AMPI_MIGRATE_MAX_ACTIONS];
+  const int nactions = ampiParseMigrateInfo(hints, actions, AMPI_MIGRATE_MAX_ACTIONS);
+  for (int i = 0; i < nactions; i++) {
+    const AmpiMigrateAction &a = actions[i];
+    if (a.kind == AmpiMigrateKind::LB_ASYNC)
+      CkAbort("campi: AMPI_Migrate with ampi_load_balance=async is not supported in campi");
+    if (a.kind == AmpiMigrateKind::CKPT_IN_MEMORY)
+      CkAbort("campi: AMPI_Migrate with ampi_checkpoint=in_memory is not supported in campi");
+    if (a.kind == AmpiMigrateKind::CKPT_MESSAGE_LOGGING)
+      CkAbort("campi: AMPI_Migrate with ampi_checkpoint=message_logging is not supported in campi");
+  }
+  // A rank that moves in the first action would skip the second one.
+  if (nactions > 1)
+    CkAbort("campi: AMPI_Migrate with more than one action (load balancing and checkpoint "
+            "together) is not supported in campi; use two sites");
+  check_no_outstanding_request(getAmpiParent());
+
+  if (fakeMigrate) {
+    // campi_resume rebuilds the rank once it has suspended here; this frame
+    // is destroyed and never resumes.
+    r->fakeRestart = true;
+    co_await suspend();
+    CkAbort("campi: a rank resumed in a frame destroyed by +campi_fakemigrate");
+  }
+  if (nactions == 0) co_return MPI_SUCCESS;
+
+  const AmpiMigrateAction &a = actions[0];
+  if (a.kind == AmpiMigrateKind::LB_SYNC) {
+#if CMK_LBDB_ON
+    // As TCharm::migrate, without its thread checks and stop(): the rank
+    // waits here until ampiParent::resumeAfterMigration (campi_migrate_resumed).
+    // A rank the balancer moves never returns: it restarts on its new PE.
+    r->migrateDone = false;
+    r->tc->AtSync();
+    while (!r->migrateDone) co_await suspend();
+    r = current();
+#endif
+  } else { // CKPT_TO_FILE
+    // As AMPI_Migrate: barrier, then the checkpoint, whose callback
+    // (ampiParent::ResumeThread, campi_migrate_resumed) ends the wait. A
+    // run restarted from these files restarts the rank at this site.
+    co_await Barrier(MPI_COMM_WORLD);
+    r = current();
+    r->migrateDone = false;
+    getAmpiParent()->postCheckpoint(a.dir);
+    while (!r->migrateDone) co_await suspend();
+  }
+  co_return MPI_SUCCESS;
 }
 
 /* ====================== request completion ====================== */
@@ -607,6 +908,13 @@ static void array_created(void *param, void *msg) {
   r->tc->resume();
 }
 
+static void pemgr_on_pe0(void *param, void *msg) {
+  Rank *r = (Rank *)param;
+  r->peMgrOnPe0 = true;
+  CkFreeMsg(msg);
+  r->tc->resume();
+}
+
 // TCharm::semaGet, awaiting instead of suspending the thread
 static task<void *> sema_get(int id) {
   TCharm *tc = TCharm::get();
@@ -641,8 +949,17 @@ static task<void> ampi_init() {
   if (TCHARM_Element() == 0) { /* I'm responsible for building the arrays: */
     CkArrayID threads;
     opts = ampiInitRootArrayOptions(&threads, &nchunks);
+    // As in ampiInit: the dependence below does not apply on PE 0.
+    if (CkMyPe() != 0) {
+      r->peMgrOnPe0 = false;
+      ampiPeMgrWhenOnPe0(CkCallback(pemgr_on_pe0, r));
+      while (!r->peMgrOnPe0) co_await suspend();
+    }
     r->arrayCreated = false;
-    CProxy_ampiParent::ckNew(threads, nchunks, opts, CkCallback(array_created, r));
+    // As in ampiInit: the ampiParent manager's creation waits for ampiPeMgr on each PE.
+    CkEntryOptions parentOpts;
+    parentOpts.setGroupDepID(ampiPeMgrGroupID());
+    CProxy_ampiParent::ckNew(threads, nchunks, opts, CkCallback(array_created, r), &parentOpts);
     while (!r->arrayCreated) co_await suspend();
     parentAid = r->createdAid;
     CAMPI_DBG("init: ampiParent array created\n");
@@ -657,7 +974,10 @@ static task<void> ampi_init() {
     CkArrayID empty;
     ampiCommStruct worldComm(MPI_COMM_WORLD, empty, nchunks);
     r->arrayCreated = false;
-    CProxy_ampi::ckNew(parentAid, worldComm, opts, CkCallback(array_created, r));
+    // As in ampiInit: the ampi manager's creation waits for the ampiParent manager on each PE.
+    CkEntryOptions worldOpts;
+    worldOpts.setGroupDepID(parentAid);
+    CProxy_ampi::ckNew(parentAid, worldComm, opts, CkCallback(array_created, r), &worldOpts);
     while (!r->arrayCreated) co_await suspend();
   }
 

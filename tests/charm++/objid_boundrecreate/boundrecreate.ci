@@ -1,0 +1,29 @@
+mainmodule boundrecreate {
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_A aProxy;
+  readonly CProxy_A bProxy;
+  readonly CProxy_A cProxy;
+  readonly int idx;
+
+  mainchare Main {
+    entry Main(CkArgMsg* m);
+    entry void quiet();
+    entry void located(int stage, int peA, int peC);
+    entry void created(int which, int pe);
+  };
+
+  group Sender {
+    entry Sender();
+    entry void ping();
+    entry void report(int stage);
+    entry void revive();
+  };
+
+  array [1D] A {
+    entry A();
+    entry A(int which);
+    entry void ping();
+    entry void die();
+    entry [createhere] void reviveHere(int fromPe);
+  };
+};

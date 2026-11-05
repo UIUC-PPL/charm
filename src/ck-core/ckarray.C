@@ -1090,14 +1090,16 @@ void CkArray::insertElement(CkMarshalledMessage&& m, const CkArrayIndex& idx,
 
 /// This method is called by ck.C or the user to add an element.
 bool CkArray::insertElement(CkArrayMessage* m, const CkArrayIndex& idx,
-                            int listenerData[CK_ARRAYLISTENER_MAXLEN])
+                            int listenerData[CK_ARRAYLISTENER_MAXLEN], bool homeApproved)
 {
   CK_MAGICNUMBER_CHECK
   int onPe;
-  // Element's sibling already lives somewhere else, so insert there instead.
+  // Bound arrays: a sibling lives elsewhere, so insert there; otherwise create here.
+  // A creation the home approved has no live sibling and is created here
+  // (doc/internals/object-ids.md, section 3).
   // TODO: What if it's remote but we don't know it? Creation is not necessarily routed
   // through home like demand creation is, which can cause problems.
-  if (locMgr->isRemote(idx, &onPe))
+  if (!homeApproved && locMgr->servesBoundArrays() && locMgr->isRemote(idx, &onPe))
   {
     thisProxy[onPe].insertElement(m, idx, listenerData);
     return false;
@@ -1411,6 +1413,13 @@ bool CkArrayBroadcaster::attemptDelivery(CkArrayMessage* bcast, ArrayElement* el
 
   DEBB((AA "Attempting to deliver broadcast %d to element %s (el bcast#:%d)\n" AB,
         bcastEpoch, idx2str(el), elBcastNo));
+
+  // An element that arrived by migration and is still reading its zero-copy
+  // pup buffers has not run ckJustMigrated. An ordinary message to it waits in
+  // bufferedActiveRgetMsgs (_processArrayEltMsg); a broadcast waits in the
+  // store, and ckElementArriving delivers it after ckJustMigrated.
+  if (owner->getLocMgr()->bufferedActiveRgetMsgs.count(el->CkMigratable::ckGetID()) != 0)
+    return false;
 
   // If this is a ZC all done msg, then we should already have seen this epoch since we're
   // now at the last part of the ZC delivery, so don't increment the elBcastNo
@@ -2286,8 +2295,9 @@ void CkArray::bufferForLocation(CkArrayMessage* msg, const CkArrayIndex& idx)
 // multiple steps to constructing an object. Would invoking the constructor entry method
 // after the element has already been created be incorrect? Probably.
 
-// This is the method that actually does the creation of the local object. Inside of
-// insertElement there is logic for forwarding the creation if the object has migrated.
+// This is the method that actually does the creation of the local object, here: the
+// home approved it, so no element of the id is alive and insertElement does not follow
+// the index's entry.
 // TODO: This and the other instances of creating an element can probably be combined
 // TODO: Why is there a field in the message for what to do when the element is not there?
 // Seems like sinces it's a property of the entry method, not the msg, we could just look
@@ -2307,7 +2317,7 @@ void CkArray::demandCreateElement(const CkArrayIndex& idx, int ctor)
   m->array_ep() = ctor;
 
   DEBC((AA "Demand-creating %s\n" AB, idx2str(idx)));
-  insertElement(m, idx, listenerData);
+  insertElement(m, idx, listenerData, true /* homeApproved */);
 }
 
 void CkArray::bufferForCreation(CkArrayMessage* msg, const CkArrayIndex& idx)

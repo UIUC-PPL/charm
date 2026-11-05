@@ -30,8 +30,8 @@ int main(int argc, char **argv){
     return 1;
   }
 
-// Currently, only MPI builds support this style of interop
-#if CMK_CONVERSE_MPI
+  // Two colors. CharmLibInit requires a communicator congruent to
+  // MPI_COMM_WORLD, so on reconverse this aborts with an explanation.
   //splitting WORLD into 2 sets
   MPI_Comm_split(MPI_COMM_WORLD, peid%2, peid, &newComm);
 
@@ -79,11 +79,6 @@ int main(int argc, char **argv){
 
   //final synchronization
   MPI_Barrier(MPI_COMM_WORLD);
-#else
-  if (peid == 0) {
-    printf("Test is currently a no-op for non-MPI builds\n");
-  }
-#endif
 
   MPI_Finalize();
   return 0;  

@@ -55,6 +55,10 @@ env:
   # atsync_reduction (2026-10-25): reductions in flight across an AtSync
   # balancing step, and arrays with stable locations (-s -d) keeping their
   # no-broadcast-in-flight promise (#4072).
+  # reduction_migrate_ahead: migrants that already contributed to later
+  # reductions on their old PE (#4145).
+  # bcast_zcpup: broadcasts to elements that migrate to another process with
+  # pup_buffer data; the 2-process step is the one that reaches the case.
   TEST_DIRS: >-
     tests/charm++/megatest
     tests/charm++/simplearrayhello
@@ -67,10 +71,13 @@ env:
     tests/charm++/objid_migrate6
     tests/charm++/objid_loctable
     tests/charm++/objid_recreate
+    tests/charm++/io_sessions
+    tests/charm++/objid_boundrecreate
     tests/charm++/anytime_bcastred
     tests/charm++/delegation/multicast
     tests/charm++/atsync_reduction
     tests/charm++/threaded_redn
+    tests/charm++/reduction_migrate_ahead
     tests/charm++/qd
     tests/charm++/within_node_bcast
     tests/charm++/zerocopy/zerocopy_with_qd
@@ -80,6 +87,7 @@ env:
     tests/charm++/zerocopy/dereg_and_nodereg
     tests/charm++/zerocopy/zc_post_async
     tests/charm++/zerocopy/pup_buffer
+    tests/charm++/bcast_zcpup
     examples/charm++/user-driven-interop
     examples/charm++/hello/local
 
@@ -114,6 +122,38 @@ jobs:
         run: |
           set -e
           for d in $TEST_DIRS; do TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 900 make -C $d test; done
+      # Every zerocopy example across two processes, so that each transfer
+      # crosses the network: reg, unreg and prereg buffers for the direct,
+      # entry method and broadcast APIs (#4146).
+      - name: zerocopy examples (2 processes, lcrun)
+        run: |
+          set -e
+          B=$PWD/reconverse-linux-x86_64
+          make -C examples/charm++/zerocopy CHARMC=$B/bin/charmc
+          TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 1800 make -C examples/charm++/zerocopy test
+
+  # MPI interop (CharmLibInit/CharmLibExit) in an Open MPI program. A job of
+  # its own so that the MPI packages stay out of the other builds.
+  reconverse-linux-x86_64-mpi-interop:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # reconverse is the contrib/reconverse submodule.
+          submodules: true
+      - name: install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake libfabric-dev libopenmpi-dev openmpi-bin
+      - name: build
+        run: ./build charm++ reconverse-linux-x86_64 -j4 -g
+      - name: build test
+        run: make -C tests/charm++/mpi-interop
+      - name: test (2 MPI ranks, mpirun)
+        # libopenmpi-dev pulls in libibverbs, so LCI also builds its ibv
+        # backend and would pick it; the runner has no RDMA device.
+        env:
+          LCI_ATTR_BACKEND: ofi
+        run: timeout 600 make -C tests/charm++/mpi-interop test NP=2 LAUNCH="mpirun --oversubscribe -n 2"
 
   # ARM64 Linux (Grace-class systems). Replaces the coverage CircleCI's
   # arm.medium jobs provided on the classic line; -Werror=vla carried over
@@ -341,6 +381,8 @@ jobs:
   # holding return addresses into libreconverse, so testrun runs every test
   # under setarch -R on Linux (randomization off; lcrun's children inherit
   # it). The ampirun step covers its --procs launch through lcrun.
+  # examples/ampi runs the Cjacobi3D checkpoint after load balancing and its
+  # restarts on other PE counts, in one and two processes (about a minute).
   # tests/campi runs AMPI ranks as C++20 coroutines from the same libampi.
   # migratable_threads packs and unpacks threads in one process, so it keeps
   # randomization on. megatest is
@@ -367,8 +409,17 @@ jobs:
           set -e
           cd tests/ampi/megampi
           timeout 600 ../../../reconverse-linux-x86_64/bin/ampirun -np 4 --procs 2 -vr ./megampi
+      - name: examples/ampi (single process)
+        run: make -C examples/ampi test
+      - name: examples/ampi (2 processes, lcrun)
+        run: TESTRUN_PROCS=2 timeout 900 make -C examples/ampi test
       - name: tests/campi (single process)
         run: make -C tests/campi test
+      # Two processes with address randomization left on: a campi rank holds
+      # no code or data address, so it migrates between processes and restarts
+      # without setarch -R, which this step checks.
+      - name: tests/campi (2 processes, lcrun, randomization on)
+        run: TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 900 make -C tests/campi test
       - name: migratable_threads
         run: |
           set -e
