@@ -23,7 +23,8 @@ Runtime:
 
 - Programs start without charmrun: './app +pe N' runs N PEs in one
   process; multi-process runs use lcrun (or srun / mpirun), with +pe
-  giving the total PE count. There is no communication thread, so
+  giving the total PE count. The build puts LCI's lcrun in
+  <build>/bin, next to charmc. There is no communication thread, so
   every core can run a worker PE. The manual's Running chapter
   describes the reconverse launch options (#4043).
 

@@ -11,7 +11,7 @@ progdir="$(dirname "$0")"
 # no charmrun and launch a program directly with +pe.
 reconverse="@CMK_RECONVERSE@"
 # Substituted when Charm++ is configured with CMake: the Charm++ build
-# directory, where lcrun sits at _deps/lci-src/lcrun on reconverse builds.
+# directory, whose bin/ has lcrun on reconverse builds.
 # Needed because ampicc copies this script next to the program it builds.
 charmbuild="@CMAKE_BINARY_DIR@"
 
@@ -179,18 +179,18 @@ if [[ "$reconverse" = "1" ]]; then
     else
       cmd+=("+vp$num_ranks" +pe "$num_procs")
     fi
-    # lcrun is LCI's launcher script, fetched into the Charm++ build
-    # directory. Look next to this script first (bin/ampirun), then in the
+    # lcrun is LCI's launcher script, which the Charm++ build copies into
+    # bin/. Look next to this script first (bin/ampirun), then in the
     # configured build directory (a copy made by ampicc), then on PATH.
     lcrun=""
-    for c in "$progdir/../_deps/lci-src/lcrun" "$charmbuild/_deps/lci-src/lcrun"; do
+    for c in "$progdir/lcrun" "$charmbuild/bin/lcrun"; do
       if [[ -x "$c" ]]; then lcrun="$c"; break; fi
     done
     if [[ -z "$lcrun" ]] && command -v lcrun > /dev/null 2>&1; then
       lcrun=lcrun
     fi
     if [[ -z "$lcrun" ]]; then
-      echo "$progname error: --procs needs lcrun, which is not at $charmbuild/_deps/lci-src/lcrun or on PATH"
+      echo "$progname error: --procs needs lcrun, which is not at $charmbuild/bin/lcrun or on PATH"
       exit 1
     fi
     cmd=("$lcrun" -n "$num_procs" "${cmd[@]}")
