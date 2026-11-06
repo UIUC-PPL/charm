@@ -50,6 +50,8 @@ opprod 6
 opsum 4
 opmin 4
 opmax 5
+opmaxloc 5
+opminloc 4
 uoplong 4
 uoplong 11
 uoplong 16
