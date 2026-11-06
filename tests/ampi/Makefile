@@ -5,6 +5,7 @@ DIRS = \
   ibarrier \
   cas \
   onesided \
+  winlock \
   coll_extent \
   stacksize \
   migration \

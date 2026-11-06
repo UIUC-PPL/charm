@@ -97,8 +97,8 @@ module ampi {
     entry EXPEDITED_SYNC AmpiMsg *winRemoteCompareAndSwap(int size, char sorgaddr[size],
                                                           char compaddr[size], MPI_Aint targdisp,
                                                           int winIndex);
-    entry EXPEDITED_SYNC void winRemoteLock(int lock_type, int winIndex, int requestRank);
-    entry EXPEDITED_SYNC void winRemoteUnlock(int winIndex, int requestRank);
+    entry EXPEDITED void winRemoteLock(int lock_type, int winIndex, int requestRank, CkFuture grantFuture);
+    entry EXPEDITED_SYNC AmpiMsg *winRemoteUnlock(int winIndex, int requestRank);
     entry EXPEDITED_IGET AmpiMsg *winRemoteIget(MPI_Aint orgdisp, int orgcnt, MPI_Datatype orgtype,
                                                 MPI_Aint targdisp, int targcnt, MPI_Datatype targtype,
                                                 int winIndex);

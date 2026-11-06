@@ -12,6 +12,7 @@
 
 #include <string.h> /* for strlen */
 #include <algorithm>
+#include <deque>
 #include <numeric>
 #include <bitset>
 #include <complex>
@@ -483,16 +484,15 @@ public:
   void setInEpoch(bool arg) noexcept {inEpoch = arg;}
 };
 
-class lockQueueEntry {
- public:
+// A passive-target lock request that the window's owner could not grant on
+// arrival. The requesting rank is suspended on grantFuture; the owner sends a
+// message to that future when it grants the lock.
+struct winLockRequest {
   int requestRank;
-  int lock_type;
-  lockQueueEntry (int _requestRank, int _lock_type) noexcept
-    : requestRank(_requestRank), lock_type(_lock_type) {}
-  lockQueueEntry() = default;
+  int lockType; // MPI_LOCK_SHARED or MPI_LOCK_EXCLUSIVE
+  CkFuture grantFuture;
+  void pup(PUP::er &p) noexcept { p|requestRank; p|lockType; p|grantFuture; }
 };
-
-typedef CkQ<lockQueueEntry *> LockQueue;
 
 class ampiParent;
 
@@ -503,10 +503,16 @@ class win_obj {
   int disp_unit;
   MPI_Comm comm;
 
-  int owner; // Rank of owner of the lock, -1 if not locked
-  LockQueue lockQueue; // queue of waiting processors for the lock
-                       // top of queue is the one holding the lock
-                       // queue is empty if lock is not applied
+  // Passive-target lock state (MPI-3.1 section 11.5.3), kept by the rank that
+  // owns the window. lockHolders lists the ranks that hold the lock now, one
+  // entry per granted MPI_Win_lock. lockMode is MPI_LOCK_SHARED or
+  // MPI_LOCK_EXCLUSIVE while lockHolders is non-empty and WIN_LOCK_NONE
+  // otherwise; an exclusive lock has exactly one holder. lockWaiters holds the
+  // requests that could not be granted, in arrival order.
+  static constexpr int WIN_LOCK_NONE = 0;
+  std::vector<int> lockHolders;
+  int lockMode;
+  std::deque<winLockRequest> lockWaiters;
   std::string winName;
   bool initflag;
 
@@ -542,18 +548,23 @@ class win_obj {
 
   int fence() noexcept;
 
-  int lock(int requestRank, int lock_type) noexcept;
-  int unlock(int requestRank) noexcept;
+  // Grant the lock to requestRank now if no request is waiting and the mode
+  // allows it (no holder, or a shared request while the holders are shared);
+  // otherwise append the request to lockWaiters. Returns true if granted.
+  bool lockOrEnqueue(int requestRank, int lockType, CkFuture grantFuture) noexcept;
+  // Release one lock held by requestRank. Returns WIN_ERROR if it holds none.
+  // Requests granted as a result are moved from lockWaiters to lockHolders and
+  // appended to granted; the caller sends to their futures.
+  int unlock(int requestRank, std::vector<winLockRequest> &granted) noexcept;
 
   int wait() noexcept;
   int post() noexcept;
   int start() noexcept;
   int complete() noexcept;
 
-  void lockTopQueue() noexcept;
-  void enqueue(int requestRank, int lock_type) noexcept;
-  void dequeue() noexcept;
-  bool emptyQueue() noexcept;
+
+ private:
+  bool lockCompatible(int lockType) const noexcept;
 };
 //-----------------------End of code by YAN ----------------------
 
@@ -3225,8 +3236,8 @@ class ampi final : public CBase_ampi {
                          int targcnt, MPI_Datatype targtype, int winIndex) noexcept;
   int winLock(int lock_type, int rank, WinStruct *win) noexcept;
   int winUnlock(int rank, WinStruct *win) noexcept;
-  void winRemoteLock(int lock_type, int winIndex, int requestRank) noexcept;
-  void winRemoteUnlock(int winIndex, int requestRank) noexcept;
+  void winRemoteLock(int lock_type, int winIndex, int requestRank, CkFuture grantFuture) noexcept;
+  AmpiMsg* winRemoteUnlock(int winIndex, int requestRank) noexcept;
   int winAccumulate(const void *orgaddr, int orgcnt, MPI_Datatype orgtype, int rank,
                     MPI_Aint targdisp, int targcnt, MPI_Datatype targtype,
                     MPI_Op op, WinStruct *win) noexcept;
