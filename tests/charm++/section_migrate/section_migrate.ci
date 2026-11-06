@@ -1,0 +1,35 @@
+mainmodule section_migrate {
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Elem elemProxy;
+  readonly CkGroupID mcastGid;
+  readonly int numElems;
+  readonly int useLB;
+  readonly int rootHops;
+  readonly int autoDelegate;
+
+  message WorkMsg;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry void setup();
+    entry void sectionReady();
+    entry void redDone(CkReductionMsg *m);
+    entry [reductiontarget] void synced();
+    entry void startRound();
+    entry [reductiontarget] void finished(int members);
+    entry void qdDone();
+    entry void checkProgress();
+  };
+
+  array [1D] Elem {
+    entry Elem();
+    entry void makeSection();
+    entry void send(int round);
+    entry void work(WorkMsg *m);
+    entry void hop(int round, bool skipRoot);
+    entry void hopAgain();
+    entry void doSync();
+    entry void report();
+    entry void finish(int rounds);
+  };
+};
