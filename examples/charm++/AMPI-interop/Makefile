@@ -1,4 +1,4 @@
--include ../../../common.mk
+-include ../../common.mk
 CHARMDIR=../../..
 CHARMC=$(CHARMDIR)/bin/charmc $(OPTS)
 AMPICC=$(CHARMDIR)/bin/ampicxx $(OPTS)
