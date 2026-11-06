@@ -157,17 +157,34 @@ class Director : public CBase_Director
   // method called by the closeReadSession function from user
   void closeReadSession(Session read_session, CkCallback after_end)
   {
-    CProxy_BufferChares(read_session.sessionID).ckDestroy();
+    // The whole array (its manager too), and the session's ReadAssembler branches.
+    CProxy_CkArray(read_session.sessionID).ckDestroy();
+    managers.removeSessionReadAssembler(read_session);
 
     after_end.send(
         CkReductionMsg::buildNew(0, NULL, CkReduction::nop));  // invoke a callback
   }
 
   void prepareWriteSession_helper(FileToken file, size_t bytes, size_t offset,
-                                  CkCallback ready, CkCallback complete)
+                                  CkCallback ready, CkCallback complete, int id)
   {
     Options& opts = files[file].opts;
-    files[file].sessionID = sessionID;
+    files[file].sessionID = id;
+    if (bytes == 0)
+    {
+      // Nothing to write and no element to report readiness or completion: the
+      // session has no array, sessionReady is answered here, and the SDAG above
+      // calls sessionComplete after it has sent ready.
+      CkGroupID none;
+      none.setZero();  // a default CkGroupID is not initialized
+      files[file].session = CProxy_WriteSession(CkArrayID(none));
+      CkAssert(files[file].complete.isInvalid());
+      files[file].complete = complete;
+      CkReductionMsg* m = CkReductionMsg::buildNew(0, NULL, CkReduction::nop);
+      CkSetRefNum(m, id);
+      thisProxy.sessionReady(m);
+      return;
+    }
 
     int numStripes = 0;
     size_t bytesLeft = bytes, delta = opts.peStripe - offset % opts.peStripe;
@@ -183,12 +200,15 @@ class Director : public CBase_Director
       numStripes++;
 
     CkArrayOptions sessionOpts(numStripes);
+    // One array per session, and collection numbers are not reused: the wide
+    // layout's range (doc/internals/object-ids.md, section 7).
+    sessionOpts.setWideCollection();
     sessionOpts.setStaticInsertion(true);
     sessionOpts.setAnytimeMigration(false);
 	      
 
     CkCallback sessionInitDone(CkIndex_Director::sessionReady(NULL), thisProxy);
-    sessionInitDone.setRefnum(sessionID);
+    sessionInitDone.setRefnum(id);
     sessionOpts.setInitCallback(sessionInitDone);
 
     // sessionOpts.setMap(managers);
@@ -206,21 +226,22 @@ class Director : public CBase_Director
    * BufferChares to pes
    */
   void prepareReadSessionHelper(FileToken file, size_t bytes, size_t offset,
-                                CkCallback ready, std::vector<int> pes_to_map)
+                                CkCallback ready, std::vector<int> pes_to_map, int id)
   {
     if (!bytes)
     {
-      CkAbort("You're tryna read 0 bytes. Oops.\n");
+      CkAbort("CkIO: a read session of 0 bytes\n");
     }
     size_t session_bytes = bytes;  // amount of bytes in the session
     Options& opts = files[file].opts;
-    files[file].sessionID = sessionID;
+    files[file].sessionID = id;
     // determine the number of reader sessions required, depending on the session size and
     // the number of bytes per reader
     int num_readers = opts.numReaders;
 
     CkArrayOptions sessionOpts(
         num_readers);  // set the number of elements in the chare array
+    sessionOpts.setWideCollection();  // as above
     // if there is a non-empty mapping provided, do the mapping
     if (!pes_to_map.empty())
     {
@@ -228,7 +249,7 @@ class Director : public CBase_Director
       sessionOpts.setMap(bnm);
     }
     CkCallback sessionInitDone(CkIndex_Director::sessionReady(0), thisProxy);
-    sessionInitDone.setRefnum(sessionID);
+    sessionInitDone.setRefnum(id);
     sessionOpts.setInitCallback(
         sessionInitDone);  // invoke the sessionInitDone callback after all the elements
                            // of the chare array are created
@@ -238,7 +259,8 @@ class Director : public CBase_Director
 
   void sessionComplete(FileToken token)
   {
-    CProxy_CkArray(files[token].session.ckGetArrayID()).ckDestroy();
+    if (!CkGroupID(files[token].session.ckGetArrayID()).isZero())  // a 0-byte session has none
+      CProxy_CkArray(files[token].session.ckGetArrayID()).ckDestroy();
     files[token].complete.send(CkReductionMsg::buildNew(0, NULL, CkReduction::nop));
     files[token].complete = CkCallback(CkCallback::invalid);
   }
@@ -278,7 +300,7 @@ private:
   size_t _curr_RDMA_tag = 0;
 
 public:
-  ReadAssembler(Session session) { _session = session; }
+  ReadAssembler(Session session, int refnum);  // defined after Manager
 
   /*
    * This function adds the read request to the _read_info_buffer table
@@ -298,11 +320,7 @@ public:
     ri.msg->offset = read_offset;
     ri.msg->bytes = read_bytes;
     if (_read_info_buffer.count(_curr_read_tag) != 0)
-    {
-      CkPrintf("Something is wrong, a read tag is being overwritten on pe=%d!\n",
-               CkMyPe());
-      CkExit();
-    }
+      CkAbort("CkIO: a read tag is being overwritten on pe=%d\n", CkMyPe());
     _read_info_buffer[_curr_read_tag] = ri;  // put the readinfo struct in the table
     _curr_read_tag++;
     return _curr_read_tag - 1;
@@ -428,16 +446,19 @@ public:
     CkpvAccess(manager) = this;
   }
 
-  // invoked to insert the readassembler for a specific session
-  void addSessionReadAssemblerMapping(Session session, CProxy_ReadAssembler ra,
-                                      CkCallback ready)
+  // The session's ReadAssembler branch on this PE registers itself when constructed.
+  void addSessionReadAssembler(Session session, CProxy_ReadAssembler ra)
   {
     _session_to_read_assembler[session] = ra;
-    CkCallback cb(CkIndex_Director::addSessionReadAssemblerFinished(0), director);
-    int temp = 0;
-    contribute(
-        sizeof(temp), &temp, CkReduction::nop,
-        cb);  // effectively a barrier, makes sure every PE is done with adding session
+  }
+
+  // Closing the session: the branch is deleted with its map entry.
+  void removeSessionReadAssembler(Session session)
+  {
+    auto it = _session_to_read_assembler.find(session);
+    if (it == _session_to_read_assembler.end()) return;
+    delete it->second.ckLocalBranch();
+    _session_to_read_assembler.erase(it);
   }
 
   int getTag() { return _curr_tag++; }
@@ -472,7 +493,7 @@ public:
     {
       string& name = files[token].name;
 #if defined(_WIN32)
-      int fd = CmiOpen(name.c_str(), _O_WRONLY | _O_CREAT, _S_IREAD | _S_IWRITE);
+      int fd = CmiOpen(name.c_str(), _O_WRONLY | _O_CREAT | _O_BINARY, _S_IREAD | _S_IWRITE);
 #else
       int fd = CmiOpen(name.c_str(), O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
 #endif
@@ -490,10 +511,7 @@ public:
             CkCallback after_read)
   {
     if (!_session_to_read_assembler.count(session))
-    {
-      CkPrintf("Why is there no session associated with read on manager %d\n", CkMyPe());
-      CkExit();
-    }
+      CkAbort("CkIO: read on a session that is not open on PE %d\n", CkMyPe());
     CProxy_ReadAssembler ra = _session_to_read_assembler[session];
     Options& opt = files[session.file].opts;
     size_t num_readers = opt.numReaders;
@@ -503,10 +521,7 @@ public:
     // get the readassembler on this PE
     ReadAssembler* grp_ptr = ra.ckLocalBranch();
     if (!grp_ptr)
-    {
-      CkPrintf("The pointer to the local branch is null on pe=%d\n", CkMyPe());
-      CkExit();
-    }
+      CkAbort("CkIO: the session's ReadAssembler has no branch on PE %d\n", CkMyPe());
     grp_ptr->serveRead(bytes, offset, data, after_read, read_stride, num_readers);
   }
 
@@ -576,6 +591,14 @@ private:
 int getRDMATag()
 {  // function to allow ReadAssembler to get the current RDMA tag on the PE
   return CkpvAccess(manager)->getTag();
+}
+
+ReadAssembler::ReadAssembler(Session session, int refnum) : _session(session)
+{
+  CkpvAccess(manager)->addSessionReadAssembler(session, thisProxy);
+  CkCallback cb(CkIndex_Director::addSessionReadAssemblerFinished(0), director);
+  cb.setRefnum(refnum);
+  contribute(cb);
 }
 
 class WriteSession : public CBase_WriteSession
@@ -987,7 +1010,9 @@ public:
     return _processors.at(idx);
   }
 
-  int registerArray(CkArrayIndex& numElements, CkArrayID aid) { return 0; }
+  int registerArray(const CkArrayIndex& numElements, CkArrayID aid) override { return 0; }
+  // One read session's array uses this map; the branch goes with that array.
+  void unregisterArray(int idx) override { delete this; }
 };
 
 }  // namespace IO

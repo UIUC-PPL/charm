@@ -1247,8 +1247,10 @@ void removeUnimportantArrayObjsfromPeCache() noexcept {
      element is not on this PE. AMPI_Migrate calls this the moment the rank
      resumes on a new PE, and the element bound to it need not have arrived
      yet. Nothing is lost by skipping it: this whole function is cache pruning,
-     and an element that is not here has nothing in this PE's cache to prune. */
-  ampi* self = getAmpiInstance(MPI_COMM_SELF);
+     and an element that is not here has nothing in this PE's cache to prune.
+     The lookup calls comm2ampi directly because getAmpiInstance aborts on a
+     null result in a checked build, before the test below could run. */
+  ampi* self = pptr->comm2ampi(MPI_COMM_SELF);
   if (self != NULL) arrayObjs.erase(self->ckGetID().getID());
 }
 
@@ -1747,7 +1749,6 @@ TCharm *ampiParent::registerAmpi(ampi *ptr,const ampiCommStruct &s,bool forMigra
   return thread;
 }
 
-// reduction client data - preparation for checkpointing
 /* The ranks reach a checkpoint through a reduction whose callback is an entry
    method of rank 0, wherever rank 0 sits: a reduction client set on rank 0's
    PE (the earlier code) is never run once a load balancing step has moved
@@ -1764,22 +1765,15 @@ void ampiParent::startCheckpoint(const char* dname) noexcept {
   ampiParent* unused = block();
 }
 
+/* An empty directory name selects an in-memory checkpoint. The name goes to
+   CkStartCheckpoint as it is, so it may be as long as an MPI_Info value. */
 void ampiParent::checkpointAfterBarrier() noexcept {
-  Checkpoint(ckptDirName.size(), ckptDirName.c_str());
-}
-
-void ampiParent::Checkpoint(int len, const char* dname) noexcept {
-  if (len == 0) {
-    // memory checkpoint
-    CkCallback cb(CkIndex_ampiParent::ResumeThread(),thisArrayID);
+  CkCallback cb(CkIndex_ampiParent::ResumeThread(),thisArrayID);
+  if (ckptDirName.empty()) {
     CkStartMemCheckpoint(cb);
   }
   else {
-    char dirname[256];
-    strncpy(dirname,dname,len);
-    dirname[len]='\0';
-    CkCallback cb(CkIndex_ampiParent::ResumeThread(),thisArrayID);
-    CkStartCheckpoint(dirname,cb);
+    CkStartCheckpoint(ckptDirName.c_str(),cb);
   }
 }
 
@@ -11877,7 +11871,11 @@ int ampiParseMigrateInfo(MPI_Info hints, AmpiMigrateAction *out, int max) noexce
     n++;
   };
   int nkeys, exists;
-  char key[MPI_MAX_INFO_KEY], value[MPI_MAX_INFO_VAL];
+  // One byte more than the limits: MPI_Info_get copies MPI_MAX_INFO_VAL
+  // bytes without a terminator and the terminator is written after them;
+  // MPI_Info_get_nthkey writes a MPI_MAX_INFO_KEY-character key plus its
+  // terminator.
+  char key[MPI_MAX_INFO_KEY + 1], value[MPI_MAX_INFO_VAL + 1];
 
   MPI_Info_get_nkeys(hints, &nkeys);
 

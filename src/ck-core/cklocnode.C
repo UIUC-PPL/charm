@@ -477,17 +477,23 @@ uint64_t IndexTable::bind(uint64_t collection, const CkArrayIndex& idx, uint64_t
     {
       std::atomic<uint64_t>* slot = seg->words + i * SLOT_WORDS;
       uint64_t claim = slot[0].load(std::memory_order_acquire);
-      if (claim == h) again = true;
-      if (claim != 0) continue;
-      if (slot[0].compare_exchange_strong(claim, h, std::memory_order_acq_rel))
+      if (claim == 0 && slot[0].compare_exchange_strong(claim, h, std::memory_order_acq_rel))
       {
         for (int w = 0; w < KEY_WORDS; ++w) slot[1 + w].store(key[w], std::memory_order_relaxed);
         slot[1 + KEY_WORDS].store(id, std::memory_order_release);
         seg->used.fetch_add(1, std::memory_order_relaxed);
         claimed = true;
       }
-      else if (claim == h) again = true;  // lost the claim to a writer of the same hash
-      // else another key took the slot: keep probing
+      else if (claim == h)
+      {
+        // The claim is a hash, so it can be another key's (section 2.2): wait for
+        // its key words, as probe() does, and look ours up again only if it is ours.
+        while (slot[1 + KEY_WORDS].load(std::memory_order_acquire) == 0) {}
+        again = true;
+        for (int w = 0; w < KEY_WORDS && again; ++w)
+          again = slot[1 + w].load(std::memory_order_relaxed) == key[w];
+      }
+      // else another key holds the slot: keep probing
     }
     seg->active.fetch_sub(1, std::memory_order_release);
     if (claimed) return 0;

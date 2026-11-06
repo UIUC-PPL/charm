@@ -87,6 +87,28 @@ New on this line since the split from classic:
   or to the checkpoint format. New tests objid_loctable,
   objid_migrate6 and objid_recreate.
 
+- The process-level index table hung when two distinct indices had the
+  same 64-bit key hash (#4164): the insertion loop took any slot with
+  its hash for its own key in flight and waited for it. It now compares
+  the key words, as lookups always did, and probes past another key.
+  objid_loctable binds such a pair.
+
+- CkIO creates a chare array per write session and per read session,
+  and collection numbers are not reused, so a program that ran more
+  than 4,095 sessions aborted (#4149; classic allowed about 500,000: 21
+  bits counting group ids, four groups per array). The session arrays
+  use the wide-collection layout (16.7 million numbers). New test
+  tests/charm++/io_sessions: 4,200 sessions next to two standard arrays,
+  file contents and memory growth checked. The test found three more
+  defects, fixed here: CkIO on Windows opened the output file in text
+  mode, so every newline written became two bytes; a read session left
+  its array manager and its ReadAssembler group behind, and a read could
+  reach a PE before that PE's ReadAssembler existed; and destroying any
+  chare array left its CkLocCache group and index compressor allocated.
+  Every session now has its own number, so read sessions on different
+  files can be in progress at the same time, and a write session of
+  0 bytes is ready and complete at once instead of never becoming ready.
+
 - Re-creating a destroyed array element by [createhere] from a PE whose
   process still held the dead element's location created it on the PE
   the element died on (#4031, defect 1; predates the redesign). A
