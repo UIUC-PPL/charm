@@ -1,3 +1,4 @@
+-include ../../common.mk
 CHARMC = ../../../bin/charmc $(OPTS)
 TYPE ?= RING
 
@@ -15,7 +16,7 @@ test:
 	@echo "\033[1;34mRunning allGather with HYPERCUBE algorithm\033[0m"
 	@$(CHARMC) -o allGather -DHYPERCUBE ./user.C -lmoduleallGather
 	$(call run, +p4 ./allGather 4 29 7 )
-	@echo "\033[1;34mRunning allGather with RECURSIVE-DOUBLING algorithm\033[0m"
+	@echo "\033[1;34mRunning allGather with HYPERCUBE algorithm on 5 PEs (not a power of two)\033[0m"
 	$(call run, +p5 ./allGather 5 29 7 )
 	@echo "\033[1;34mRunning allGather with FLOODING algorithm\033[0m"
 	@$(CHARMC) -o allGather -DFLOODING ./user.C -lmoduleallGather
