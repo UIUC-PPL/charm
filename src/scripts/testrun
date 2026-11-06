@@ -84,7 +84,7 @@ then
     read -r -a launcher <<< "$TESTRUN_LAUNCHER"
     cmd=("${launcher[@]}" -n "$procs" "${norand[@]}" "$prog" +pe "$p" "${args[@]}")
   elif [[ $procs -gt 1 ]]; then
-    LCRUN="$CHARMBIN/../_deps/lci-src/lcrun"
+    LCRUN="$CHARMBIN/lcrun"
     [[ -x "$LCRUN" ]] || LCRUN=lcrun
     cmd=("${norand[@]}" "$LCRUN" -n "$procs" "$prog" +pe "$p" "${args[@]}")
   else

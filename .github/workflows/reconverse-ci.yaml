@@ -329,17 +329,17 @@ jobs:
           cd tests/charm++/anytime_bcastred
           B=$PWD/../../../reconverse-linux-x86_64
           for S in 4 5; do
-            timeout 900 $B/_deps/lci-src/lcrun -n 2 ./bcastred +pe 4 -n 8 -i 500 -m 1 -c 8 -S $S -w 30
-            timeout 900 $B/_deps/lci-src/lcrun -n 2 ./bcastred +pe 4 -n 8 -i 500 -m 1 -c 8 -S $S -w 30 -u
+            timeout 900 $B/bin/lcrun -n 2 ./bcastred +pe 4 -n 8 -i 500 -m 1 -c 8 -S $S -w 30
+            timeout 900 $B/bin/lcrun -n 2 ./bcastred +pe 4 -n 8 -i 500 -m 1 -c 8 -S $S -w 30 -u
           done
       - name: qd + megatest multi-process
         run: |
           set -e
           B=$PWD/reconverse-linux-x86_64
           cd tests/charm++/qd
-          timeout 900 $B/_deps/lci-src/lcrun -n 2 ./qdbench +pe 4
+          timeout 900 $B/bin/lcrun -n 2 ./qdbench +pe 4
           cd ../megatest
-          timeout 900 $B/_deps/lci-src/lcrun -n 2 ./megatest +pe 4
+          timeout 900 $B/bin/lcrun -n 2 ./megatest +pe 4
 
   doc:
     runs-on: ubuntu-latest
