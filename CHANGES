@@ -23,7 +23,8 @@ Runtime:
 
 - Programs start without charmrun: './app +pe N' runs N PEs in one
   process; multi-process runs use lcrun (or srun / mpirun), with +pe
-  giving the total PE count. There is no communication thread, so
+  giving the total PE count. The build puts LCI's lcrun in
+  <build>/bin, next to charmc. There is no communication thread, so
   every core can run a worker PE. The manual's Running chapter
   describes the reconverse launch options (#4043).
 
@@ -92,6 +93,15 @@ New on this line since the split from classic:
   its hash for its own key in flight and waited for it. It now compares
   the key words, as lookups always did, and probes past another key.
   objid_loctable binds such a pair.
+
+- A group creation's dependence (CkEntryOptions::setGroupDepID) now
+  holds on the creating PE as well: its branch waits for the groups it
+  depends on, as the other PEs' branches did (#4150). Arrays are created
+  on PE 0 for every caller, so an array whose elements use a group
+  created elsewhere no longer runs its constructors on PE 0 before that
+  group's branch exists there. ckLocalBranch() of a group created with
+  a dependence may be null right after ckNew on that PE. New test
+  tests/charm++/groupdep_creator.
 
 - CkIO creates a chare array per write session and per read session,
   and collection numbers are not reused, so a program that ran more

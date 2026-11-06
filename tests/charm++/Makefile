@@ -18,6 +18,7 @@ DIRS = \
   io \
   io_read \
   io_sessions \
+  groupdep_creator \
   sparse \
   reductionTesting \
   partitions \

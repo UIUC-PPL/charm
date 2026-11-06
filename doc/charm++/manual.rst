@@ -3567,7 +3567,11 @@ One can also use ckNew to get a CkGroupID as shown below:
 A CkGroupID is useful to specify dependence in group creations using
 CkEntryOptions. For example, in the following code, the creation of
 group ``GroupB`` on each PE depends on the creation of ``GroupA`` on
-that PE.
+that PE. This includes the PE that calls ``ckNew``: if ``GroupA``'s
+branch does not exist there yet (``GroupA`` was created on another PE
+and its creation has not arrived), ``GroupB``'s branch is created once
+it does, so ``ckLocalBranch()`` of ``GroupB`` on that PE may be null
+right after ``ckNew`` returns.
 
 .. code-block:: c++
 
@@ -12016,9 +12020,8 @@ own command line, and multiple processes are started by LCI's ``lcrun``:
    $ lcrun -n 2 ./pgm +pe 8      # two processes, 8 PEs in total
 
 ``+pe`` is always the total across all processes, and the total must be
-divisible by the number of processes. ``lcrun`` is installed by the LCI
-build under ``<builddir>/_deps/lci-src/lcrun`` rather than in
-``<builddir>/bin``.
+divisible by the number of processes. The build copies ``lcrun`` into
+``<builddir>/bin``, next to ``charmc``.
 
 Inside a batch allocation, use the site's launcher instead of ``lcrun``,
 and use it even for a single-process run: LCI bootstraps from the
@@ -12270,8 +12273,7 @@ so on a machine with N cores all N can run PEs.
 
 Runs on more than one process are started by a process launcher. On a
 workstation or laptop, with no batch system, use ``lcrun``, which the
-build leaves at ``<builddir>/_deps/lci-src/lcrun`` (not in
-``<builddir>/bin``):
+build copies into ``<builddir>/bin``:
 
 .. code-block:: bash
 

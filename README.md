@@ -315,8 +315,8 @@ This should run for a few seconds, and print out:
 `There are 14200 Solutions to 12 queens. Time=0.109440 End time=0.112752`
 
 `+pe` is the total number of PEs across all processes. To run several
-processes on one machine, use the `lcrun` launcher from the LCI build
-(`<build>/_deps/lci-src/lcrun`), for example `lcrun -n 2 ./nqueen +pe 4 12 6`;
+processes on one machine, use LCI's `lcrun` launcher, which the build puts
+in `<build>/bin`, for example `lcrun -n 2 ./nqueen +pe 4 12 6`;
 under Slurm, use `srun`.
 
 
