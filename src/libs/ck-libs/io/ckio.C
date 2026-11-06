@@ -166,10 +166,25 @@ class Director : public CBase_Director
   }
 
   void prepareWriteSession_helper(FileToken file, size_t bytes, size_t offset,
-                                  CkCallback ready, CkCallback complete)
+                                  CkCallback ready, CkCallback complete, int id)
   {
     Options& opts = files[file].opts;
-    files[file].sessionID = sessionID;
+    files[file].sessionID = id;
+    if (bytes == 0)
+    {
+      // Nothing to write and no element to report readiness or completion: the
+      // session has no array, sessionReady is answered here, and the SDAG above
+      // calls sessionComplete after it has sent ready.
+      CkGroupID none;
+      none.setZero();  // a default CkGroupID is not initialized
+      files[file].session = CProxy_WriteSession(CkArrayID(none));
+      CkAssert(files[file].complete.isInvalid());
+      files[file].complete = complete;
+      CkReductionMsg* m = CkReductionMsg::buildNew(0, NULL, CkReduction::nop);
+      CkSetRefNum(m, id);
+      thisProxy.sessionReady(m);
+      return;
+    }
 
     int numStripes = 0;
     size_t bytesLeft = bytes, delta = opts.peStripe - offset % opts.peStripe;
@@ -193,7 +208,7 @@ class Director : public CBase_Director
 	      
 
     CkCallback sessionInitDone(CkIndex_Director::sessionReady(NULL), thisProxy);
-    sessionInitDone.setRefnum(sessionID);
+    sessionInitDone.setRefnum(id);
     sessionOpts.setInitCallback(sessionInitDone);
 
     // sessionOpts.setMap(managers);
@@ -211,15 +226,15 @@ class Director : public CBase_Director
    * BufferChares to pes
    */
   void prepareReadSessionHelper(FileToken file, size_t bytes, size_t offset,
-                                CkCallback ready, std::vector<int> pes_to_map)
+                                CkCallback ready, std::vector<int> pes_to_map, int id)
   {
     if (!bytes)
     {
-      CkAbort("You're tryna read 0 bytes. Oops.\n");
+      CkAbort("CkIO: a read session of 0 bytes\n");
     }
     size_t session_bytes = bytes;  // amount of bytes in the session
     Options& opts = files[file].opts;
-    files[file].sessionID = sessionID;
+    files[file].sessionID = id;
     // determine the number of reader sessions required, depending on the session size and
     // the number of bytes per reader
     int num_readers = opts.numReaders;
@@ -234,7 +249,7 @@ class Director : public CBase_Director
       sessionOpts.setMap(bnm);
     }
     CkCallback sessionInitDone(CkIndex_Director::sessionReady(0), thisProxy);
-    sessionInitDone.setRefnum(sessionID);
+    sessionInitDone.setRefnum(id);
     sessionOpts.setInitCallback(
         sessionInitDone);  // invoke the sessionInitDone callback after all the elements
                            // of the chare array are created
@@ -244,7 +259,8 @@ class Director : public CBase_Director
 
   void sessionComplete(FileToken token)
   {
-    CProxy_CkArray(files[token].session.ckGetArrayID()).ckDestroy();
+    if (!CkGroupID(files[token].session.ckGetArrayID()).isZero())  // a 0-byte session has none
+      CProxy_CkArray(files[token].session.ckGetArrayID()).ckDestroy();
     files[token].complete.send(CkReductionMsg::buildNew(0, NULL, CkReduction::nop));
     files[token].complete = CkCallback(CkCallback::invalid);
   }
@@ -284,7 +300,7 @@ private:
   size_t _curr_RDMA_tag = 0;
 
 public:
-  ReadAssembler(Session session);  // defined after Manager
+  ReadAssembler(Session session, int refnum);  // defined after Manager
 
   /*
    * This function adds the read request to the _read_info_buffer table
@@ -577,10 +593,12 @@ int getRDMATag()
   return CkpvAccess(manager)->getTag();
 }
 
-ReadAssembler::ReadAssembler(Session session) : _session(session)
+ReadAssembler::ReadAssembler(Session session, int refnum) : _session(session)
 {
   CkpvAccess(manager)->addSessionReadAssembler(session, thisProxy);
-  contribute(CkCallback(CkIndex_Director::addSessionReadAssemblerFinished(0), director));
+  CkCallback cb(CkIndex_Director::addSessionReadAssemblerFinished(0), director);
+  cb.setRefnum(refnum);
+  contribute(cb);
 }
 
 class WriteSession : public CBase_WriteSession

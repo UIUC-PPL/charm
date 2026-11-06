@@ -106,6 +106,10 @@ New on this line since the split from classic:
   its array manager and its ReadAssembler group behind, and a read could
   reach a PE before that PE's ReadAssembler existed; and destroying any
   chare array left its CkLocCache group and index compressor allocated.
+  Every session now has its own number, so read sessions on different
+  files can be in progress at the same time, and a write session of
+  0 bytes is ready and complete at once instead of never becoming ready.
+
 - Re-creating a destroyed array element by [createhere] from a PE whose
   process still held the dead element's location created it on the PE
   the element died on (#4031, defect 1; predates the redesign). A
