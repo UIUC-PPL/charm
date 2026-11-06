@@ -1,7 +1,7 @@
 -include ../../common.mk
 CHARMC=../../../bin/charmc $(OPTS)
 # lcrun of a reconverse build (testprocs is reconverse-only).
-LCRUN ?= ../../../reconverse-darwin-arm8/_deps/lci-src/lcrun
+LCRUN ?= ../../../bin/lcrun
 
 all: restart
 	rm -rf ckptlog/

@@ -1,0 +1,24 @@
+mainmodule groupdep {
+  readonly CProxy_Main mainProxy;
+  readonly int rounds;
+
+  mainchare Main {
+    entry Main(CkArgMsg* m);
+    entry [reductiontarget] void built(int n);
+  };
+
+  group Starter {
+    entry Starter();
+    entry void begin(int round);
+    entry void stall();
+    entry void makeB(CkGroupID aID, int round);
+  };
+
+  group A {
+    entry A(int round);
+  };
+
+  group B {
+    entry B(CkGroupID aID, int round);
+  };
+};
