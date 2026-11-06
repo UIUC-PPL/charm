@@ -49,10 +49,16 @@ static const int PHASES = 12;
 
 // Two distinct indices whose index-table keys (collection 1, three ints) have the
 // same 64-bit hash (charm #4164). The table claims a slot with the hash; the
-// second key must not wait for the first one's slot forever.
-static_assert(CK_ARRAYINDEX_MAXLEN == 3, "the colliding pair is for the 3-int index layout");
+// second key must not wait for the first one's slot forever. The pair is for the
+// 3-int index layout; phase 11 checks that it still collides under the current
+// hash, and both phases are skipped in a build with another layout.
+#if CK_ARRAYINDEX_MAXLEN == 3
+#define COLLIDING_PAIR 1
 static const CkArrayIndex3D collideA(0, 0, 0);
 static const CkArrayIndex3D collideB(700590855, 72443997, 4);
+#else
+#define COLLIDING_PAIR 0
+#endif
 
 class Tables : public CBase_Tables
 {
@@ -108,8 +114,8 @@ public:
       case 8: what = "index lookups give the new id"; break;
       case 9: what = "fill between miss and registration, then a death: the request is still sent"; break;
       case 10: what = "a reply that writes nothing still reopens the claim"; break;
-      case 11: what = "two keys with one hash: both bound, once each, found apart"; wantExtra = 2 * N; break;
-      case 12: what = "two keys with one hash: rebinding one leaves the other"; wantExtra = N; break;
+      case 11: what = "two keys with one hash: both bound, once each, found apart"; wantExtra = COLLIDING_PAIR ? 2 * N : 0; break;
+      case 12: what = "two keys with one hash: rebinding one leaves the other"; wantExtra = COLLIDING_PAIR ? N : 0; break;
     }
     CkPrintf("phase %d: %s: %ld checked, %ld violations, extra %ld (expect %ld)\n", phase,
              what, checked, violations, extra, wantExtra);
@@ -271,6 +277,18 @@ public:
           }
         break;
       case 11:
+#if COLLIDING_PAIR
+        if (rank == 0)
+        {  // the pair must still collide under the table's hash, or the phases test nothing
+          ++checked;
+          uint64_t ka[ck::objid::IndexTable::KEY_WORDS], kb[ck::objid::IndexTable::KEY_WORDS];
+          ck::objid::IndexTable::makeKey(1, collideA, ka);
+          ck::objid::IndexTable::makeKey(1, collideB, kb);
+          bool sameKey = true;
+          for (int w = 0; w < ck::objid::IndexTable::KEY_WORDS; ++w) sameKey = sameKey && ka[w] == kb[w];
+          if (sameKey || ck::objid::IndexTable::hashKey(ka) != ck::objid::IndexTable::hashKey(kb))
+            ++violations;
+        }
         // Every PE binds both keys; in each process exactly one bind per key
         // returns 0 (unbound before), the rest return the id another PE bound.
         for (int which = 0; which < 2; ++which)
@@ -284,9 +302,15 @@ public:
           uint64_t got = 0;
           if (!t->collide.lookup(1, idx, got) || got / 1000 != (which ? 2 : 1)) ++violations;
         }
-        if (rank == 0 && t->collide.used() != 2) ++violations;
+        // used() counts after the id is published, so a slot can be bound and not
+        // yet counted here; more than two would mean a key took two slots.
+        if (rank == 0 && t->collide.used() > 2) ++violations;
+#else
+        if (rank == 0) CkPrintf("phase 11: skipped, no colliding pair for this index layout\n");
+#endif
         break;
       case 12:
+#if COLLIDING_PAIR
         if (rank == 0)
         {
           ++checked;
@@ -298,6 +322,7 @@ public:
           if (!t->collide.lookup(1, collideB, got) || got / 1000 != 2) ++violations;
           if (t->collide.used() != 2) ++violations;
         }
+#endif
         break;
     }
     long v[3] = {checked, violations, extra};
