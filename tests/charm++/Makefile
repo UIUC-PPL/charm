@@ -52,6 +52,7 @@ DIRS = \
   objid_recreate \
   objid_boundrecreate \
   collide \
+  objloads \
   qd \
   reduction_migrate_ahead \
   bcast_zcpup \

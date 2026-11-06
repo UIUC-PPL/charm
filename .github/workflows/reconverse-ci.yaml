@@ -52,6 +52,8 @@ env:
   # redesign (PR 1d): objid_insert reproduces that defect deterministically
   # (phase 7), objid_wide covers the wide-collection layout.
   # examples/charm++/hello/local covers [local] entry methods (#4065).
+  # objloads: the CkPerfObjLoads and LBObjLoads CCS queries agree; it needs a
+  # tracing build, so it runs in the ARM64 Linux job and skips elsewhere.
   # atsync_reduction (2026-10-25): reductions in flight across an AtSync
   # balancing step, and arrays with stable locations (-s -d) keeping their
   # no-broadcast-in-flight promise (#4072).
@@ -75,6 +77,7 @@ env:
     tests/charm++/groupdep_creator
     tests/charm++/objid_boundrecreate
     tests/charm++/anytime_bcastred
+    tests/charm++/objloads
     tests/charm++/delegation/multicast
     tests/charm++/atsync_reduction
     tests/charm++/threaded_redn
@@ -170,7 +173,8 @@ jobs:
       - name: install dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake libfabric-dev
       - name: build
-        run: ./build charm++ reconverse-linux-arm8 -j4 -g -Werror=vla
+        # --enable-tracing: tests/charm++/objloads needs libtrace-utilization.
+        run: ./build charm++ reconverse-linux-arm8 -j4 -g -Werror=vla --enable-tracing
       - name: build tests
         run: |
           set -e
