@@ -187,6 +187,9 @@ public:
   // ints two per word. Unused ints are zero (CkArrayIndex::init zero-fills).
   static constexpr int KEY_WORDS = 1 + (CK_ARRAYINDEX_MAXLEN + 1) / 2;
   static constexpr int SLOT_WORDS = 1 + KEY_WORDS + 1;
+  // Pure functions of the key; public so a test can check that two keys collide.
+  static void makeKey(uint64_t collection, const CkArrayIndex& idx, uint64_t key[KEY_WORDS]);
+  static uint64_t hashKey(const uint64_t key[KEY_WORDS]);
 
 private:
   struct Segment  // active and sealed: as in LocTable::Segment
@@ -201,8 +204,6 @@ private:
   };
   std::atomic<Segment*> head;
 
-  static void makeKey(uint64_t collection, const CkArrayIndex& idx, uint64_t key[KEY_WORDS]);
-  static uint64_t hashKey(const uint64_t key[KEY_WORDS]);
   static Segment* makeSegment(int log2, Segment* older);
   // The id word of the slot holding key in seg, or nullptr. A claimed slot whose id
   // is not yet published counts as a match for a writer (which waits for it) and
