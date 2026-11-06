@@ -39,7 +39,6 @@ module ampi {
     entry EXPEDITED_NOTRACE ampiParent(CProxy_TCharm threads_, int nRanks_);
     entry EXPEDITED void ResumeThread();
     entry EXPEDITED_REDN void checkpointAfterBarrier();
-    entry EXPEDITED void Checkpoint(int len, char dname[len]);
     entry EXPEDITED void ExchangeProxy(CProxy_ampi);
     entry EXPEDITED void resumeAfterMigration();
   };

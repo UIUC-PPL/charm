@@ -1,0 +1,16 @@
+mainmodule reduction_migrate_ahead {
+  readonly CProxy_Main mainProxy;
+  readonly int numRounds;
+  readonly int hitsPerRound;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void hitDone(int n);
+  };
+
+  array [1D] Elem {
+    entry Elem();
+    entry void migrate(int round);
+    entry void hit(int round);
+  };
+};

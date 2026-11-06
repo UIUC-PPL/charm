@@ -751,8 +751,11 @@ void CkReductionMgr::finishReduction(void)
 	  startReduction(redNo,CkMyPe());
 	  finishReduction();
   }
- 
 
+  // Arrivals that already contributed to several later reductions elsewhere
+  // leave this PE obligation-free for those rounds too (adj(r).lcount is
+  // negative for each of them); nothing else starts them here (issue #4145).
+  maybeCompleteObligationFreeRound();
 }
 
 //Sent up the reduction tree with reduced data

@@ -1232,3 +1232,34 @@ of code; the gate is the objid test set, chkpt, megatest and pingpong on the Mac
 - 2026-11-04 (Kale): PR 3 (#4123) retargeted from objid-redesign to recharm, with recharm
   merged into it first. objid-redesign carried nothing beyond recharm except PR 3, so the
   separate "part 3" PR of section 9.1 would have been a second review of the same change.
+- 2026-11-04: #4123 squash-merged into recharm as 4cf20af1c (Ritvik's approval). The three
+  parts of the redesign are on the reviewed line; objid-redesign carries nothing beyond it.
+- 2026-11-04 (#4031, defect 1): `CkArray::insertElement` forwards an insertion to the PE the
+  index's entry names only when the location manager serves bound arrays
+  (`CkLocMgr::servesBoundArrays`). For a single array such an entry is a dead element's
+  (the other processes keep it after a death, section 3.5 of the process-location chapter),
+  and a `createhere` re-creation followed it to the PE the element died on. `objid_insert`
+  phase 6 now re-creates half of the destroyed elements by `createhere` from a PE outside
+  the home's process. Review (Ritvik): bound arrays had it too once every sibling died, so
+  a demand creation the home approved does not follow the entry at all
+  (`insertElement(..., homeApproved)`): the home grants it only with no location for the id,
+  which bound arrays share. Test `objid_boundrecreate` (two processes). Left open: an
+  explicit `insert(pe)` into a bound array whose siblings all died still follows the stale
+  entry, since insertions do not go through the home. Defect 2 of #4031 (a re-created life's
+  updates rejected by processes holding the old life's higher epoch; a detour, not a
+  misdelivery) stays open.
+- 2026-11-05 (#4164, zachetienne): `IndexTable::bind` hung on two distinct keys with one
+  64-bit hash: the claim word is the hash, and the insertion loop treated a claim equal to its
+  hash as its own key still being published, without comparing the key words that `probe`
+  compares. Fixed by comparing them after publication. The chance pair needs about n^2/2^65
+  bindings in one process's table; the reporter inverted the hash to make one. Chapter
+  section 2.2; `objid_loctable` phases 11 and 12.
+- 2026-11-05 (#4149, zachetienne): CkIO's per-session arrays take the wide layout
+  (`setWideCollection()`, unconditionally, as TCharm does; 16.7 million numbers are enough
+  in every build, Kale). 12 collection
+  bits counting arrays only is a lifetime limit of 4,095 arrays, down from about 500,000
+  on classic (21 bits on the group id, four groups per array), and a library that creates
+  an array per operation
+  reaches it. Reusing numbers on destroy stays out: a late message, a stale location entry
+  or a section cookie of the destroyed array would reach the new one. Test `io_sessions`,
+  in the CI tier.
