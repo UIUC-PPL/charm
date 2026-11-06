@@ -4593,9 +4593,11 @@ void FTN_NAME(MPI_EXIT,mpi_exit)(int *exitCode)
   AMPI_Exit(*exitCode);
 }
 
-// MPI_Finalize except the final AMPI_Exit (shared with campi::Finalize).
-// A separate function so that the object created on the stack by the AMPI_API
-// call is destroyed before the call to AMPI_Exit(), which never returns.
+// The work of MPI_Finalize, shared with campi::Finalize. MPI_Finalize returns
+// to the caller; the rank ends when main returns, and AMPI_threadstart (or, in
+// campi, the coroutine's completion handler) passes main's return value to
+// AMPI_Exit, whose TCharm exit reduction takes the maximum over the ranks as
+// the process exit status.
 int ampiFinalizeBody() noexcept
 {
   {
@@ -4623,12 +4625,7 @@ int ampiFinalizeBody() noexcept
 
 AMPI_API_IMPL(int, MPI_Finalize, void)
 {
-  int ret = ampiFinalizeBody();
-  if (ret != MPI_SUCCESS)
-    return ret;
-
-  AMPI_Exit(0); // Never returns
-  return MPI_SUCCESS;
+  return ampiFinalizeBody();
 }
 
 MPI_Request ampi::postReq(AmpiRequest* newreq) noexcept
