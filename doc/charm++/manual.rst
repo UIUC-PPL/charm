@@ -3567,7 +3567,11 @@ One can also use ckNew to get a CkGroupID as shown below:
 A CkGroupID is useful to specify dependence in group creations using
 CkEntryOptions. For example, in the following code, the creation of
 group ``GroupB`` on each PE depends on the creation of ``GroupA`` on
-that PE.
+that PE. This includes the PE that calls ``ckNew``: if ``GroupA``'s
+branch does not exist there yet (``GroupA`` was created on another PE
+and its creation has not arrived), ``GroupB``'s branch is created once
+it does, so ``ckLocalBranch()`` of ``GroupB`` on that PE may be null
+right after ``ckNew`` returns.
 
 .. code-block:: c++
 
