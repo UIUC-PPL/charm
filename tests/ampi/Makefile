@@ -24,6 +24,7 @@ DIRS = \
   wildcard \
   commdup \
   intercomm_coll \
+  reduce_ops \
 
 ifeq (1,$(CMK_CAN_LINK_FORTRAN))
   DIRS += fallreduce
