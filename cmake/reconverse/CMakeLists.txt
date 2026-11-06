@@ -124,3 +124,26 @@ configure_file(${_reconverse_src}/include/taskqueue.h ${CMAKE_BINARY_DIR}/includ
 foreach(_h conv-ccs.h ccs-server.h ccs-auth.h sockRoutines.h ccs-client.h)
   configure_file(${_reconverse_src}/include/${_h} ${CMAKE_BINARY_DIR}/include/ COPYONLY)
 endforeach()
+
+# lcrun, LCI's launcher for several processes on one machine, goes in bin/ next
+# to charmc. A reconverse program runs directly as one process, and under lcrun
+# (or srun, mpirun) as several; there is no charmrun. Without this copy, lcrun
+# is only in LCI's source tree, <build>/_deps/lci-src, or in the bin/ of an
+# installed LCI.
+get_target_property(_reconverse_links reconverse LINK_LIBRARIES)
+if("LCI::lci" IN_LIST _reconverse_links)
+  include(FetchContent)
+  FetchContent_GetProperties(lci)
+  if(lci_POPULATED)
+    set(_lcrun "${lci_SOURCE_DIR}/lcrun")
+  else()
+    # An installed LCI: LCI_DIR is <prefix>/lib/cmake/LCI.
+    set(_lcrun "${LCI_DIR}/../../../bin/lcrun")
+  endif()
+  if(EXISTS "${_lcrun}")
+    # COPYONLY keeps the source's permissions, so the copy is executable.
+    configure_file("${_lcrun}" ${CMAKE_BINARY_DIR}/bin/lcrun COPYONLY)
+  else()
+    message(WARNING "lcrun not found at ${_lcrun}; bin/ will not have it")
+  endif()
+endif()
