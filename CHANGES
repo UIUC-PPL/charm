@@ -232,9 +232,9 @@ AMPI (Adaptive MPI):
 Known gaps in the alpha:
 
 - AMPI: MPI_Abort calls CkAbort, so the program exits with status 134
-  (SIGABRT), not with the error code. Not yet fixed: dup and split of an intercommunicator,
-  concurrent MPI_Intercomm_create, and MPI_Comm_create_group by a
-  subset of ranks (#4099); CkDDT_Struct lower bounds and negative
+  (SIGABRT), not with the error code. Not yet fixed: dup and split of
+  an intercommunicator, concurrent MPI_Intercomm_create, and
+  MPI_Comm_create_group by a subset of ranks (#4099); CkDDT_Struct lower bounds and negative
   extents (#4100); the neighbor order of Cart and Dist_graph
   topologies (#4101); three request-completion items of #4097
   (same-root Ibcasts, MPI_Op_free during a non-blocking reduction,
