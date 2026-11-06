@@ -209,6 +209,7 @@ switch (*datatype) { \
   case MPI_UNSIGNED_LONG: for(i=0;i<(*len);i++) { MPI_OP_IMPL(unsigned long); } break; \
   case MPI_FLOAT: for(i=0;i<(*len);i++) { MPI_OP_IMPL(float); } break; \
   case MPI_DOUBLE: for(i=0;i<(*len);i++) { MPI_OP_IMPL(double); } break; \
+  case MPI_LONG_DOUBLE: for(i=0;i<(*len);i++) { MPI_OP_IMPL(long double); } break; \
   case MPI_LONG_LONG_INT: for(i=0;i<(*len);i++) { MPI_OP_IMPL(signed long long); } break; \
   case MPI_SIGNED_CHAR: for(i=0;i<(*len);i++) { MPI_OP_IMPL(signed char); } break; \
   case MPI_UNSIGNED_LONG_LONG: for(i=0;i<(*len);i++) { MPI_OP_IMPL(unsigned long long); } break; \
@@ -241,6 +242,7 @@ switch (*datatype) { \
   case MPI_UNSIGNED_LONG: for(i=0;i<(*len);i++) { MPI_OP_IMPL(unsigned long); } break; \
   case MPI_FLOAT: for(i=0;i<(*len);i++) { MPI_OP_IMPL(float); } break; \
   case MPI_DOUBLE: for(i=0;i<(*len);i++) { MPI_OP_IMPL(double); } break; \
+  case MPI_LONG_DOUBLE: for(i=0;i<(*len);i++) { MPI_OP_IMPL(long double); } break; \
   case MPI_COMPLEX: for(i=0;i<(*len);i++) { MPI_OP_IMPL(std::complex<float>); } break; \
   case MPI_DOUBLE_COMPLEX: for(i=0;i<(*len);i++) { MPI_OP_IMPL(std::complex<double>); } break; \
   case MPI_LONG_LONG_INT: for(i=0;i<(*len);i++) { MPI_OP_IMPL(signed long long); } break; \
@@ -603,7 +605,7 @@ class ampiPeMgr : public CBase_ampiPeMgr {
       }
     }
     else {
-      return ampiStoredFunction(funcOffset); // campi mode: an offset from the program's load address
+      return ampiStoredFunction(funcOffset); // an offset from the program's load address
     }
   }
 };
@@ -649,10 +651,13 @@ uintptr_t ampiProgramLoadAddress() noexcept {
  */
 CkReduction::reducerType AmpiReducer;
 
+static MPI_User_function* ampiPredefinedOpFunction(MPI_Op op) noexcept; // defined with the table below
+
 // every msg contains a AmpiOpHeader structure before user data
 CkReductionMsg *AmpiReducerFunc(int nMsg, CkReductionMsg **msgs) noexcept {
   AmpiOpHeader *hdr = (AmpiOpHeader *)msgs[0]->getData();
-  MPI_User_function* func = ampiPeMgrProxy.ckLocalBranch()->getUserFunction(hdr->func);
+  MPI_User_function* func = (hdr->op != MPI_OP_NULL) ? ampiPredefinedOpFunction(hdr->op)
+                            : ampiPeMgrProxy.ckLocalBranch()->getUserFunction(hdr->func);
   MPI_Datatype dtype = hdr->dtype;
   int szdata = hdr->szdata;
   int len = hdr->len;
@@ -668,6 +673,9 @@ CkReductionMsg *AmpiReducerFunc(int nMsg, CkReductionMsg **msgs) noexcept {
 
 static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op op) noexcept
 {
+  // A pair with no built-in reducer returns invalid, and makeRednMsg then
+  // reduces with the op's MPI function (AmpiReducer). The size checks fall
+  // through on purpose to the C type of the same width.
   switch (type) {
     case MPI_INT32_T:
       if (getDDT()->getSize(MPI_INT32_T) != getDDT()->getSize(MPI_INT)) break;
@@ -686,6 +694,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_BXOR: return CkReduction::bitvec_xor_int;
         default:       break;
       }
+      break;
     case MPI_FLOAT:
       switch (op) {
         case MPI_MAX:  return CkReduction::max_float;
@@ -694,6 +703,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_float;
         default:       break;
       }
+      break;
     case MPI_DOUBLE:
       switch (op) {
         case MPI_MAX:  return CkReduction::max_double;
@@ -702,6 +712,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_double;
         default:       break;
       }
+      break;
     case MPI_INT8_T:
       if (getDDT()->getSize(MPI_INT8_T) != getDDT()->getSize(MPI_CHAR)) break;
       // else: fall thru to MPI_CHAR
@@ -713,6 +724,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_char;
         default:       break;
       }
+      break;
     case MPI_INT16_T:
       if (getDDT()->getSize(MPI_INT16_T) != getDDT()->getSize(MPI_SHORT)) break;
       // else: fall thru to MPI_SHORT
@@ -724,6 +736,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_short;
         default:       break;
       }
+      break;
     case MPI_LONG:
       switch (op) {
         case MPI_MAX:  return CkReduction::max_long;
@@ -732,6 +745,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_long;
         default:       break;
       }
+      break;
     case MPI_INT64_T:
       if (getDDT()->getSize(MPI_INT64_T) != getDDT()->getSize(MPI_LONG_LONG)) break;
       // else: fall thru to MPI_LONG_LONG
@@ -743,6 +757,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_long_long;
         default:       break;
       }
+      break;
     case MPI_UINT8_T:
       if (getDDT()->getSize(MPI_UINT8_T) != getDDT()->getSize(MPI_UNSIGNED_CHAR)) break;
       // else: fall thru to MPI_UNSIGNED_CHAR
@@ -754,6 +769,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_uchar;
         default:       break;
       }
+      break;
     case MPI_UINT16_T:
       if (getDDT()->getSize(MPI_UINT16_T) != getDDT()->getSize(MPI_UNSIGNED_SHORT)) break;
       // else: fall thru to MPI_UNSIGNED_SHORT
@@ -765,6 +781,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_ushort;
         default:       break;
       }
+      break;
     case MPI_UINT32_T:
       if (getDDT()->getSize(MPI_UINT32_T) != getDDT()->getSize(MPI_UNSIGNED)) break;
       // else: fall thru to MPI_UNSIGNED
@@ -776,6 +793,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_uint;
         default:       break;
       }
+      break;
     case MPI_UNSIGNED_LONG:
       switch (op) {
         case MPI_MAX:  return CkReduction::max_ulong;
@@ -784,6 +802,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_ulong;
         default:       break;
       }
+      break;
     case MPI_UINT64_T:
       if (getDDT()->getSize(MPI_UINT64_T) != getDDT()->getSize(MPI_UNSIGNED_LONG_LONG)) break;
       // else: fall thru to MPI_UNSIGNED_LONG_LONG
@@ -795,6 +814,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_PROD: return CkReduction::product_ulong_long;
         default:       break;
       }
+      break;
     case MPI_C_BOOL:
       switch (op) {
         case MPI_LAND: return CkReduction::logical_and_bool;
@@ -802,6 +822,7 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_LXOR: return CkReduction::logical_xor_bool;
         default:       break;
       }
+      break;
     case MPI_LOGICAL:
       switch (op) {
         case MPI_LAND: return CkReduction::logical_and_int;
@@ -809,13 +830,9 @@ static CkReduction::reducerType getBuiltinReducerType(MPI_Datatype type, MPI_Op 
         case MPI_LXOR: return CkReduction::logical_xor_int;
         default:       break;
       }
-    case MPI_BYTE:
-      switch (op) {
-        case MPI_BAND: return CkReduction::bitvec_and_bool;
-        case MPI_BOR:  return CkReduction::bitvec_or_bool;
-        case MPI_BXOR: return CkReduction::bitvec_xor_bool;
-        default:       break;
-      }
+      break;
+    // No case for MPI_BYTE: the bool reducers store each byte as 0 or 1 under
+    // some compilers, so bytes go through the op's MPI function instead.
     default:
       break;
   }
@@ -916,6 +933,10 @@ static constexpr std::array<MPI_User_function*, AMPI_MAX_PREDEFINED_OP+1> ampiPr
   MPI_REPLACE_USER_FN,
   MPI_NO_OP_USER_FN
 }};
+
+static MPI_User_function* ampiPredefinedOpFunction(MPI_Op op) noexcept {
+  return ampiPredefinedOps[op];
+}
 
 #if defined _WIN32
 # ifndef WIN32_LEAN_AND_MEAN
@@ -3665,13 +3686,14 @@ void ampi::processNoncommutativeRednMsg(CkReductionMsg *msg, void* buf, MPI_Data
   else {
     int contributionExtent = ddt->getExtent() * count;
 
-    // Deserialize rank 0's contribution into buf first
-    ddt->serialize((char*)contributionData[0], (char*)buf, count, contributionExtent, UNPACK);
+    // Deserialize rank 0's contribution into buf first (serialize copies
+    // from its second argument into its first when unpacking)
+    ddt->serialize((char*)buf, (char*)contributionData[0], count, contributionSize, UNPACK);
 
     // Invoke the MPI_User_function on the deserialized contributions in 'rank' order
     std::vector<char> deserializedBuf(contributionExtent);
     for (int i=1; i<commSize; i++) {
-      ddt->serialize((char*)contributionData[i], deserializedBuf.data(), count, contributionExtent, UNPACK);
+      ddt->serialize(deserializedBuf.data(), (char*)contributionData[i], count, contributionSize, UNPACK);
       (*func)(deserializedBuf.data(), buf, &count, &type);
     }
   }
@@ -4571,9 +4593,11 @@ void FTN_NAME(MPI_EXIT,mpi_exit)(int *exitCode)
   AMPI_Exit(*exitCode);
 }
 
-// MPI_Finalize except the final AMPI_Exit (shared with campi::Finalize).
-// A separate function so that the object created on the stack by the AMPI_API
-// call is destroyed before the call to AMPI_Exit(), which never returns.
+// The work of MPI_Finalize, shared with campi::Finalize. MPI_Finalize returns
+// to the caller; the rank ends when main returns, and AMPI_threadstart (or, in
+// campi, the coroutine's completion handler) passes main's return value to
+// AMPI_Exit, whose TCharm exit reduction takes the maximum over the ranks as
+// the process exit status.
 int ampiFinalizeBody() noexcept
 {
   {
@@ -4601,12 +4625,7 @@ int ampiFinalizeBody() noexcept
 
 AMPI_API_IMPL(int, MPI_Finalize, void)
 {
-  int ret = ampiFinalizeBody();
-  if (ret != MPI_SUCCESS)
-    return ret;
-
-  AMPI_Exit(0); // Never returns
-  return MPI_SUCCESS;
+  return ampiFinalizeBody();
 }
 
 MPI_Request ampi::postReq(AmpiRequest* newreq) noexcept

@@ -12,6 +12,7 @@
 
 #include <string.h> /* for strlen */
 #include <algorithm>
+#include <deque>
 #include <numeric>
 #include <bitset>
 #include <complex>
@@ -323,18 +324,21 @@ PUPfunctionpointer(MPI_User_function*)
  * running the program, whatever address space layout randomization did. */
 uintptr_t ampiProgramLoadAddress() noexcept;
 
-/* In campi mode, functions the program registers with AMPI (MPI_Op_create,
- * keyval copy and delete functions) are stored as offsets from
- * ampiProgramLoadAddress(), because a campi rank may move to another process
- * or restart from a checkpoint in a new process, where the stored address
- * would be wrong. ampiStoreFunction gives the stored form and
- * ampiStoredFunction the callable one. Outside campi mode both return their
- * argument. */
+/* Functions the program registers with AMPI (MPI_Op_create, keyval copy and
+ * delete functions) are stored as offsets from ampiProgramLoadAddress(),
+ * because the stored value is used in other processes: a user op's function
+ * travels in the AmpiOpHeader of a reduction contribution and runs where the
+ * contributions meet, and a campi rank may move to another process or restart
+ * from a checkpoint in a new one. With address space layout randomization
+ * on, each process loads the program at its own address, and only the offset
+ * is the same everywhere. ampiStoreFunction gives the stored form and
+ * ampiStoredFunction the callable one. (Under PIEglobals, OpStruct stores
+ * an offset from the rank's own base instead; see createUserFunc.) */
 template <typename F> inline F *ampiStoreFunction(F *f) noexcept {
-  return tcharm_campi ? (F *)((uintptr_t)f - ampiProgramLoadAddress()) : f;
+  return (F *)((uintptr_t)f - ampiProgramLoadAddress());
 }
 template <typename F> inline F *ampiStoredFunction(F *f) noexcept {
-  return tcharm_campi ? (F *)((uintptr_t)f + ampiProgramLoadAddress()) : f;
+  return (F *)((uintptr_t)f + ampiProgramLoadAddress());
 }
 
 /*
@@ -344,7 +348,7 @@ template <typename F> inline F *ampiStoredFunction(F *f) noexcept {
  *
  * Note: when running with PIEglobals, func is stored as its offset from the rank's
  *       base address, so that the real function can be looked up relative to any
- *       rank's base address via ampiPeMgr. In campi mode it is stored as its
+ *       rank's base address via ampiPeMgr. Otherwise it is stored as its
  *       offset from the program's load address (ampiStoreFunction).
  */
 class OpStruct {
@@ -384,12 +388,15 @@ class OpStruct {
 
 class AmpiOpHeader {
  public:
-  MPI_User_function* func;
+  MPI_User_function* func; // a user op's function in its stored form; unused for a predefined op
   MPI_Datatype dtype;
   int len;
   int szdata;
-  AmpiOpHeader(MPI_User_function* f,MPI_Datatype d,int l,int szd) noexcept :
-    func(f),dtype(d),len(l),szdata(szd) { }
+  int op; // the predefined op, or MPI_OP_NULL for a user op. The header travels
+          // between processes, so a predefined op's function is looked up by
+          // this number where the reducer runs, not through a pointer.
+  AmpiOpHeader(MPI_User_function* f,MPI_Datatype d,int l,int szd,int o) noexcept :
+    func(f),dtype(d),len(l),szdata(szd),op(o) { }
 };
 
 /*
@@ -477,16 +484,15 @@ public:
   void setInEpoch(bool arg) noexcept {inEpoch = arg;}
 };
 
-class lockQueueEntry {
- public:
+// A passive-target lock request that the window's owner could not grant on
+// arrival. The requesting rank is suspended on grantFuture; the owner sends a
+// message to that future when it grants the lock.
+struct winLockRequest {
   int requestRank;
-  int lock_type;
-  lockQueueEntry (int _requestRank, int _lock_type) noexcept
-    : requestRank(_requestRank), lock_type(_lock_type) {}
-  lockQueueEntry() = default;
+  int lockType; // MPI_LOCK_SHARED or MPI_LOCK_EXCLUSIVE
+  CkFuture grantFuture;
+  void pup(PUP::er &p) noexcept { p|requestRank; p|lockType; p|grantFuture; }
 };
-
-typedef CkQ<lockQueueEntry *> LockQueue;
 
 class ampiParent;
 
@@ -497,10 +503,16 @@ class win_obj {
   int disp_unit;
   MPI_Comm comm;
 
-  int owner; // Rank of owner of the lock, -1 if not locked
-  LockQueue lockQueue; // queue of waiting processors for the lock
-                       // top of queue is the one holding the lock
-                       // queue is empty if lock is not applied
+  // Passive-target lock state (MPI-3.1 section 11.5.3), kept by the rank that
+  // owns the window. lockHolders lists the ranks that hold the lock now, one
+  // entry per granted MPI_Win_lock. lockMode is MPI_LOCK_SHARED or
+  // MPI_LOCK_EXCLUSIVE while lockHolders is non-empty and WIN_LOCK_NONE
+  // otherwise; an exclusive lock has exactly one holder. lockWaiters holds the
+  // requests that could not be granted, in arrival order.
+  static constexpr int WIN_LOCK_NONE = 0;
+  std::vector<int> lockHolders;
+  int lockMode;
+  std::deque<winLockRequest> lockWaiters;
   std::string winName;
   bool initflag;
 
@@ -536,18 +548,23 @@ class win_obj {
 
   int fence() noexcept;
 
-  int lock(int requestRank, int lock_type) noexcept;
-  int unlock(int requestRank) noexcept;
+  // Grant the lock to requestRank now if no request is waiting and the mode
+  // allows it (no holder, or a shared request while the holders are shared);
+  // otherwise append the request to lockWaiters. Returns true if granted.
+  bool lockOrEnqueue(int requestRank, int lockType, CkFuture grantFuture) noexcept;
+  // Release one lock held by requestRank. Returns WIN_ERROR if it holds none.
+  // Requests granted as a result are moved from lockWaiters to lockHolders and
+  // appended to granted; the caller sends to their futures.
+  int unlock(int requestRank, std::vector<winLockRequest> &granted) noexcept;
 
   int wait() noexcept;
   int post() noexcept;
   int start() noexcept;
   int complete() noexcept;
 
-  void lockTopQueue() noexcept;
-  void enqueue(int requestRank, int lock_type) noexcept;
-  void dequeue() noexcept;
-  bool emptyQueue() noexcept;
+
+ private:
+  bool lockCompatible(int lockType) const noexcept;
 };
 //-----------------------End of code by YAN ----------------------
 
@@ -2811,15 +2828,13 @@ class ampiParent final : public CBase_ampiParent {
   inline AmpiOpHeader op2AmpiOpHeader(MPI_Op op, MPI_Datatype type, int count) const noexcept {
     if (opIsPredefined(op)) {
       int size = myDDT.getType(type)->getSize(count);
-      // AmpiReducerFunc resolves the header's function with getUserFunction,
-      // so a predefined op's function goes in the stored form as well.
-      return AmpiOpHeader(ampiStoreFunction(predefinedOps[op]), type, count, size);
+      return AmpiOpHeader(nullptr, type, count, size, op);
     }
     else {
       int opIdx = op - 1 - AMPI_MAX_PREDEFINED_OP;
       CkAssert(opIdx < userOps.size());
       int size = myDDT.getType(type)->getSize(count);
-      return AmpiOpHeader(userOps[opIdx].func, type, count, size);
+      return AmpiOpHeader(userOps[opIdx].func, type, count, size, MPI_OP_NULL);
     }
   }
   inline void applyOp(MPI_Datatype datatype, MPI_Op op, int count, const void* invec, void* inoutvec) const noexcept {
@@ -3221,8 +3236,8 @@ class ampi final : public CBase_ampi {
                          int targcnt, MPI_Datatype targtype, int winIndex) noexcept;
   int winLock(int lock_type, int rank, WinStruct *win) noexcept;
   int winUnlock(int rank, WinStruct *win) noexcept;
-  void winRemoteLock(int lock_type, int winIndex, int requestRank) noexcept;
-  void winRemoteUnlock(int winIndex, int requestRank) noexcept;
+  void winRemoteLock(int lock_type, int winIndex, int requestRank, CkFuture grantFuture) noexcept;
+  AmpiMsg* winRemoteUnlock(int winIndex, int requestRank) noexcept;
   int winAccumulate(const void *orgaddr, int orgcnt, MPI_Datatype orgtype, int rank,
                     MPI_Aint targdisp, int targcnt, MPI_Datatype targtype,
                     MPI_Op op, WinStruct *win) noexcept;

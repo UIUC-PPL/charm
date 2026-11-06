@@ -20,14 +20,14 @@ win_obj::win_obj() noexcept {
   winSize = 0;
   disp_unit = 0;
   comm = MPI_COMM_NULL;
-  owner = -1;
+  lockMode = WIN_LOCK_NONE;
   initflag = false;
 }
 
 win_obj::win_obj(const char *name, void *base, MPI_Aint size, int disp_unit,
                  MPI_Comm comm) noexcept {
   create(name, base, size, disp_unit, comm);
-  owner = -1;  // the lock is not owned by anyone yet
+  lockMode = WIN_LOCK_NONE;
 }
 
 void win_obj::setName(const char *src) noexcept {
@@ -66,23 +66,11 @@ void win_obj::pup(PUP::er &p) noexcept {
   p|winSize;
   p|disp_unit;
   p|comm;
-  p|owner;
+  p|lockHolders;
+  p|lockMode;
+  p|lockWaiters;
   p|winName;
   p|attributes;
-
-  int queued = lockQueue.length();
-  p|queued;
-  for (int i = 0; i < queued; i++) {
-    if (p.isUnpacking()) {
-      int requestRank, lock_type;
-      p|requestRank;
-      p|lock_type;
-      lockQueue.enq(new lockQueueEntry(requestRank, lock_type));
-    } else {
-      p|lockQueue[i]->requestRank;
-      p|lockQueue[i]->lock_type;
-    }
-  }
 }
 
 int win_obj::create(const char *name, void *base, MPI_Aint size, int disp_unit, MPI_Comm comm) noexcept {
@@ -147,42 +135,46 @@ int win_obj::fence() noexcept {
   return WIN_SUCCESS;
 }
 
-int win_obj::lock(int requestRank, int lock_type) noexcept {
-  owner = requestRank;
-  return WIN_SUCCESS;
+// A lock of lockType can be held together with the current holders if there
+// are none, or if they hold it shared and the request is shared too.
+bool win_obj::lockCompatible(int lockType) const noexcept {
+  return lockHolders.empty() ||
+         (lockMode == MPI_LOCK_SHARED && lockType == MPI_LOCK_SHARED);
 }
 
-int win_obj::unlock(int requestRank) noexcept {
-  if (owner != requestRank){
-    CkPrintf("    ERROR: Can't unlock a lock which you don't own.\n");
+// A request is granted on arrival only if no earlier request is waiting: a
+// shared request that arrives after a waiting exclusive one waits behind it,
+// so a stream of shared lockers cannot hold off the exclusive one forever.
+bool win_obj::lockOrEnqueue(int requestRank, int lockType, CkFuture grantFuture) noexcept {
+  if (lockWaiters.empty() && lockCompatible(lockType)) {
+    lockHolders.push_back(requestRank);
+    lockMode = lockType;
+    return true;
+  }
+  lockWaiters.push_back(winLockRequest{requestRank, lockType, grantFuture});
+  return false;
+}
+
+// After the release, grant waiting requests from the front of the queue for
+// as long as each is compatible with the holders: either one exclusive
+// request, or a run of consecutive shared requests.
+int win_obj::unlock(int requestRank, std::vector<winLockRequest> &granted) noexcept {
+  auto it = std::find(lockHolders.begin(), lockHolders.end(), requestRank);
+  if (it == lockHolders.end()) {
     return WIN_ERROR;
   }
-  owner = -1;
-
-  // dequeue from queue itself
-  dequeue();
-
+  lockHolders.erase(it);
+  if (lockHolders.empty()) {
+    lockMode = WIN_LOCK_NONE;
+  }
+  while (!lockWaiters.empty() && lockCompatible(lockWaiters.front().lockType)) {
+    const winLockRequest &next = lockWaiters.front();
+    lockHolders.push_back(next.requestRank);
+    lockMode = next.lockType;
+    granted.push_back(next);
+    lockWaiters.pop_front();
+  }
   return WIN_SUCCESS;
-}
-
-void win_obj::dequeue() noexcept {
-  lockQueueEntry *lq = lockQueue.deq();
-  delete lq;
-}
-
-void win_obj::enqueue(int requestRank, int lock_type) noexcept {
-  lockQueueEntry *lq = new lockQueueEntry(requestRank, lock_type);
-  lockQueue.enq(lq);
-}
-
-bool win_obj::emptyQueue() noexcept {
-  return (lockQueue.length()==0);
-}
-
-void win_obj::lockTopQueue() noexcept {
-  lockQueueEntry *lq = lockQueue.deq();
-  lock(lq->requestRank, lq->lock_type);
-  lockQueue.insert(0, lq);
 }
 
 /* these four functions are yet to implement */
@@ -613,47 +605,60 @@ AmpiMsg* ampi::winRemoteCompareAndSwap(int size, char* sorgaddr, char* compaddr,
   return msg;
 }
 
+// MPI_Win_lock returns only once the lock is held. The request goes to the
+// window's owner (winRemoteLock) with a future created here; the rank's thread
+// is suspended on that future until the owner sends the grant message, which
+// carries no data. The rank cannot migrate while it waits, so the future,
+// which belongs to this PE, stays valid.
 int ampi::winLock(int lock_type, int rank, WinStruct *win) noexcept {
   AMPI_DEBUG("    [%d] Lock: invoke Remote lock at [%d]\n", thisIndex, rank);
-  thisProxy[rank].winRemoteLock(lock_type, win->index, thisIndex);
+  CkFuture grantFuture = CkCreateFuture();
+  thisProxy[rank].winRemoteLock(lock_type, win->index, thisIndex, grantFuture);
+  delete (AmpiMsg*)CkWaitReleaseFuture(grantFuture.id);
   return MPI_SUCCESS;
 }
 
-void ampi::winRemoteLock(int lock_type, int winIndex, int requestRank) noexcept {
-  AMPI_DEBUG("    [%d] RemoteLock: invoked \n", thisIndex);
-  win_obj *winobj = winObjects[winIndex];
+static void sendLockGrant(const winLockRequest &req, int ownerRank) noexcept {
+  AmpiMsg *grant = new (0, 0) AmpiMsg(0, 0, MPI_RMA_TAG, ownerRank, 0);
+  CkSendToFuture(req.grantFuture, grant);
+}
 
-  // check if any one else waiting in the queue
-  if(winobj->owner > -1 && !(winobj->emptyQueue()))  {
-  // queue it if queue non-empty
-    winobj->enqueue(requestRank, lock_type);
-    AMPI_DEBUG("    [%d] RemoteLock: queue lock from [%d] \n", thisIndex, requestRank);
-  }
-  // if queue empty, get semaphore and queue it
-  else {
-    winobj->lock(requestRank, lock_type);
-    winobj->enqueue(requestRank, lock_type);
-    AMPI_DEBUG("    [%d] RemoteLock: give lock to [%d] \n", thisIndex, requestRank);
+void ampi::winRemoteLock(int lock_type, int winIndex, int requestRank, CkFuture grantFuture) noexcept {
+  win_obj *winobj = winObjects[winIndex];
+  if (winobj->lockOrEnqueue(requestRank, lock_type, grantFuture)) {
+    AMPI_DEBUG("    [%d] RemoteLock: give lock to [%d]\n", thisIndex, requestRank);
+    sendLockGrant(winLockRequest{requestRank, lock_type, grantFuture}, thisIndex);
+  } else {
+    AMPI_DEBUG("    [%d] RemoteLock: queue lock from [%d]\n", thisIndex, requestRank);
   }
 }
 
+// winRemoteUnlock is a [sync] entry method, so MPI_Win_unlock returns after
+// the owner has released the lock. Its reply carries one int: WIN_SUCCESS, or
+// WIN_ERROR if this rank held no lock on that window.
 int ampi::winUnlock(int rank, WinStruct *win) noexcept {
-  AMPI_DEBUG("    [%d] Unlock: invoke Remote lock at [%d]\n", thisIndex, rank);
-  thisProxy[rank].winRemoteUnlock(win->index, thisIndex);
+  AMPI_DEBUG("    [%d] Unlock: invoke Remote unlock at [%d]\n", thisIndex, rank);
+  AmpiMsg *reply = thisProxy[rank].winRemoteUnlock(win->index, thisIndex);
+  int status;
+  memcpy(&status, reply->getData(), sizeof(int));
+  delete reply;
+  if (status != WIN_SUCCESS) {
+    return ampiErrhandler("AMPI_Win_unlock", MPI_ERR_RMA_SYNC);
+  }
   return MPI_SUCCESS;
 }
 
-void ampi::winRemoteUnlock(int winIndex, int requestRank) noexcept {
-  AMPI_DEBUG("    [%d] RemoteUnlock: invoked \n", thisIndex);
+AmpiMsg* ampi::winRemoteUnlock(int winIndex, int requestRank) noexcept {
   win_obj *winobj = winObjects[winIndex];
-  winobj->unlock(requestRank);
-  AMPI_DEBUG("    [%d] RemoteUnlock: [%d] release lock\n", thisIndex, requestRank);
-
-  // if queue non-empty, get lock for the first waiting one and reply
-  if(!(winobj->emptyQueue())) {
-    AMPI_DEBUG("    [%d] RemoteUnlock: queue non-empty, give lock to \n", thisIndex);
-    winobj->lockTopQueue();
+  std::vector<winLockRequest> granted;
+  int status = winobj->unlock(requestRank, granted);
+  AMPI_DEBUG("    [%d] RemoteUnlock: [%d] release lock, status %d\n", thisIndex, requestRank, status);
+  for (const winLockRequest &req : granted) {
+    sendLockGrant(req, thisIndex);
   }
+  AmpiMsg *reply = new (sizeof(int), 0) AmpiMsg(0, 0, MPI_RMA_TAG, thisIndex, sizeof(int));
+  memcpy(reply->getData(), &status, sizeof(int));
+  return reply;
 }
 
 MPI_Win ampi::createWinInstance(void *base, MPI_Aint size, int disp_unit, MPI_Info info) noexcept {
@@ -1067,18 +1072,25 @@ AMPI_API_IMPL(int, MPI_Win_fence, int assertion, MPI_Win win)
  *     int lock_type : MPI_LOCK_EXCLUSIVE or MPI_LOCK_SHARED
  *     int rank : rank of locked window
  *     int assertion : program assertion, used to provide optimization hints
- *   Returns int : MPI_SUCCESS or MPI_ERR_WIN
+ *   Returns int : MPI_SUCCESS, MPI_ERR_LOCKTYPE or MPI_ERR_RANK
+ *
+ * Returns once the lock is held: shared locks from several ranks are held
+ * together, an exclusive lock is held alone, and requests that cannot be
+ * granted wait at the window's owner in arrival order (win_obj::lockOrEnqueue).
+ * The assertion is ignored; MPI_MODE_NOCHECK is a hint, so taking the lock
+ * anyway is correct.
  */
 AMPI_API_IMPL(int, MPI_Win_lock, int lock_type, int rank, int assertion, MPI_Win win)
 {
   AMPI_API("AMPI_Win_lock", lock_type, rank, assertion, win);
+  if (lock_type != MPI_LOCK_SHARED && lock_type != MPI_LOCK_EXCLUSIVE)
+    return ampiErrhandler("AMPI_Win_lock", MPI_ERR_LOCKTYPE);
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
   ampi *ptr = getAmpiInstance(winStruct->comm);
-
-  // process assertion here:
-  // end of assertion
-  ptr->winLock(lock_type, rank, winStruct);
-  return MPI_SUCCESS;
+  if (rank < 0 || rank >= ptr->getSize())
+    return ampiErrhandler("AMPI_Win_lock", MPI_ERR_RANK);
+  return ptr->winLock(lock_type, rank, winStruct);
 }
 
 /*
@@ -1086,20 +1098,20 @@ AMPI_API_IMPL(int, MPI_Win_lock, int lock_type, int rank, int assertion, MPI_Win
  *   Unlocks access to this MPI_Win object.
  *   Input:
  *     int rank : rank of locked window
- *   Returns int : MPI_SUCCESS or MPI_ERR_WIN
+ *   Returns int : MPI_SUCCESS, MPI_ERR_RANK, or MPI_ERR_RMA_SYNC if the
+ *   calling rank holds no lock on that rank's window
  */
-// The RMA call is completed both locally and remotely after unlock.
-  // process assertion here: HOW???
+// The RMA calls of the epoch completed when they returned (see
+// AMPI_Win_flush), so unlock only releases the lock.
 AMPI_API_IMPL(int, MPI_Win_unlock, int rank, MPI_Win win)
 {
   AMPI_API("AMPI_Win_unlock", rank, win);
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
   WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
   ampi *ptr = getAmpiInstance(winStruct->comm);
-
-  // process assertion here: HOW???
-  // end of assertion
-  ptr->winUnlock(rank, winStruct);
-  return MPI_SUCCESS;
+  if (rank < 0 || rank >= ptr->getSize())
+    return ampiErrhandler("AMPI_Win_unlock", MPI_ERR_RANK);
+  return ptr->winUnlock(rank, winStruct);
 }
 
 /*
@@ -1138,9 +1150,63 @@ AMPI_API_IMPL(int, MPI_Win_unlock_all, MPI_Win win)
   ampi *ptr = getAmpiInstance(winStruct->comm);
   int size = ptr->getSize();
 
+  int ret = MPI_SUCCESS;
   for(int i=0; i<size; i++) {
-    ptr->winUnlock(i, winStruct);
+    int r = ptr->winUnlock(i, winStruct);
+    if (ret == MPI_SUCCESS) ret = r;
   }
+  return ret;
+}
+
+/*
+ * int AMPI_Win_flush(int rank, MPI_Win win)
+ * int AMPI_Win_flush_all(MPI_Win win)
+ * int AMPI_Win_flush_local(int rank, MPI_Win win)
+ * int AMPI_Win_flush_local_all(MPI_Win win)
+ *   Complete the RMA operations the caller has issued on win (to rank, or to
+ *   every rank), at the target (flush) or at the origin (flush_local).
+ *
+ * In AMPI every RMA call has completed at both ends when it returns: Put,
+ * Accumulate and their request-based forms call [sync] entry methods
+ * (winRemotePut, winRemoteAccumulate), so the origin waits until the target
+ * has applied the data; Get, Get_accumulate, Fetch_and_op and
+ * Compare_and_swap wait for the reply that carries the target's data; a
+ * target on the caller's PE is accessed directly. No operation is outstanding
+ * at a flush, so these functions check their arguments and return. The
+ * AMPI_Iget extension is completed by AMPI_Iget_wait, not by a flush.
+ */
+static int winFlushCheck(const char *func, int rank, MPI_Win win) noexcept {
+  if (rank == MPI_PROC_NULL) return MPI_SUCCESS; // MPI-3.1 section 11.3: a no-op
+  WinStruct *winStruct = getAmpiParent()->getWinStruct(win);
+  ampi *ptr = getAmpiInstance(winStruct->comm);
+  if (rank < 0 || rank >= ptr->getSize())
+    return ampiErrhandler(func, MPI_ERR_RANK);
+  return MPI_SUCCESS;
+}
+
+AMPI_API_IMPL(int, MPI_Win_flush, int rank, MPI_Win win)
+{
+  AMPI_API("AMPI_Win_flush", rank, win);
+  return winFlushCheck("AMPI_Win_flush", rank, win);
+}
+
+AMPI_API_IMPL(int, MPI_Win_flush_all, MPI_Win win)
+{
+  AMPI_API("AMPI_Win_flush_all", win);
+  getAmpiParent()->getWinStruct(win); // checks the handle
+  return MPI_SUCCESS;
+}
+
+AMPI_API_IMPL(int, MPI_Win_flush_local, int rank, MPI_Win win)
+{
+  AMPI_API("AMPI_Win_flush_local", rank, win);
+  return winFlushCheck("AMPI_Win_flush_local", rank, win);
+}
+
+AMPI_API_IMPL(int, MPI_Win_flush_local_all, MPI_Win win)
+{
+  AMPI_API("AMPI_Win_flush_local_all", win);
+  getAmpiParent()->getWinStruct(win); // checks the handle
   return MPI_SUCCESS;
 }
 
