@@ -1,8 +1,10 @@
-## Edit CHARMBASE to point to your Charm++ directory
+## CHARMBASE defaults to the enclosing Charm++ build; to use another,
+## pass it on the command line: make CHARMBASE=/path/to/charm/build
+-include ../../../common.mk
 
 ################
 ## Generic Linux
-CHARMBASE = $(HOME)/charm/netlrts-linux-x86_64
+CHARMBASE = ../../../..
 OPTS = -g -O0
 
 ##########################
@@ -25,7 +27,7 @@ DEF := $(C_CI:.ci=.def.h)
 HEADERS := $(wildcard *.h)
 DECL_DEF := $(DECL) $(DEF)
 
-.PHONY: all projections loadbalance clean distclean
+.PHONY: all test projections loadbalance clean distclean
 
 all: kripke
 
@@ -41,6 +43,13 @@ loadbalance: $(C_SRCS) $(DECL_DEF) $(HEADERS)
 
 $(DECL_DEF): $(C_CI)
 		$(CHARMC) $(C_CI)
+
+# 16^3 zones in 2x2x2 zone sets, 5 iterations. No result check: the
+# program prints the particle count each iteration but checks nothing.
+# (A literal comma would split the arguments of $(call run, ...).)
+ZSET = 2,2,2
+test: kripke
+	$(call run, +p4 ./kripke --zset $(ZSET) --niter 5)
 
 clean:
 		rm -f *.o *.decl.h *.def.h *.proj charmrun kripke
