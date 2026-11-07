@@ -83,6 +83,8 @@ void AllGather::local_buff_done(CkDataMsg* m)
       case allGatherType::ALL_GATHER_RING:
         break;
     }
+    // Every transfer from and into this element has completed.
+    src.deregisterMem();
     lib_done_callback.send(msg);
   }
 }
@@ -90,7 +92,8 @@ void AllGather::local_buff_done(CkDataMsg* m)
 void AllGather::startGather()
 {
   for (int i = 0; i < k; i++) store[k * idx + i] = data[i];
-  CkNcpyBuffer src(data, k * sizeof(char), zero_copy_callback, CK_BUFFER_REG);
+  src = CkNcpyBuffer(data, k * sizeof(char), zero_copy_callback, CK_BUFFER_REG,
+                     CK_BUFFER_NODEREG);
 
   switch (type)
   {

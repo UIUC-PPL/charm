@@ -110,6 +110,7 @@ void simBox::done(allGatherMsg* msg)
       ckout << result[i] << " ";
     }
     ckout << endl;
+    CkAbort("allGather: incorrect result on chare %d", thisIndex);
   }
   CkRdmaFree(result);
   CkRdmaFree(data);

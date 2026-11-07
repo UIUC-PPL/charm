@@ -42,6 +42,9 @@ private:
   allGatherMsg* msg;
   char* data;
   CkCallback zero_copy_callback;
+  // This element's buffer; every other element gets from it, so the runtime
+  // must not deregister it after the first transfer (CK_BUFFER_NODEREG).
+  CkNcpyBuffer src;
 
 public:
   AllGather_SDAG_CODE

@@ -52,6 +52,8 @@ env:
   # redesign (PR 1d): objid_insert reproduces that defect deterministically
   # (phase 7), objid_wide covers the wide-collection layout.
   # examples/charm++/hello/local covers [local] entry methods (#4065).
+  # objloads: the CkPerfObjLoads and LBObjLoads CCS queries agree; it needs a
+  # tracing build, so it runs in the ARM64 Linux job and skips elsewhere.
   # atsync_reduction (2026-10-25): reductions in flight across an AtSync
   # balancing step, and arrays with stable locations (-s -d) keeping their
   # no-broadcast-in-flight promise (#4072).
@@ -75,6 +77,7 @@ env:
     tests/charm++/groupdep_creator
     tests/charm++/objid_boundrecreate
     tests/charm++/anytime_bcastred
+    tests/charm++/objloads
     tests/charm++/delegation/multicast
     tests/charm++/atsync_reduction
     tests/charm++/threaded_redn
@@ -123,15 +126,16 @@ jobs:
         run: |
           set -e
           for d in $TEST_DIRS; do TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 900 make -C $d test; done
-      # Every zerocopy example across two processes, so that each transfer
-      # crosses the network: reg, unreg and prereg buffers for the direct,
-      # entry method and broadcast APIs (#4146).
-      - name: zerocopy examples (2 processes, lcrun)
-        run: |
-          set -e
-          B=$PWD/reconverse-linux-x86_64
-          make -C examples/charm++/zerocopy CHARMC=$B/bin/charmc
-          TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 1800 make -C examples/charm++/zerocopy test
+      # Every example in examples/charm++ (the directories its Makefile lists),
+      # in one process and in two (#4161). In two processes every zerocopy
+      # transfer crosses the network: reg, unreg and prereg buffers for the
+      # direct, entry method and broadcast APIs (#4146).
+      - name: build examples/charm++
+        run: make -C examples/charm++ CHARMC=$PWD/reconverse-linux-x86_64/bin/charmc
+      - name: examples/charm++ (single process)
+        run: TESTRUN_VA_RANDOMIZATION=1 timeout 1800 make -C examples/charm++ test
+      - name: examples/charm++ (2 processes, lcrun)
+        run: TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 1800 make -C examples/charm++ test
 
   # MPI interop (CharmLibInit/CharmLibExit) in an Open MPI program. A job of
   # its own so that the MPI packages stay out of the other builds.
@@ -170,7 +174,8 @@ jobs:
       - name: install dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake libfabric-dev
       - name: build
-        run: ./build charm++ reconverse-linux-arm8 -j4 -g -Werror=vla
+        # --enable-tracing: tests/charm++/objloads needs libtrace-utilization.
+        run: ./build charm++ reconverse-linux-arm8 -j4 -g -Werror=vla --enable-tracing
       - name: build tests
         run: |
           set -e

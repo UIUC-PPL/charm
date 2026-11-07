@@ -1,4 +1,4 @@
--include ../../../../common.mk
+-include ../../../common.mk
 CHARMC = ../../../../bin/charmc $(OPTS)
 OPTS = -O3 -fopt-info-vec-optimized #-DUSE_NVTX
 
