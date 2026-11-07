@@ -165,10 +165,92 @@ New on this line since the split from classic:
   communicator only; not on Windows. Launch with the launcher the MPI
   library requires (Cray MPICH under Slurm: srun --mpi=cray_shasta).
 
+AMPI (Adaptive MPI):
+
+- AMPI and TCharm run on reconverse (#4051, #4064): the ranks are
+  migratable user-level threads with Isomalloc heaps, as on classic.
+  Build with './build AMPI reconverse-<os>-<arch>'; ampicc, ampicxx and
+  ampif90 are unchanged. './app +pe N +vp R' runs R ranks on N PEs in
+  one process, 'lcrun -n P ./app +pe N +vp R' across P processes, and
+  'ampirun -np R --procs P ./app' does the same through lcrun (#4113).
+  A rank that moves to another process or is restored from a
+  checkpoint needs address space randomization off: on Linux, ampirun
+  and testrun add 'setarch $(uname -m) -R' themselves, and under srun
+  or mpirun it goes inside the launch. A thread unpacked in a process
+  whose code is loaded elsewhere now aborts with a message naming the
+  cause instead of crashing (#4112).
+
+- Load balancing migrates ranks between PEs and between processes.
+  Non-blocking collectives may be outstanding across AMPI_Migrate only
+  with '+ampiMigrateWithCollectives' (or '+ampiEnableMigrateToPe');
+  without it, AMPI_Migrate aborts with a message naming the request
+  (#4093). One-sided windows migrate with their rank (#4124). Start-up
+  creates the ranks' arrays after the groups they use (#4137, #4147).
+
+- Checkpoint to disk and restart on the same, fewer or more PEs or
+  processes (#4109, #4133, #4142): AMPI_Migrate with the
+  'ampi_checkpoint' key set to 'to_file=DIR' writes the checkpoint and
+  '+restart DIR' resumes it, also after load balancing steps.
+  examples/ampi/Cjacobi3D demonstrates it with '-chkpt ITER DIR', and
+  the manual has the recipe (#4134).
+
+- Standard coverage: the run of the 2018 MPICH pass list recorded on
+  #4103 (2026-10-30) passed 181 of 185 tests with one rank per
+  process; of the other four, comm/ctxalloc, rma/locknull and
+  rma/acc-loc are fixed since (#4118, #4171), and init/timeout needs
+  the launcher to enforce a time limit. Fixed since classic 8.1.0:
+  MPI_Intercomm_merge deadlock (#4076); MPI_Group_free on a group
+  from MPI_Comm_group (#4077); MPI_Bsend waiting for the receiver
+  (#4078); MPI_Ibarrier hang (#4074); non-blocking collective results
+  matched to the wrong request or waking the wrong waiter (#4075,
+  #4084); MPI_Waitall/Waitany/Waitsome over MPI_Ialltoall (#4105);
+  MPI_Compare_and_swap (#4083); MPI_Exscan on non-power-of-two sizes,
+  and MPI_Iscan/MPI_Iexscan now non-blocking (#4085); MPI_ANY_TAG
+  matching internal messages (#4090); send offsets of non-contiguous
+  types in intercommunicator scatters and neighbor alltoalls (#4125);
+  the abort after 4,095 MPI_Comm_dup/MPI_Comm_free pairs, by giving
+  communicator arrays the wide-collection layout (#4118); one-sided
+  bounds with disp_unit, MPI_PROC_NULL targets and non-contiguous
+  targets (#4106); window locks that wait, with shared and exclusive
+  semantics, and the MPI_Win_flush family (#4171); predefined
+  reductions that used the wrong reducer for most type and operation
+  pairs, and MAXLOC/MINLOC on the pair types (#4173). MPI_Finalize now
+  returns, and the largest value main returns over the ranks becomes
+  the program's exit status (#4170). Core fixes found by AMPI: a
+  reduction no longer hangs when elements migrate in after
+  contributing to later rounds (#4151); a broadcast waits for an
+  element still reading its zero-copy pup buffers (#4148).
+
+- campi, experimental: AMPI ranks as C++20 coroutines in the same
+  library, with no thread per rank (#4073, #4136). A campi program is
+  C++20 using the CAMPI_MAIN, CAMPI_RESUMABLE and CAMPI_MIGRATE macros
+  of campi.h; blocking calls are awaited, and after a migration or a
+  restart a rank runs its main again to the recorded site, with its
+  state in one pupped object. campi migration and restart need
+  neither Isomalloc nor address randomization off, so they work on
+  macOS. Blocking calls campi does not yet provide are compile errors.
+  tests/campi has the tests.
+
+- Privatization: pieglobals, pipglobals and fsglobals work on Linux;
+  tlsglobals is not supported on reconverse.
+
 Known gaps in the alpha:
 
-- AMPI is not yet ported to reconverse; Windows multicore is not yet
-  available.
+- AMPI: MPI_Abort calls CkAbort, so the program exits with status 134
+  (SIGABRT), not with the error code. Not yet fixed: dup and split of
+  an intercommunicator, concurrent MPI_Intercomm_create, and
+  MPI_Comm_create_group by a subset of ranks (#4099); CkDDT_Struct lower bounds and negative
+  extents (#4100); the neighbor order of Cart and Dist_graph
+  topologies (#4101); three request-completion items of #4097
+  (same-root Ibcasts, MPI_Op_free during a non-blocking reduction,
+  sequence number wraparound). pieglobals with Fortran aborts at exit
+  on Linux after the program has finished (#4157). On macOS a rank
+  cannot move to another process or restart from a checkpoint (no
+  way to turn address randomization off); campi can. In-memory
+  checkpoint and shrink/expand are not in this release, and ROMIO is
+  not built by default.
+
+- Windows multicore is not yet available.
 
 - CharmDebug is not available.
 
