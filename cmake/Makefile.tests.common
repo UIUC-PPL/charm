@@ -19,6 +19,13 @@ all-test-benchmarks: LIBS
 # Remove the silent flag from MAKEFLAGS
 	MAKEFLAGS=$${MAKEFLAGS#$(SILENT)} $(MAKE) -C ../benchmarks all
 
+# The mini-applications are not part of all-test or test.
+all-test-miniapps: LIBS
+	MAKEFLAGS=$${MAKEFLAGS#$(SILENT)} $(MAKE) -C ../miniapps all
+
+test-miniapps: LIBS
+	$(MAKE) -C ../miniapps test
+
 all-zc: charm++
 	$(MAKE) -C ../tests/charm++/zerocopy all
 	$(MAKE) -C ../examples/charm++/zerocopy all
