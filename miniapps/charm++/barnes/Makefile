@@ -1,4 +1,8 @@
-CHARM_PATH = ../charm
+-include ../../common.mk
+# CHARM_PATH defaults to the enclosing Charm++ build and STRUCTURES_PATH to
+# a sibling clone of https://github.com/N-BodyShop/utility; override either
+# on the command line, e.g. make STRUCTURES_PATH=/path/to/utility/structures
+CHARM_PATH = ../../..
 CHARM_LDB_PATH = $(CHARM_PATH)/src/ck-ldb
 CHARM_UTIL_PATH = $(CHARM_PATH)/src/util
 CHARM_LIB_PATH = $(CHARM_PATH)/lib
@@ -26,7 +30,20 @@ SRC = Main.cpp DataManager.cpp TreePiece.cpp \
       State.cpp particleGenerator.cpp gen_util.cpp plummer.cpp
 
 TARGET = barnes 
+
+# The structures headers (Vector3D.h, OrientedBox.h, ...) come from ChaNGa's
+# utility repository. Without them, all and test print a message and succeed.
+ifeq ($(wildcard $(STRUCTURES_PATH)/Vector3D.h),)
+all test:
+	@echo "barnes: skipped, ChaNGa structures library not found (STRUCTURES_PATH=$(STRUCTURES_PATH))"
+else
 all: $(TARGET) gen plummer
+
+# 10,000 Plummer-sphere particles, 100 tree pieces, 50 iterations. No
+# result check: the program prints the energy but checks nothing.
+test: all
+	./plummer 10000 particles.bin
+	$(call run, +p4 ./barnes -in=particles.bin -p=100 -killat=50)
 
 $(TARGET): $(OBJECTS) Makefile.dep 
 	$(CHARMC) -o $(TARGET) $(LDFLAGS) $(OBJECTS)
@@ -48,12 +65,13 @@ plummer: plummer.o gen_util.o
 
 %.o: Makefile
 
-clean:
-	rm -f core* $(OBJECTS) *~ $(TARGET) *.decl.h *.def.h charmrun conv-host 
-
 depends:
 	$(CXX_DEPEND) $(SRC) | while read i;do echo $$i| awk -F' ' '{for (i=1;i<NF;++i) print $$i" \\"}';echo;done|grep -v "$(CHARM_PATH)/bin" > Makefile.dep 
 
-.PHONY: all docs depends 
+.PHONY: all test docs depends 
 
 include Makefile.dep
+endif
+
+clean:
+	rm -f core* $(OBJECTS) *~ $(TARGET) *.decl.h *.def.h charmrun conv-host gen plummer plummer.o gen_util.o particles.bin
