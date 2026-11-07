@@ -668,6 +668,8 @@ configure_file(src/arch/common/conv-mach-papi.sh             include/ COPYONLY)
 configure_file(src/arch/common/conv-mach-papi.h              include/ COPYONLY)
 configure_file(src/arch/common/conv-mach-perftools.sh        include/ COPYONLY)
 configure_file(src/arch/common/conv-mach-perftools.h         include/ COPYONLY)
+configure_file(src/arch/common/conv-mach-syncft.h            include/ COPYONLY)
+configure_file(src/arch/common/conv-mach-syncft.sh           include/ COPYONLY)
 configure_file(src/arch/common/conv-mach-persistent.sh       include/ COPYONLY)
 configure_file(src/arch/common/conv-mach-persistent.h        include/ COPYONLY)
 configure_file(src/arch/common/conv-mach-pgf90.sh            include/ COPYONLY)
@@ -1077,6 +1079,14 @@ if(NOT ${NETWORK} STREQUAL "mpi" AND NOT ${NETWORK} MATCHES "gni-" AND NOT ${NET
 endif()
 
 
+# CMK_MEM_CHECKPOINT reaches Makefiles through conv-mach-opt.mak (tests skip
+# the in-memory checkpoint tests without it); C code gets it from conv-mach-syncft.h.
+if(SYNCFT)
+  set(CMK_MEM_CHECKPOINT 1)
+else()
+  set(CMK_MEM_CHECKPOINT 0)
+endif()
+
 # Create conv-mach-opt.mak
 set(optfile_mak ${CMAKE_BINARY_DIR}/include/conv-mach-opt.mak)
 
@@ -1088,7 +1098,7 @@ foreach(l CUDA_DIR HIP_DIR BUILD_CUDA BUILD_HIP CMK_AMPI_WITH_ROMIO CMK_MACOSX C
         CMK_SUPPORTS_SWAPGLOBALS CMK_SUPPORTS_TLSGLOBALS CMK_HAS_OPENMP
         CMK_TRACE_ENABLED CMK_USE_LRTS CMK_VDIR OPTSATBUILDTIME CMK_AMPI_ONLY CMK_WINDOWS
         CMK_USE_CMA CMK_USER_SUFFIX CMK_CAN_LINK_FORTRAN CMK_SUPPORTS_MEMORY_ISOMALLOC
-	CMK_CXI)
+	CMK_CXI CMK_MEM_CHECKPOINT)
     file(APPEND ${optfile_mak} "${l}:=${${l}}\n" )
 endforeach(l)
 

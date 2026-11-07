@@ -177,7 +177,8 @@ function parse_platform_compilers() {
   handled=1
   case "$1" in
     # Platform specific options
-    syncft)
+    syncft|memft)
+      # The double in-memory checkpoint and its rollback; memft is a synonym.
       opt_syncft=1
       ;;
     cuda)
