@@ -1,0 +1,157 @@
+mainmodule charmHpccg {
+  extern module completion;
+  readonly int numChares;
+  readonly CProxy_charmMain mainProxy;
+  readonly CProxy_CompletionDetector detector;
+
+  mainchare charmMain {
+    entry charmMain(CkArgMsg*);
+    entry [reductiontarget] void matrixReady();
+    entry [reductiontarget] void foundExternals();
+    entry [reductiontarget] void done();
+
+    entry void start() {
+      when matrixReady() atomic {
+        detector
+          .start_detection(numChares,
+                           CkCallback(CkIndex_charmHpccg::findExternals(), array),
+                           CkCallback(CkCallback::ignore), 
+                           CkCallback(CkReductionTarget(charmMain, foundExternals), thisProxy),
+                           0);
+      }
+
+      when foundExternals() atomic {
+        array.beginComputation(150, 0);
+      }
+
+      when done() atomic {
+        CkExit();
+      }
+    };
+  };
+  
+  include "generate_matrix.hpp";
+  include "read_HPC_row.hpp";
+
+  array [1D] charmHpccg {
+    entry charmHpccg();
+
+    /// Matrix initialization routines - random generation or file reading
+    entry void generateMatrix(int nx, int ny, int nz) { atomic {
+        generate_matrix(nx, ny, nz, &A, &x, &b, &xexact, numChares, thisIndex);
+        contribute(CkCallback(CkReductionTarget(charmMain, matrixReady), mainProxy));
+    }};
+    entry void readMatrix(std::string fileName) { atomic {
+        read_HPC_row(fileName.c_str(), &A, &x, &b, &xexact, numChares, thisIndex);
+        contribute(CkCallback(CkReductionTarget(charmMain, matrixReady), mainProxy));
+    }};
+
+    /// Communication setup routines
+    entry void findExternals();
+    entry void needXElements(int requester, std::vector<int> rows);
+
+    /// Parallel sparse matrix-vector multiplication
+    entry void charmSpMV() {
+      atomic {
+        // Send the elements of the x vector to the other chares that need it
+        for(std::map<int, RemoteX>::iterator iter = xToSend.begin();
+            iter != xToSend.end(); ++iter) {
+          int count = iter->second.values.size();
+          double* buf = new double[count];
+          for (int i = 0; i < count; ++i)
+            buf[i] = p[iter->second.values[i]];
+          thisProxy[iter->first].transferX(thisIndex, count, buf);
+        }
+      }
+      // Gather up elements of the x vector that this chare needs from others
+      for (xMessagesReceived = 0; xMessagesReceived < xToReceive.size(); xMessagesReceived++) {
+        when transferX(int src, int size, double elms[size]) atomic {
+          CkAssert(xToReceive.find(src) != xToReceive.end());
+          CkAssert(size == xToReceive[src].values.size());
+          CkAssert(size + xToReceive[src].offset <= A->local_ncol);
+
+          memcpy(p + xToReceive[src].offset, elms, size * sizeof(double));
+        }
+      }
+      atomic {
+        // Run the local sparse matrix-vector computation
+        HPC_sparsemv(A, p, Ap); // 2*nnz ops
+        // Signal that the local chunk of the multiplication is done
+        // and the CG iteration can continue
+        spmvDone();
+      }
+    };
+    entry void transferX(int src, int size, double elms[size]);
+    entry void spmvDone();
+
+    /// Parallel dot-product
+    entry [local] void charmDDot(double* a, double* b) {
+      atomic {
+        double t4;
+        double result;
+        ddot(A->local_nrow, a, b, &result, t4); // 2*nrow ops
+        contribute(sizeof(double), &result, CkReduction::sum_double,
+                   CkCallback(CkReductionTarget(charmHpccg, reduceResidual), thisProxy));
+      }
+    };
+    entry [reductiontarget] void reduceResidual(double res);
+
+    /// Main CG computation routine
+    entry void beginComputation(const int max_iter, const double tolerance) {
+      atomic "initialize" {
+        r = new double[A->local_nrow];
+        p = new double[A->local_ncol];
+        Ap = new double[A->local_nrow];
+
+        normr = 0.0;
+        rtrans = 0.0;
+      }
+      atomic {
+        waxpby(A->local_nrow, 1.0, x, 0.0, x, p);
+        thisProxy[thisIndex].charmSpMV();
+      }
+      when spmvDone() atomic {
+        waxpby(A->local_nrow, 1.0, b, -1.0, Ap, r);
+        charmDDot(r, r);
+      }
+      when reduceResidual(double res) atomic {
+        rtrans = res;
+        normr = sqrt(rtrans);
+        if (thisIndex == 0) ckout << "Initial Residual = "<< normr << endl;
+      }
+      for (iteration = 1; iteration < max_iter && normr > tolerance; iteration++) {
+        if (iteration == 1) atomic {
+          waxpby(A->local_nrow, 1.0, r, 0.0, r, p);
+        } else {
+          atomic {
+            charmDDot(r, r);
+          }
+          when reduceResidual(double newrtrans) atomic {
+            double beta = newrtrans / rtrans;
+            rtrans = newrtrans;
+            waxpby(A->local_nrow, 1.0, r, beta, p, p); // 2*nrow ops
+          }
+        }
+        atomic {
+          normr = sqrt(rtrans);
+          if (thisIndex == 0 && iteration % 15 == 0)
+            CkPrintf("Iteration = %d,\tResidual = %g\n", iteration, normr);
+          thisProxy[thisIndex].charmSpMV();
+        }
+        when spmvDone() atomic {
+          charmDDot(p, Ap);
+        }
+        when reduceResidual(double res) atomic {
+          double alpha = rtrans / res;
+          waxpby(A->local_nrow, 1.0, x, alpha, p, x);// 2*nrow ops
+          waxpby(A->local_nrow, 1.0, r, -alpha, Ap, r);// 2*nrow ops
+          //niters = k;
+        }
+      }
+
+      atomic {
+        contribute(CkCallback(CkReductionTarget(charmMain, done), mainProxy));
+      }
+    };
+  };
+};
