@@ -32,7 +32,6 @@ module ampi {
 
   group [migratable] ampiPeMgr {
     entry EXPEDITED ampiPeMgr();
-    entry void whenPresent(CkCallback cb);
   };
 
   array[1D] ampiParent {

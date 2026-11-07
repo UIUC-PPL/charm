@@ -25,9 +25,10 @@
  * can arrive, so they are awaitables too and a polling loop must be in a
  * coroutine.
  *
- * Unlike thread AMPI, where MPI_Finalize ends the rank and the process exits
- * with status 0, MPI_Finalize does not end a campi rank: code after it runs,
- * and the process exit code is the value main co_returns.
+ * As in thread AMPI, MPI_Finalize returns and code after it runs; the rank
+ * ends when main completes. The process exit status is the largest value main
+ * returns over the ranks: in campi, the value main co_returns, which the
+ * coroutine's completion handler passes to AMPI_Exit.
  *
  * Migration and checkpoint/restart. A rank that migrates under a load
  * balancer or restarts from a checkpoint does not keep its coroutine frames:
