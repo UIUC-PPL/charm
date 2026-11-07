@@ -372,13 +372,15 @@ jobs:
         spack cd --repo builtin
         [[ $(uname) == "Linux" ]] && sudo apt-get install -y gfortran
 
-        # Use this branch for testing, not main
-        sed -i -e 's,="main",="${{ github.head_ref }}",' packages/charmpp/package.py
+        # Build this branch as charmpp@main. The recipe's "main" version names
+        # the repository's development branch (recharm since the 2026-10 split),
+        # whatever it is called; replace the branch name, not "main".
+        sed -i -e 's|version("main", branch="[^"]*"|version("main", branch="${{ github.head_ref || github.ref_name }}"|' packages/charmpp/package.py
 
         # Use a fork, not the main repo
         # If in merge_group mode, the branch should be created in the main repo
         if [[ ${{ github.event_name }} == 'pull_request' ]]; then
-          sed -i -e 's,UIUC-PPL/charm.git,${{github.event.pull_request.head.repo.full_name}},' packages/charmpp/package.py
+          sed -i -e 's,charmplusplus/charm.git,${{github.event.pull_request.head.repo.full_name}},' packages/charmpp/package.py
         fi
 
         # Compile with debug symbols
