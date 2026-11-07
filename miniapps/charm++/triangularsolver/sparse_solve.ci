@@ -1,0 +1,69 @@
+mainmodule sparse_solve {
+	
+	readonly CProxy_Main mainProxy;
+	
+	mainchare Main {
+		entry Main(CkArgMsg *m);
+		entry [reductiontarget] void initDone(void);
+		entry [reductiontarget] void reportIn(void);
+		entry void validate(CkReductionMsg* msg);
+	};
+	
+	message xValMsg { double xVal[]; };
+
+	array [1D] ColumnsSolve{
+		entry ColumnsSolve();
+		// initialize chare (e.g. matrix input)
+		entry void init() {
+			when getInput(int nzl, int nr, int nc, double data[nzl], int colInd[nzl], int rowInd[nr+1], bool dep[nr], 
+						   bool diag, int indn, int frs, int fMax, int rrs, int rMax)
+			serial {setInput(nzl, nr, nc, data, colInd, rowInd, dep, diag, indn, frs, fMax, rrs, rMax);}
+			
+			when getDeps(int size, rowAttr deps[size])	serial {setDeps(size, deps);}
+			
+			if(onDiagonalChare)
+			when getSection(CProxySection_ColumnsSolve nondiags, bool emptySec, CkGroupID mCastGrpId)
+			serial {setSection(nondiags, emptySec, mCastGrpId);}
+			
+			serial { contribute(CkCallback(CkReductionTarget(Main, initDone), mainProxy)); }
+		};
+		// actual computation starts here
+		entry void start() {
+			// if this chare has some diagonal part of matrix
+			if (onDiagonalChare) {
+				// schedule this chare's independent computation with lower priority			
+				serial { thisProxy[thisIndex].indepCompute(0, &CkEntryOptions().setQueueing(CK_QUEUEING_IFIFO).setPriority(10)); }
+				// "while" and "when" can happen in any order
+				overlap {
+					// while there are incomplete rows, receive data and compute
+					while (!finished) {
+						when receiveData(int size, double data[size], int rowInd[size])
+						serial {if(size>0) diagReceiveData(size, data, rowInd);}
+					}
+					// do serial independent computations scheduled above
+					when indepCompute(int a) serial {myIndepCompute();}
+				}
+				// if chare doesn't have diagonal part of matrix
+			} else {
+			// wait for x values
+				when getXvals(xValMsg* msg) serial {xVal=msg->xVal; nondiagCompute();}
+				// while there are incomplete rows, receive data and compute				
+				while (!finished) {
+					when receiveData(int size, double data[size], int rowInd[size])
+					serial {nondiagReceiveData(size, data, rowInd);}
+				}
+			}
+			// solve is done, inform main chare
+			serial { contribute(CkCallback(CkReductionTarget(Main, reportIn), mainProxy)); }
+		};
+		entry void indepCompute(int a);
+		entry void getInput(int nzl, int nr, int nc, double data[nzl], int colInd[nzl], int rowInd[nr+1], bool dep[nr], 
+							 bool diag,	int indn,	int frs, int fMax, int rrs, int rMax);
+		
+		entry void getDeps(int size, rowAttr deps[size]);
+		entry void getSection(CProxySection_ColumnsSolve, bool, CkGroupID mCastGrpId);
+		entry void getXvals(xValMsg* msg);
+		entry void receiveData(int size, double data[size], int rowInd[size]);
+		entry void sendResults();
+	};
+};
