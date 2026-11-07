@@ -1,0 +1,45 @@
+Authors: Jonathan Lifflander and Phil Miller
+
+Compilation:
+============
+Inside a Charm++ build tree, run make; elsewhere, run
+make CHARMC=charm_installation/bin/charmc. This builds the Charm++
+version; make default also builds the sequential and MPI versions.
+
+Guide to the Charm++ code:
+==========================
+
+- hpccg.ci:
+
+Describes the main parallel control flow of the CG algorithm,
+including the sparse matrix-vector multiplication with exchange of x
+elements, and the reduction of residuals from global dot
+products. Equivalent to main.cpp, HPCCG.cpp, and
+exchange_externals.cpp from the sequential/MPI code.
+
+- charmHpccg.cpp:
+
+Contains the code for exchanging information of which chares will need
+which elements of x for the SpMV in each iteration, as well the
+mainchare constructor called at startup. Equivalent to
+make_local_matrix.cpp from the MPI code, and part of main.cpp.
+
+- charmHpccg.h:
+
+Contains class and data structure declarations for the chares used in
+the algorithm.
+
+Sequential code used from the original:
+=======================================
+
+- HPC_Sparse_matrix.hpp: defines the CSR matrix data structure
+
+- HPC_sparsemv.{hpp,cpp}: implements the sequential sparse
+  matrix-vector multiplication on HPC_Sparse_matrix and a simple
+  contiguous vector
+
+- make_local_matrix.cpp: factored-out identify_externals() function
+  for identifying needed elements of x that are not also kept locally.
+
+- ddot.cpp, waxpby.cpp: sequential vector dot-product and addition
+  kernels

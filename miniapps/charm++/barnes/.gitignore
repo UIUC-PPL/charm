@@ -1,0 +1,13 @@
+*.decl.h*
+*.def.h
+charmrun.*
+out*
+*.dat
+.*.swp
+*.o
+*.a
+makefile
+charmrun*
+barnes*
+gen
+plummer

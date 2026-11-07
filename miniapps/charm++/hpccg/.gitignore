@@ -1,0 +1,9 @@
+*-{seq,mpi,charm}.cpp
+*.o
+seq_HPCCG
+mpi_HPCCG
+charm_HPCCG
+*.decl.h
+*.def.h
+charmrun
+*.dSYM

@@ -1,0 +1,8 @@
+To compile, run make.
+
+Running the benchmark: ./charmrun +p[NUM-PES] ./random_access integer 
+
+The parameter is log2(HalfMemory/Number of Cores/8). For example, on BlueGene/P,
+each node has 2GB memory, so the input should be log2(1G/4/8) = 25
+
+The output prints the GUPS, errors.

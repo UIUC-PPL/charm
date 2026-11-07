@@ -1,0 +1,33 @@
+module luUtils {
+  include "set";
+
+  // Register the reducer function that handles reductions of MaxElm
+  initnode void registerMaxElmReducer();
+
+  class LUConfig;
+  class CProxy_BlockScheduler;
+
+  group LUMgr { };
+
+  group PrioLU {
+    entry PrioLU(int blkSize, int matSize);
+  };
+
+  group OnePerPE : CkArrayMap {
+    entry OnePerPE();
+  };
+
+  group LUMap : CkArrayMap {
+    entry LUMap();
+  };
+
+  group BlockCyclicMap : LUMap {
+    entry BlockCyclicMap(int r, int num_blocks);
+  };
+
+  group PE2DTilingMap: LUMap {
+    entry PE2DTilingMap(int _peRows, int _peCols, int _peRotate, int _peStride,
+			int _numBlks);
+  };
+};
+

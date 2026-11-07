@@ -1,0 +1,542 @@
+module lu {
+  extern module luUtils;
+  extern module luMessages;
+  include "maxelm.h";
+
+  /**
+   * 2D array of LU matrix-block objects that are locally coordinated
+   * in Structured Dagger.
+   *
+   * The chare indexing relates to matrix position as follows:
+   *           y
+   *    o------------>
+   *    | (0,0) (0,1) . . .
+   *    | (1,0) (1,1)
+   *  x |   .         .
+   *    |   .           .
+   *    |   .             .
+   *    v
+   */
+
+#if defined(TRACE_TOGGLER_H)
+  include "traceToggler.h";
+  initnode void traceToggler::registerHandler();
+#endif
+
+  array [2D] LUBlk {
+    /// Constructor
+    entry LUBlk(void);
+
+    /// Each block starts its participation in the factorization here
+    entry void factor() {
+      // Keep executing trailing updates on this block until it is on
+      // the active block row or column
+      serial { thisProxy(thisIndex).updateUntilActive(); }
+      // Once the current step of the computation reaches the diagonal
+      // chare on this blocks row / column
+      when amActive() {
+        if      (isAboveDiagonal()) serial { thisProxy[thisIndex].factorAboveDiagBlock(); }
+        else if (isBelowDiagonal()) serial { thisProxy[thisIndex].factorBelowDiagBlock(); }
+        else     /* on diagonal */  serial { thisProxy[thisIndex].factorDiagBlock(); }
+      }
+    };
+
+    // Describes the control flow of alternating pivoting and trailing
+    // updates for all LUBlk chares before they become part of the
+    // active panel.
+    entry void updateUntilActive() {
+      //-----------------------------------------------------------------------
+      // Each chare in the array has to process these many trailing
+      // updates before the diagonal chare on its row / column becomes
+      // active in the factorization process.
+      // -----------------------------------------------------------------------
+      serial {
+        startTime = CmiWallTimer();
+        pivotBatchTag = 0;
+      }
+      for (internalStep = 0; internalStep < min(thisIndex.x, thisIndex.y); internalStep++) {
+        serial { thisProxy[thisIndex].pivotBatch(0); }
+
+        // After a panels worth of pivots have arrived, this block is
+        // ready to execute a trailing update. We let the local
+        // scheduler dictate when that should happen, to let it
+        // control memory consumption and avoid interfering with
+        // another local block working in the latency-sensitive active
+        // panel.
+        when pivotBatchDone[0](int tag) serial { updateExecuted = false; }
+        while (!updateExecuted) {
+          when processTrailingUpdate[internalStep](int step, intptr_t update_ptr)
+          serial "trailing_update" {
+            Update &update = *(Update *)update_ptr;
+            if (localScheduler->shouldExecute()) {
+              updateMatrix(update.L, update.U);
+              thisProxy(thisIndex.x, internalStep).blockUsed(1);
+              localScheduler->updateDone(update_ptr);
+              updateExecuted = true;
+            } else {
+              update.triggered = false;
+              localScheduler->updateUntriggered();
+            }
+          }
+        }
+      }
+      serial { thisProxy[thisIndex].amActive(); }
+    };
+    entry void amActive();
+
+    /**
+     * Methods for handling pivots in the trailing submatrix
+     */
+    // Receive and process batches of pivot operations sent out by
+    // the current active diagonal chare
+    entry [local] void pivotBatch(int tag) {
+      while (pivotBatchTag < (internalStep+1)*blkSize) {
+        // Wait for msg carrying the next batch of pivot ops
+        when applyTrailingPivots[pivotBatchTag](pivotSequencesMsg *msg) {
+          // Send out any pivot data owned by this chare
+          serial "sendOutgoingPivots" {
+            sendPendingPivots(msg);
+            CmiReference(UsrToEnv(msg));
+          }
+          // Wait for all incoming pivot data from this batch
+          while (pendingIncomingPivots > 0) {
+            when trailingPivotRowsSwap[pivotBatchTag](pivotRowsMsg *aMsg)
+              serial "acceptIncomingPivots" {
+              for (int i = 0; i < aMsg->nRows; i++) {
+                CkAssert(thisIndex.x == aMsg->rowNum[i]/blkSize);
+                applySwap(aMsg->rowNum[i] % blkSize, 0,
+                          &(aMsg->rows[i * blkSize]), aMsg->rhs[i]);
+                pendingIncomingPivots--;
+              }
+              delete aMsg;
+            }
+          }
+          // Increment the batch tag to the next expected
+          serial {
+            pivotBatchTag += msg->numRowsProcessed;
+            CmiFree(UsrToEnv(msg));
+          }
+        }
+      }
+
+      serial { thisProxy[thisIndex].pivotBatchDone(tag); }
+    };
+    // Indicate a set of rows which need to be swapped
+    entry [nokeep] void applyTrailingPivots(pivotSequencesMsg *msg);
+    // Exchange pivot row contents
+    entry void trailingPivotRowsSwap(pivotRowsMsg *msg);
+    entry void pivotBatchDone(int tag);
+
+    // Describes the control flow of above-diagonal blocks after
+    // theyve completed their prescribed trailing updates.
+    entry [local] void factorAboveDiagBlock() {
+      // Do one last batch of pivots, from the diagonal on this row
+      serial { thisProxy[thisIndex].pivotBatch(1); }
+
+      // After the associated panels pivots have all arrived, this
+      // block can perform its triangular solve.
+      //
+      // If the next active panel depends on these results, execute
+      // eagerly to avoid delaying the work-exposing critical path.
+      when pivotBatchDone[1](int tag) if (thisIndex.y == thisIndex.x + 1) {
+        when triangularSolve(blkMsg* m) serial "triangular_solve" {
+          computeU(m->data);
+          delete m;
+        }
+      } else {
+        // Otherwise, let the local scheduler direct execution, to
+        // let it limit memory consumption and avoid inconveniencing
+        // an active panel factorization.
+        serial { updateExecuted = false; }
+        while (!updateExecuted) {
+          when processComputeU(intptr_t update_ptr) serial "process_compute_U" {
+            Update &update = *(Update *)update_ptr;
+            if (localScheduler->shouldExecute()) {
+              computeU(update.L);
+              localScheduler->updateDone(update_ptr);
+              updateExecuted = true;
+            } else {
+              update.triggered = false;
+              localScheduler->updateUntriggered();
+            }
+          }
+        }
+      }
+      serial "finish_U" {
+        scheduler.releaseActiveColumn(thisIndex.y, thisIndex.x);
+        scheduleDownwardU();
+        factored = true;
+        localScheduler->factorizationDone(thisIndex);
+      }
+      serial "abovediag_iteration_completed" { contribute(factorizationDone); }
+      // Swallow excess pivots message broadcast to the entire array
+      while (true) { when applyTrailingPivots(pivotSequencesMsg *msg) { } }
+    };
+    // Method for delivering triangular solve data
+    entry void triangularSolve(blkMsg* m);
+
+    // These process* entry methods are invoked locally on each block
+    // by the BlockScheduler with varying priorities, to let the
+    // scheduler decide when the work they represent (the bulk of the
+    // computation) should execute.
+    entry void processTrailingUpdate(int step, intptr_t update_ptr);
+    entry void processComputeU(intptr_t update_ptr);
+
+    // Below diagonal
+    entry [local] void factorBelowDiagBlock() {
+      serial {
+        // Find the pivot candidate for just the first column in the block
+        pivotCandidate = findMaxElm(0, 0);
+        pendingUmsg = NULL;
+      }
+      // Work in the active column of the chare array proceeds
+      // column-by-column through the matrix
+      for (activeCol = 0; activeCol < blkSize; activeCol++) {
+        serial "below_find_pivot" {
+          // Contribute to a reduction along the active panel to identify the pivot row
+          mcastMgr->contribute(sizeof(MaxElm), &pivotCandidate, MaxElmReducer, pivotCookie);
+          thisProxy[thisIndex].updateSubBlock();
+        }
+        when updateSubBlock() serial "useg_delayed_update" {
+          // Delayed update using the U segment from the prev activeCol iteration
+          if (pendingUmsg) {
+            updateLsubBlock(activeCol-1, pendingUmsg->data, 2);
+            dropRef(pendingUmsg);
+            pendingUmsg = NULL;
+          }
+          ownedPivotThisStep = false;
+        }
+        case {
+          when pivotRowSwap[internalStep*blkSize + activeCol](int rowIndex, int pivotRow, int len, double data[len],
+                                                              double b) serial "below_send_remote_pivot" {
+            ownedPivotThisStep = true;
+            CkAssert(pivotRow / blkSize == thisIndex.x);
+            CkEntryOptions opts;
+            thisProxy(thisIndex.y, thisIndex.y)
+              .pivotRowSwap(internalStep*blkSize + activeCol, pivotRow, blkSize,
+                            &LU[getIndex(pivotRow % blkSize,0)], bvec[pivotRow % blkSize],
+                            &(mgr->setPrio(SEND_PIVOT_DATA, opts)));
+            applySwap(pivotRow % blkSize, 0, data, b);
+          }
+          when USegCompute(UMsg* anUmsg) serial { pendingUmsg = anUmsg; takeRef(pendingUmsg); }
+        }
+        if (ownedPivotThisStep)
+          when USegCompute(UMsg* anUmsg) serial { pendingUmsg = anUmsg; takeRef(pendingUmsg); }
+        // Wait for the post-diagonal U segment from the original owner of the pivot row
+        serial "below_recv_useg" {
+          if (activeCol == 0) localScheduler->startedActivePanel();
+          // Compute multipliers and update just one column to find the next candidate pivot
+          pivotCandidate = computeMultipliersAndFindColMax(activeCol, pendingUmsg->data);
+        }
+      }
+      serial "below_send_L" {
+        if (pendingUmsg) dropRef(pendingUmsg);
+        scheduleRightwardL();
+        factored = true;
+        localScheduler->factorizationDone(thisIndex);
+        pivotBatchTag += blkSize;
+      }
+
+      while (blockPulled < numBlks-thisIndex.y-1) {
+        when blockUsed(int count) serial { blockPulled += count; }
+      }
+
+      for (internalStep++; internalStep <= thisIndex.x; internalStep++) {
+        serial { thisProxy[thisIndex].pivotBatch(2); }
+        when pivotBatchDone[2](int tag) { }
+      }
+      serial "belowdiag_iteration_completed" { contribute(factorizationDone); }
+      // Swallow excess pivots message broadcast to the entire array
+      while (true) { when applyTrailingPivots(pivotSequencesMsg *msg) { } }
+    };
+    // Indicate when this block has been used for remote calculations,
+    // to let subsequent pivoting go ahead
+    entry void blockUsed(int count);
+
+    entry void factorDiagBlock() {
+      serial {
+#if defined(TRACE_TOGGLER_H)
+        if (internalStep == 0 || internalStep == 10) {
+          traceToggler::stop();
+        } else if (internalStep == 5) {
+          traceToggler::start();
+        }
+#endif
+        CkAssert(pivotBatchTag == thisIndex.x*blkSize);
+        pivotRecords.clear();
+        numRowsSinceLastPivotSend = 0;
+        // Find the pivot candidate for just the first column in the block
+        pivotCandidate = findMaxElm(0, 0);
+      }
+      // Process matrix column-by-column
+      for (activeCol = 0; activeCol < blkSize; ++activeCol) {
+        serial "diag_find_colmax" {
+          // Contribute to a redn along the pivot section to identify the pivot row
+          mcastMgr->contribute(sizeof(MaxElm), &pivotCandidate, MaxElmReducer, pivotCookie);
+        }
+
+        // Share the pivot info with the appropriate array section
+        when colMax(MaxElm pivotFound) {
+	  serial "diag_found_colmax" {
+            if (activeCol == 0) {
+              ckout << "--------------------------------------------------------------------"<<endl
+                    << "Block " << thisIndex.x << " queueing local LU at internalStep "
+                    << internalStep << ", start time = " << CmiWallTimer() << ", time = "
+                    << CmiWallTimer() - startTime << endl;
+              localScheduler->startedActivePanel();
+            }
+	    pivot = pivotFound;
+	  }
+	  if (pivot.loc / blkSize == thisIndex.x) {
+	    // Now, send the post-diagonal portion of the pivot row (a
+	    // segment of U) to all active panel brethren so that they
+	    // can start updating their sub-blocks right away
+	    serial "diag_send_useg" {
+	      UMsg *anUmsg = new (blkSize - activeCol, sizeof(int)*8)
+                UMsg(blkSize - activeCol,
+                     &LU[getIndex(pivot.loc % blkSize, activeCol)]);
+              mgr->setPrio(anUmsg, DIAG_SEND_USEG);
+	      activePanel.USegCompute(anUmsg);
+	    }
+	    // Perform the local pivoting
+	    serial "diag_local_pivot" { swapLocal(activeCol, pivot.loc % blkSize); }
+	  } else {
+	    // Send pivot data to remote chare in active panel
+	    serial "diag_send_remote_pivot" {
+	      // Trigger swap of data
+	      CkEntryOptions opts;
+	      thisProxy(pivot.loc / blkSize, thisIndex.y)
+		.pivotRowSwap(internalStep*blkSize + activeCol, pivot.loc, blkSize,
+			      &LU[getIndex((activeCol + blkSize * thisIndex.y) % blkSize,0)],
+			      bvec[(activeCol + blkSize * thisIndex.y) % blkSize],
+                              &(mgr->setPrio(DIAG_SEND_PIVOT, opts)));
+	    }
+	    when pivotRowSwap[internalStep*blkSize + activeCol](int rowIndex, int pivotRow, int len,
+                                                                const double data[len], double b)
+            serial "diag_receive_remote_pivot" {
+#if !defined(CHARMLU_USEG_FROM_BELOW)
+	      UMsg *anUmsg = new(blkSize - activeCol, sizeof(int)*8) UMsg(blkSize - activeCol, data + activeCol);
+              mgr->setPrio(anUmsg, DIAG_SEND_USEG);
+	      activePanel.USegCompute(anUmsg);
+#endif
+	      applySwap(activeCol, 0, data, b);
+	    }
+	  }
+        }
+
+        serial "diag_agglomerate_pivots" {
+          // Store the pivot information
+          recordPivot(thisIndex.y*blkSize + activeCol, pivot.loc);
+          // at opportune steps, send out the agglomerated pivot ops
+          if (shouldSendPivots() || activeCol == blkSize-1)
+            announceAgglomeratedPivots();
+        }
+
+        /// Compute the multipliers and update the trailing sub-block
+        serial "diag_update" {
+          // Pivoting is done, so the diagonal entry better not be
+          // (near-)zero; else the matrix is singular
+          if (fabs(LU[getIndex(activeCol,activeCol)])
+              <= 100 * std::numeric_limits<double>::epsilon())
+            CkAbort("Diagonal element very small despite pivoting. Is the matrix singular??");
+          // Compute the multipliers and find the next local pivot candidate
+          pivotCandidate =
+            computeMultipliersAndFindColMax(activeCol, &LU[getIndex(activeCol,activeCol)],
+                                            activeCol + 1);
+          // Update the sub-block
+          updateLsubBlock(activeCol, &LU[getIndex(activeCol,activeCol)], 2, activeCol+1);
+        }
+      }
+
+      serial "diag_multicast_L" {
+        ckout << "Block " << thisIndex.x << " finished local LU at internalStep "
+              << internalStep << ", time = " << CmiWallTimer() - startTime << endl;
+	fflush(stdout);
+
+        localScheduler->factorizationDone(thisIndex);
+        factored = true;
+        // All diagonal chares except the last must continue the factorization
+        if (thisIndex.x < numBlks-1 && thisIndex.y < numBlks-1) {
+          blkMsg *msg = new (blkSize * blkSize, 0, mgr->bitsOfPrio()) blkMsg(thisIndex);
+          memcpy(msg->data, LU, sizeof(double) * blkSize * blkSize);
+          thisProxy(thisIndex.x, thisIndex.y + 1).triangularSolve(msg);
+          // Multicast the local block of L rightwards to the blocks in the same row
+          scheduleRightwardL();
+        }
+        // Contribute to a reduction indicating that this chare is
+        // done with its factorization work
+        contribute(factorizationDone);
+      }
+    };
+
+    /**
+     * Active panel methods
+     */
+    // The reduction to find the maximum element in the column
+    entry [reductiontarget] void colMax(MaxElm pivotFound);
+    // Pivot data to swap along with row index
+    entry void pivotRowSwap(int rowIndex, int pivotRow, int len, const double data[len], double b);
+    // U-Segment for the next computation
+    entry [nokeep] void USegCompute(UMsg* msg);
+    // Using the U-Segment previously received, update the sub-block
+    entry void updateSubBlock();
+
+    /**
+     * Solve methods
+     */
+    entry void forwardSolve() {
+      if (thisIndex.x > 0) {
+        // All except the first diag chare have to wait for their row reductions
+        when recvSolveData(int count, double preVec[count]) serial {
+          for (int i = 0; i < blkSize; i++)
+            bvec[i] -= preVec[i];
+        }
+      }
+      serial {
+        for (int i = 0; i < blkSize; i++)
+          for (int j = 0; j < i; j++)
+            bvec[i] -= LU[getIndex(i,j)] * bvec[j];
+
+        if (thisIndex.x != numBlks-1) {
+          // Broadcast downward from diagonal
+          BVecMsg *m = new (blkSize) BVecMsg(blkSize, bvec, true);
+          activePanel.offDiagSolve(m);
+        }
+        thisProxy(thisIndex).backwardSolve();
+      }
+    };
+    entry void backwardSolve() {
+      if (thisIndex.x < numBlks-1) {
+        // All except the last diag chare have to wait for their row reductions
+        when recvSolveData(int count, double preVec[count]) serial {
+          for (int i = 0; i < blkSize; i++)
+            bvec[i] -= preVec[i];
+        }
+      }
+
+      serial {
+        for (int i = blkSize-1; i >= 0; i--) {
+          for (int j = i+1; j < blkSize; j++)
+            bvec[i] -= LU[getIndex(i,j)] * bvec[j];
+          bvec[i] /= LU[getIndex(i,i)];
+        }
+        if (thisIndex.x == 0) {
+          solveDone.send();
+        }
+        else {
+          // Broadcast upward from diagonal
+          CProxySection_LUBlk col =
+            CProxySection_LUBlk::ckNew(thisArrayID, 0,           thisIndex.x-1, 1,
+                                                    thisIndex.y, thisIndex.y,   1);
+          col.ckSectionDelegate(mcastMgr);
+          BVecMsg *m = new (blkSize) BVecMsg(blkSize, bvec, false);
+          col.offDiagSolve(m);
+        }
+      }
+    };
+
+    /// For off-diagonal blocks, this performs the computations required for fwd and bkwd solves
+    entry [nokeep] void offDiagSolve(BVecMsg *m) {
+      serial {
+        // Do local portion of solve (daxpy)
+        double *xvec = new double[blkSize], *preVec = m->data;
+        for (int i = 0; i < blkSize; i++) {
+          xvec[i] = 0.0;
+          for (int j = 0; j < blkSize; j++)
+            xvec[i] += LU[getIndex(i,j)] * preVec[j];
+        }
+
+        // Set the diagonal chare on my row as target of reduction
+        CkCallback cb(CkReductionTarget(LUBlk, recvSolveData), thisProxy(thisIndex.x, thisIndex.x));
+        // Reduce row towards diagonal chare
+        mcastMgr->contribute(sizeof(double) * blkSize, xvec, CkReduction::sum_double,
+                m->forward ? rowBeforeCookie : rowAfterCookie, cb, thisIndex.x);
+        delete[] xvec;
+      }
+    };
+
+    entry [reductiontarget] void recvSolveData(int count, double data[count]);
+
+    // A remote BlockScheduler wants this block for a triangular solve
+    // or trailing update
+    entry void requestBlock(int pe, int rx, int ry);
+
+    /**
+     * Initialization methods
+     */
+    entry void startup(const LUConfig luCfg, CProxy_LUMgr _mgr, CProxy_BlockScheduler bs,
+                       CkCallback initialized, CkCallback factored, CkCallback solved) {
+      when schedulerReady(CkReductionMsg *m) serial {
+	init(luCfg, _mgr, bs, initialized, factored, solved);
+      }
+      when multicastRedns() {
+        if (isOnDiagonal() || isBelowDiagonal()) {
+          when prepareForPivotRedn(rednSetupMsg *msg) serial {
+            mcastMgr = CProxy_CkMulticastMgr(msg->rednMgrGID).ckLocalBranch();
+            CkGetSectionInfo(pivotCookie, msg);
+          }
+        }
+        if (isBelowDiagonal()) {
+          when prepareForRowBeforeDiag(rednSetupMsg *msg) serial {
+            mcastMgr = CProxy_CkMulticastMgr(msg->rednMgrGID).ckLocalBranch();
+            CkGetSectionInfo(rowBeforeCookie, msg);
+          }
+        } else if (isAboveDiagonal()) {
+          when prepareForRowAfterDiag(rednSetupMsg *msg) serial {
+            mcastMgr = CProxy_CkMulticastMgr(msg->rednMgrGID).ckLocalBranch();
+            CkGetSectionInfo(rowAfterCookie, msg);
+          }
+        }
+	when dataReady() serial {
+	  contribute(initDone);
+	}
+      }
+    };
+    entry [nokeep] void schedulerReady(CkReductionMsg *m);
+    entry void dataReady();
+    entry [nokeep] void prepareForPivotRedn(rednSetupMsg *);
+    entry [nokeep] void prepareForActivePanel(rednSetupMsg *);
+    entry [nokeep] void prepareForRowBeforeDiag(rednSetupMsg *);
+    entry [nokeep] void prepareForRowAfterDiag(rednSetupMsg *);
+    entry void multicastRedns();
+  };
+
+  array [1D] BlockScheduler {
+    entry BlockScheduler(CProxy_LUBlk luArr, LUConfig config, CProxy_LUMgr mgr_);
+    entry void deliverBlock(blkMsg *m);
+    entry void printBlockLimit();
+    entry void allRegistered(CkReductionMsg *m);
+    entry void scheduleSend(CkIndex2D index, bool onActive);
+    entry void releaseActiveColumn(const int y, const int t);
+    entry void outputStats();
+  }
+};
+
+module luMessages {
+  message BlockReadyMsg;
+  message rednSetupMsg;
+
+  message blkMsg {
+    double data[];
+    int pes[];
+  };
+
+  message UMsg {
+    double data[];
+  };
+
+  message BVecMsg {
+    double data[];
+  };
+
+  message pivotSequencesMsg {
+    int seqIndex[];
+    int pivotSequence[];
+  };
+
+  message pivotRowsMsg {
+    int rowNum[];
+    double rows[];
+    double rhs[];
+  };
+};

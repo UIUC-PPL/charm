@@ -1,0 +1,84 @@
+mainmodule barnes {
+  
+  readonly CProxy_TreePiece treePieceProxy;
+  readonly CProxy_DataManager dataManagerProxy;
+  readonly CProxy_Main mainProxy;
+  readonly Parameters globalParams;
+
+  initnode void registerReducers();
+
+  class Parameters;
+  class MultipoleMoments;
+
+  message SplitterMsg {
+    int splitBins[];
+  };
+
+  message ParticleMsg {
+    Particle part[];
+  };
+
+  message RangeMsg {
+    Key keys[];
+  };
+
+  message RequestMsg;
+  message ParticleReplyMsg {
+    ExternalParticle data[];
+  };
+
+  message NodeReplyMsg {
+    Node<ForceData> data[];
+  };
+
+  message MomentsMsg;
+  message RescheduleMsg;
+
+  include "Descriptor.h";
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [threaded] void commence();
+    entry void niceExit();
+    entry void quiescence();
+    entry void quiescenceExit();
+  };
+
+  array[1D] TreePiece {
+    entry TreePiece();
+    entry void receiveParticles(ParticleMsg *msg);
+    entry void receiveParticles();
+    entry void requestMoments(Key k, int replyTo);
+
+    entry void startTraversal();
+    entry void doLocalGravity(RescheduleMsg *);
+    entry void doRemoteGravity(RescheduleMsg *);
+
+    entry void requestParticles(RequestMsg *msg);
+    entry void requestNode(RequestMsg *msg);
+    entry void quiescence();
+  };
+
+  group DataManager {
+    entry DataManager();
+    entry void loadParticles(CkCallback &cb);
+    entry void decompose(BoundingBox &universe);
+    entry void receiveHistogram(CkReductionMsg *msg);
+    entry void receiveSplitters(SplitterMsg *msg);
+    entry void sendParticles(RangeMsg *msg);
+    entry void receiveMoments(MomentsMsg *msg);
+
+    entry void recvParticles(ParticleReplyMsg *msg);
+    entry void recvNode(NodeReplyMsg *msg);
+    entry void advance(CkReductionMsg *msg);
+#ifdef STATISTICS
+    entry void traversalsDone(CmiUInt8 pnInter, CmiUInt8 ppInter, CmiUInt8 openCrit);
+#else
+    entry void traversalsDone();
+#endif
+
+    entry void recvUnivBoundingBox(CkReductionMsg *msg);
+
+    entry void quiescence();
+  };
+};

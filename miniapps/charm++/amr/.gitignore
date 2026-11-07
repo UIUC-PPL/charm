@@ -1,0 +1,12 @@
+*.decl.h
+*.def.h
+*.o
+advection
+*.log.gz
+*.projrc
+*.sts
+*.topo
+*.ci.stamp
+charmrun
+log
+out

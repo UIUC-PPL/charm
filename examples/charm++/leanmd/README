@@ -1,3 +1,6 @@
+A newer version of LeanMD, with sections, k-away decomposition, load
+balancing and checkpoint options, is in miniapps/charm++/leanmd.
+
 TO COMPILE-
 Do a make in this folder
 
