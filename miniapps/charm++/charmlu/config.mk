@@ -1,9 +1,17 @@
 #------------------------------------------------
+ifeq ($(shell uname -s),Darwin)
+# macOS: Apple's Accelerate framework
+SEND_LIM  = 2
+BLAS_INC  = -DUSE_ACCELERATE_BLAS=1
+BLAS_LD   =
+BLAS_LIBS = -framework Accelerate
+else
 # To compile on order or faith(Ubuntu):
 SEND_LIM  = 2
 BLAS_INC  = -DUSE_CBLAS_H=1
 BLAS_LD   =
 BLAS_LIBS = -lcblas
+endif
 
 
 # To compile on hope (OSX):
