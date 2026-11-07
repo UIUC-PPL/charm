@@ -1,0 +1,27 @@
+mainmodule driver {
+  extern module lu;
+
+  mainchare Benchmark {
+    entry Benchmark(CkArgMsg* m);
+    entry void finished();
+  }
+
+  chare LUSolver {
+    entry LUSolver(LUConfig luCfg, CkCallback finishedSolve);
+    entry void continueIter();
+    entry void outputStats();
+    entry void calcScaledResidual(CkReductionMsg *);
+    entry void startNextStep();
+  };
+
+  array [2D] BenchmarkLUBlk : LUBlk {
+    entry BenchmarkLUBlk(CProxy_LUSolver);
+
+    entry void initVec();
+
+    // Validation process
+    entry void startValidation();
+    entry [nokeep] void recvXvec(int size, double xvec[size]);
+    entry void sumBvec(int size, double partial_b[size]);
+  };
+}

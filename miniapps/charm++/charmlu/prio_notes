@@ -1,0 +1,51 @@
+In the diagonal chare (factorDiagBlock):
+
+- factoriDiagBlock is critical
+
+- colMax is the target of a reduction, and lies on the critical path in
+  the factorization
+
+- doPivot is sent to both itself, and all the chares in its row and
+  below. Urgency varies as follows: 
+
+  * local invocation is immediately critical, as is any remote partner
+    - stop waiting on a self send
+  * invocation on the column below is critical before the next column
+    can proceed
+  * the row to the right and any partner chares need to hear before
+    subsequent updates can happen
+  * the sub-matrix below and to the right needs to hear before they
+    can participate in factoring the next column panel or compute
+    trailing updates
+  * the sub-matrix below and to the left needs to hear before they can
+    contribute their chunk of the solution
+
+- sendPivotData is critical when it happens
+
+- sendUSegment needs to be delivered and processed before the next
+  reduction to colMax can start
+
+
+In the off-diagonal chares
+
+- doPivot/sendPivotData is interleaved with trailing updates, and can
+  block execution of memory-relieving trailing updates
+
+- recvL/recvU are trivial and can be necessary to relieve memory
+  pressure, by scheduling a trailing update
+
+- trailing updates need to happen before a block is part of the active
+  panel, but should otherwise be delayed
+
+- Above diagonal doPivot/sendPivotData need to happen before the
+  portion of U can be computed. Very important at the left end,
+  progressively less so as we move right. sendPivotData can be
+  individually prioritized, since it's a point-to-point message
+
+- processComputeU's priority depends on how much of the computation
+  hinges on its completion. Above a soon-to-be-active diagonal block,
+  important, further right less so.
+
+- Below diagonal, the active sendPivotData calls are critical, and
+  multicastRecvL is of varying importance depending on the
+  recipient. LATER sendPivotData calls aren't needed until the solve.

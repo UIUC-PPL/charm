@@ -1,0 +1,17 @@
+#!/bin/bash
+#PBS -N lu-prod-339
+#PBS -j oe
+#PBS -l walltime=05:00:00,size=8064
+##PBS -A  TG-ASC050039N
+#PBS -A csc076
+
+export MPICH_UNEX_BUFFER_SIZE=60M
+export MPICH_MAX_SHORT_MSG_SIZE=1k
+export MPICH_PTL_UNEX_EVENTS=60000
+
+TRACES_DIR=jaguar339
+
+cp ~liffland/charmlu/lu.prod $WORKDIR/lu.$TRACES_DIR
+cd $WORKDIR
+
+aprun -n 8064 -N 12 ./lu.$TRACES_DIR 985000 500 1040 50 3 192 42 96 3 +setcpuaffinity

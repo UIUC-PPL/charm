@@ -1,0 +1,17 @@
+charmrun
+lu
+lu-proj
+lu.prod
+lu.trace
+*.log
+*.projrc
+*.sts
+*.decl.h
+*.def.h
+*.o
+*.d
+*.di
+*.ci.stamp
+input-generated-*
+LU-solution-*
+
