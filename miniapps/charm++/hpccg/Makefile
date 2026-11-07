@@ -36,7 +36,10 @@
 
 LINKER=mpic++
 
-CHARMC ?= charmc
+-include ../../common.mk
+# Defaults to the enclosing Charm++ build; to use another, pass it on the
+# command line: make CHARMC=/path/to/charm/bin/charmc
+CHARMC = ../../../bin/charmc $(OPTS)
 
 # 2) MPI headers:  
 #    If you:
@@ -95,6 +98,9 @@ SEQ_OBJ          = $(TEST_CPP:.cpp=-seq.o) main-seq.o
 
 TARGETS = seq_HPCCG mpi_HPCCG charm_HPCCG
 
+# make (all) builds the Charm++ version only; make default builds all three.
+all: charm_HPCCG
+
 default: $(TARGETS)
 
 %-seq.cpp: %.cpp
@@ -122,6 +128,11 @@ mpi_HPCCG: $(MPI_OBJ) main-mpi.o
 
 seq_HPCCG: $(SEQ_OBJ) main-seq.o
 	$(LINKER) $(CFLAGS) $^ $(LIB_PATHS) -o $@
+
+# 8 chares, each a 32^3 block, 150 CG iterations. No result check: the
+# Charm++ version prints the residual but does not compare it with anything.
+test: charm_HPCCG
+	$(call run, +p4 ./charm_HPCCG 8 32 32 32)
 
 clean:
 	@rm -f *.o  *~ *-seq.cpp *-mpi.cpp *-charm.cpp $(TARGETS) $(TARGET:=.exe) *.decl.h *.def.h charmrun

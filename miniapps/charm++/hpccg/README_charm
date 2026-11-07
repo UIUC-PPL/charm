@@ -2,9 +2,9 @@ Authors: Jonathan Lifflander and Phil Miller
 
 Compilation:
 ============
-Set the CHARMC environment variable to point at
-charm_installation/bin/charmc, and run make. This will build the
-sequential, MPI, and Charm++ versions.
+Inside a Charm++ build tree, run make; elsewhere, run
+make CHARMC=charm_installation/bin/charmc. This builds the Charm++
+version; make default also builds the sequential and MPI versions.
 
 Guide to the Charm++ code:
 ==========================
