@@ -1,0 +1,27 @@
+mainmodule randomAccess {
+    readonly int                             N;              // log_2 of the local table size
+    readonly CmiInt8                         localTableSize; // The local table size
+    readonly CProxy_TestDriver               driverProxy;    // Handle to the test driver (chare)
+    readonly CProxy_GroupMeshStreamer<dtype, Updater, SimpleMeshRouter> aggregator;     // Handle to the communication library (group)
+    
+    mainchare TestDriver {
+        entry TestDriver (CkArgMsg *args);
+        entry [reductiontarget] void start();
+        entry void startVerificationPhase();
+        entry [reductiontarget] void reportErrors(CmiInt8 globalNumErrors);
+    };
+    
+    group Updater {
+        entry Updater();
+        // This method generates keys that index into the global table.
+        // Each generated key is submitted to the communication library
+        entry [threaded] void  generateUpdates();
+        // Used for verification
+        entry void checkErrors();
+    };
+
+    // Setup required for the communication library
+    message MeshStreamerMessage<dtype>;
+    group GroupMeshStreamer<dtype, Updater, SimpleMeshRouter>;
+    group MeshStreamer<dtype, SimpleMeshRouter>;
+};
