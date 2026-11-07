@@ -59,6 +59,8 @@ env:
   # reductions on their old PE (#4145).
   # bcast_zcpup: broadcasts to elements that migrate to another process with
   # pup_buffer data; the 2-process step is the one that reaches the case.
+  # section_migrate: CkMulticast section multicasts and reductions while the
+  # members and the section root migrate (migrateMe and AtSync).
   TEST_DIRS: >-
     tests/charm++/megatest
     tests/charm++/simplearrayhello
@@ -79,6 +81,7 @@ env:
     tests/charm++/atsync_reduction
     tests/charm++/threaded_redn
     tests/charm++/reduction_migrate_ahead
+    tests/charm++/section_migrate
     tests/charm++/qd
     tests/charm++/within_node_bcast
     tests/charm++/zerocopy/zerocopy_with_qd
