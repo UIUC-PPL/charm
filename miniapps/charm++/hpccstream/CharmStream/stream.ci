@@ -1,0 +1,17 @@
+mainmodule stream
+{
+	readonly CProxy_Controller controllerProxy;
+	readonly double alpha;
+
+	mainchare Controller {
+		entry Controller(CkArgMsg * msg);
+		entry void StepComplete(CkReductionMsg * msg);
+		};
+
+	group Worker {
+		entry Worker();
+		entry void Tried();
+		entry void Verify();
+		};
+};
+
