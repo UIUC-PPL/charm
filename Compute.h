@@ -12,6 +12,10 @@ class Compute : public CBase_Compute {
     //handles to differentiate the two multicast sections I am part of
     CkSectionInfo mcast1;     
     CkSectionInfo mcast2;
+    // -hop computes
+    bool hopping = false;
+    bool hopsThisStep();
+    void startHop();
 
   public:
     Compute();
@@ -20,6 +24,8 @@ class Compute : public CBase_Compute {
 
     void selfInteract(ParticleDataMsg *msg);
     void interact(ParticleDataMsg *msg1, ParticleDataMsg *msg2);
+    void hop(int dest);
+    void ckJustMigrated();
 };
 
 #endif

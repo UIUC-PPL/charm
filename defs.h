@@ -17,8 +17,12 @@
 //number of particles decreases - for 2 1 1, it is 500, for 2 2 1 it is 250; you
 //can set them to have lower values but not higher; alternatively a host of
 //paramters including PTP_CUT_OFF, PERDIM, GAP can be set to suitable values to
+#ifndef PARTICLES_PER_CELL_START
 #define PARTICLES_PER_CELL_START        100 
+#endif
+#ifndef PARTICLES_PER_CELL_END
 #define PARTICLES_PER_CELL_END          250
+#endif
 
 #define DEFAULT_DELTA           1	// in femtoseconds
 
@@ -26,9 +30,15 @@
 #define DEFAULT_LDB_PERIOD      20
 #define DEFAULT_FT_PERIOD       100000
 
+#ifndef KAWAY_X
 #define KAWAY_X                 2
+#endif
+#ifndef KAWAY_Y
 #define KAWAY_Y                 2
+#endif
+#ifndef KAWAY_Z
 #define KAWAY_Z                 1
+#endif
 #define NBRS_X	                (2*KAWAY_X+1)
 #define NBRS_Y                  (2*KAWAY_Y+1)
 #define NBRS_Z                  (2*KAWAY_Z+1)
@@ -108,4 +118,26 @@ extern /* readonly */ int finalStepCount;
 extern /* readonly */ int checkptStrategy;
 extern /* readonly */ std::string logs;
 extern /* readonly */ int bFactor;
+extern /* readonly */ int placeMode;
+extern /* readonly */ int hopMode;
+extern /* readonly */ int hopEvery;
+extern /* readonly */ int cellsMigratable;
+// Stress-test options (see README): -place and -hop modes.
+#define PLACE_DEFAULT   0
+#define PLACE_AWAY      1   // computes never on the PE of the cell that inserts them
+#define PLACE_ONEPE     2   // all cells on PE 0, all computes on the last PE
+#define PLACE_RANDOM    3   // cells and computes on hashed PEs
+#define HOP_NONE        0
+#define HOP_BETWEEN     1   // cells migrate after their force reduction completes
+#define HOP_INFLIGHT    2   // cells migrate right after their multicast
+#define HOP_TWICE       3   // like HOP_BETWEEN, two migrations in a row
+#define HOP_COMPUTES    4   // a quarter of the computes migrate after contributing
+
+inline unsigned long long leanmdHash(unsigned long long z) {
+  z += 0x9E3779B97F4A7C15ULL;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  return z ^ (z >> 31);
+}
+
 #endif

@@ -28,13 +28,13 @@ Cell::Cell() : inbrs(NUM_NEIGHBORS), stepCount(1), updateCount(0), computesList(
   }
 
   energy[0] = energy[1] = 0;
-  setMigratable(false);
+  setMigratable(cellsMigratable || (hopMode != HOP_NONE && hopMode != HOP_COMPUTES));
 }
 
 //constructor for chare object migration
 Cell::Cell(CkMigrateMessage *msg): CBase_Cell(msg) {
   usesAtSync = true;
-  setMigratable(false);
+  setMigratable(cellsMigratable || (hopMode != HOP_NONE && hopMode != HOP_COMPUTES));
   delete msg;
 }  
 
@@ -69,7 +69,13 @@ void Cell::createComputes() {
       py2 = py1+dy;
       pz2 = pz1+dz;
       CkArrayIndex6D index(px1, py1, pz1, px2, py2, pz2);
-      computeArray[index].insert((++currPe) % CkNumPes());
+      int P = CkNumPes();
+      int pe = (++currPe) % P;
+      unsigned long long h = leanmdHash(((unsigned long long)(x * 64 + y) * 64 + z) * 1024 + num);
+      if (placeMode == PLACE_AWAY && P > 1) pe = (CkMyPe() + 1 + (int)(h % (P - 1))) % P;
+      else if (placeMode == PLACE_ONEPE) pe = P - 1;
+      else if (placeMode == PLACE_RANDOM) pe = (int)(h % P);
+      computeArray[index].insert(pe);
       computesList[num] = index;
     } else {
       // these computes will be created by pairing cells
@@ -83,7 +89,8 @@ void Cell::createComputes() {
       computesList[num] = index;
     }
   } // end of for loop
-  contribute(CkCallback(CkReductionTarget(Main,run),mainProxy));
+  int n = particles.size();
+  contribute(sizeof(int), &n, CkReduction::sum_int, CkCallback(CkReductionTarget(Main,run),mainProxy));
 }
 
 //call multicast section creation
@@ -218,6 +225,8 @@ void Cell::pup(PUP::er &p) {
   p | inbrs;
   p | numReadyCheckpoint;
   PUParray(p, energy, 2);
+  p | hopsLeft;
+  p | hopping;
 
   p | computesList;
 
@@ -234,3 +243,43 @@ void Cell::pup(PUP::er &p) {
   }
 }
 
+void Cell::checkForces(vec3 *forces, int n) {
+  double v[4] = {0, 0, 0, 0};
+  for (int i = 0; i < n; i++) {
+    v[0] += forces[i].x; v[1] += forces[i].y; v[2] += forces[i].z;
+    v[3] += fabs(forces[i].x) + fabs(forces[i].y) + fabs(forces[i].z);
+  }
+  contribute(sizeof(v), v, CkReduction::sum_double, CkCallback(CkReductionTarget(Main, forceCheck), mainProxy));
+}
+
+int Cell::pickDest() {
+  int P = CkNumPes();
+  int myid = thisIndex.z + cellArrayDimZ * (thisIndex.y + thisIndex.x * cellArrayDimY);
+  unsigned long long h = leanmdHash(((unsigned long long)stepCount << 32) ^ (myid * 8 + hopsLeft));
+  return (CkMyPe() + 1 + (int)(h % (P - 1))) % P;
+}
+
+// The SDAG in run() waits for arrived() while hopping is set.
+void Cell::startHop(int hops) {
+  if (CkNumPes() < 2) return;
+  hopping = true;
+  hopsLeft = hops;
+  thisProxy(thisIndex.x, thisIndex.y, thisIndex.z).hop(pickDest());
+}
+
+void Cell::hop(int dest) {
+  hopsLeft--;
+  migrateMe(dest);  // last action
+}
+
+void Cell::ckJustMigrated() {
+  CBase_Cell::ckJustMigrated();
+  if (!hopping) return;
+  if (hopsLeft > 0) thisProxy(thisIndex.x, thisIndex.y, thisIndex.z).hop(pickDest());
+  else { hopping = false; thisProxy(thisIndex.x, thisIndex.y, thisIndex.z).arrived(); }
+}
+
+void Cell::report() {
+  CkPrintf("leanmd: cell (%d,%d,%d) on PE %d: step %d, hopping %d, hops left %d\n",
+           thisIndex.x, thisIndex.y, thisIndex.z, CkMyPe(), stepCount, (int)hopping, hopsLeft);
+}

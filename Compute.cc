@@ -66,8 +66,38 @@ void Compute::pup(PUP::er &p) {
   p | mcast1;
   p | mcast2;
   PUParray(p, energy, 2);
+  p | hopping;
   if (p.isUnpacking() && CkInRestarting()) {
     mcast1.set_redNo(0); 
     mcast2.set_redNo(0);
   }
 }
+static unsigned long long computeKey(const CkIndex6D &ix) {
+  unsigned long long k = 0;
+  const short *c = &ix.x1;
+  for (int i = 0; i < 6; i++) k = k * 131 + (unsigned short)c[i];
+  return k;
+}
+
+// A quarter of the computes, a different quarter each step.
+bool Compute::hopsThisStep() {
+  return CkNumPes() > 1 && leanmdHash(computeKey(thisIndex) ^ ((unsigned long long)stepCount << 40)) % 4 == 0;
+}
+
+// The SDAG in run() waits for arrived() while hopping is set.
+void Compute::startHop() {
+  hopping = true;
+  int P = CkNumPes();
+  int dest = (CkMyPe() + 1 + (int)(leanmdHash(computeKey(thisIndex) + stepCount) % (P - 1))) % P;
+  thisProxy[thisIndex].hop(dest);
+}
+
+void Compute::hop(int dest) {
+  migrateMe(dest);  // last action
+}
+
+void Compute::ckJustMigrated() {
+  CBase_Compute::ckJustMigrated();
+  if (hopping) { hopping = false; thisProxy[thisIndex].arrived(); }
+}
+

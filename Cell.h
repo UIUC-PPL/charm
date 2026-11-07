@@ -39,6 +39,8 @@ class CellMap : public CkArrayMap {
   int procNum(int arrayHdl, const CkArrayIndex &idx) {
     int *index =(int *)idx.data();
     int patchID = index[2] + index[1] * num_z + index[0] * num_yz;
+    if (placeMode == PLACE_ONEPE) return 0;
+    if (placeMode == PLACE_RANDOM) return (int)(leanmdHash(patchID) % CkNumPes());
     return (int)(patchID * ratio);
   }
 };
@@ -72,6 +74,13 @@ private:
   Particle& wrapAround(Particle &p);
   // handle to section proxy of computes
   CProxySection_Compute mCastSecProxy;
+  // -hop: migrations still to make in this hop, and whether one is under way
+  int hopsLeft = 0;
+  bool hopping = false;
+  void startHop(int hops);
+  int pickDest();
+  // per-step sum of the forces on my particles, to Main::forceCheck
+  void checkForces(vec3 *forces, int n);
 
 public:
   Cell();
@@ -83,6 +92,9 @@ public:
   void sendPositions();
   void startCheckpoint(int);
   void pup(PUP::er &p);
+  void hop(int dest);
+  void ckJustMigrated();
+  void report();
 };
 
 #endif
