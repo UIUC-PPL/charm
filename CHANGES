@@ -101,7 +101,12 @@ New on this line since the split from classic:
   created elsewhere no longer runs its constructors on PE 0 before that
   group's branch exists there. ckLocalBranch() of a group created with
   a dependence may be null right after ckNew on that PE. New test
-  tests/charm++/groupdep_creator.
+  tests/charm++/groupdep_creator. The test also found that a PE
+  finishing its startup ran its buffered messages before marking the
+  startup phase over, so a group created from one of them (on PE 1,
+  say) was broadcast as a startup-time creation and a PE still starting
+  up indexed its startup table by that group's negative id and threw
+  (2 processes, seen with few CPUs); the phase now ends first.
 
 - CkIO creates a chare array per write session and per read session,
   and collection numbers are not reused, so a program that ran more
