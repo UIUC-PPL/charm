@@ -94,10 +94,11 @@ class Worker:public CBase_Worker
 				Worker()
 				{
 						//Intiialize using random numbers
-					   srand(CkMyPe());
+					   // rand_r: PEs that share a process must not share rand()'s state
+					   unsigned int seed = CkMyPe();
 					   for (int j=0; j<N; j++) {
-							   b[j] = (rand()/(double)RAND_MAX+1);
-							   c[j] = (rand()/(double)RAND_MAX+1);
+							   b[j] = (rand_r(&seed)/(double)RAND_MAX+1);
+							   c[j] = (rand_r(&seed)/(double)RAND_MAX+1);
 							   }
 					
 				}
@@ -115,13 +116,17 @@ class Worker:public CBase_Worker
 				/* Verification */
 				void Verify()
 				{
-						srand(CkMyPe());
+						unsigned int seed = CkMyPe();
 						for(int j=0; j<N; j++)
-								if (a[j] !=(rand()/(double)RAND_MAX+1) + alpha *  (rand()/(double)RAND_MAX+1))
+						{
+								double bj = rand_r(&seed)/(double)RAND_MAX+1;
+								double cj = rand_r(&seed)/(double)RAND_MAX+1;
+								if (a[j] != bj + alpha * cj)
 								{
 									ckout<<"Verification Failed"<<endl;
-									CkExit();
+									CkAbort("hpccstream: verification failed");
 								}
+						}
 						contribute(); 
 				}
 

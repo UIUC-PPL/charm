@@ -1,4 +1,6 @@
-CHARMC=$(HOME)/charm/net-darwin-x86_64/bin/charmc $(OPTS)
+-include ../../../common.mk
+# Override on the command line: make CHARMC=/path/to/charm/bin/charmc
+CHARMC=../../../../bin/charmc $(OPTS)
 
 
 default: all
@@ -8,10 +10,15 @@ stream	:	stream.o
 	$(CHARMC)	-o	stream	stream.o 
 
 stream.o : stream.C stream.decl.h stream.def.h
-	$(CHARMC)	-o	stream.o	stream.C 
+	$(CHARMC)	-c	-o	stream.o	stream.C 
 
 stream.decl.h stream.def.h : stream.ci
 	 $(CHARMC) stream.ci
+
+# 10 iterations of the triad over 10^6 doubles per PE, then the program
+# recomputes every element and aborts on a mismatch.
+test: stream
+	$(call run, +p4 ./stream)
 
 clean:
 	rm -f stream.decl.h stream.def.h stream.o stream	charmrun
