@@ -22,21 +22,21 @@ inline double calcPairForces(ParticleDataMsg* first, ParticleDataMsg* second, in
   force1.resize(firstLen);
   force2.resize(secondLen);
   //check for wrap around and adjust locations accordingly
-  if (abs(first->x - second->x) > 1){
+  if (abs(first->x - second->x) > KAWAY_X){
     diff = CELL_SIZE_X * cellArrayDimX;
     if (second->x < first->x)
       diff = -1 * diff; 
     for (i = 0; i < firstLen; i++)
       first->part[i].x += diff;
   }
-  if (abs(first->y - second->y) > 1){
+  if (abs(first->y - second->y) > KAWAY_Y){
     diff = CELL_SIZE_Y * cellArrayDimY;
     if (second->y < first->y)
       diff = -1 * diff; 
     for (i = 0; i < firstLen; i++)
       first->part[i].y += diff;
   }
-  if (abs(first->z - second->z) > 1){
+  if (abs(first->z - second->z) > KAWAY_Z){
     diff = CELL_SIZE_Z * cellArrayDimZ;
     if (second->z < first->z)
       diff = -1 * diff; 

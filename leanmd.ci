@@ -53,6 +53,7 @@ mainmodule leanmd {
           CkPrintf("\nEnergy conservation test failed for maximum allowed variation of %E units.\nSIMULATION UNSUCCESSFULL\n",ENERGY_VAR);  
           CkAbort("leanmd: energy not conserved");
         } else {
+          CkPrintf("Total energy %E -> %E\n", iE1 + iE2, fE1 + fE2);
           CkPrintf("\nEnergy conservation test passed for maximum allowed variation of %E units.\nSIMULATION SUCCESSFULL \n",ENERGY_VAR);
         }
         CkPrintf("Total application time %f s\n", (CkWallTimer() - startBenchmarkTime));
