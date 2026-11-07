@@ -20,6 +20,8 @@ test: section_migrate
 	$(call run, ./section_migrate +p4 -stillroot)
 	$(call run, ./section_migrate +p4 -stillroot -inflight +randomized_msgq +randomized_seed 4)
 	$(call run, ./section_migrate +p4 -lb +balancer RotateLB)
+	$(call run, ./section_migrate +p3 -lb -inflight -every +balancer RotateLB)
+	$(call run, ./section_migrate +p3 -lb -inflight -every +balancer RotateLB +randomized_msgq +randomized_seed 2)
 	$(call run, ./section_migrate +p4 -lb -auto +balancer RotateLB +randomized_msgq +randomized_seed 2)
 	$(call run, ./section_migrate +p3 -inflight -root)
 	$(call run, ./section_migrate +p4 -inflight -root +randomized_msgq +randomized_seed 2)
@@ -31,7 +33,6 @@ test: section_migrate
 # #4132 item 3, the root moves before its tree is ready.
 test-known-failures: section_migrate
 	$(call run, ./section_migrate +p4 -double +randomized_msgq +randomized_seed 2)
-	$(call run, ./section_migrate +p3 -lb -inflight -every +balancer RotateLB +randomized_msgq +randomized_seed 2)
 
 smptest: section_migrate
 

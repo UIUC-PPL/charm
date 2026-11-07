@@ -666,7 +666,8 @@ void CkMulticastMgr::setup(multicastSetupMsg *msg)
     } 
     entry->aid = aid;
     entry->pe = CkMyPe();
-    entry->rootSid = msg->rootSid;
+    /// A root retired before its own setup arrives keeps the new root as rootSid
+    if (!entry->isObsolete()) entry->rootSid = msg->rootSid;
     entry->parentGrp = msg->parent;
     int factor = entry->bfactor = msg->bfactor;
 
@@ -786,9 +787,16 @@ void CkMulticastMgr::setup(multicastSetupMsg *msg)
 
 void CkMulticastMgr::childrenReady(mCastEntry *entry)
 {
-    // Mark this entry as ready
-    entry->setReady();
     CProxy_CkMulticastMgr  mCastGrp(thisgroup);
+    if (entry->isObsolete()) {
+        /// Retired while the tree was still being built: retire found no
+        /// children to tear down, so tear them down now. The entry stays
+        /// obsolete; the messages released below are forwarded to the new root.
+        for (size_t i=0; i<entry->children.size(); i++)
+            mCastGrp[entry->children[i].get_pe()].teardown(entry->children[i]);
+    }
+    else
+        entry->setReady();
 
     DEBUGF(("[%d] childrenReady entry %p groupsection?: %d,  Arrayelems: %zu, GroupElems: %zu, redNo: %d\n", CkMyPe(), entry, entry->isGrpSec(), entry->allElem.size(), entry->allGrpElem.size(), entry->red.redNo));
 
