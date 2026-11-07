@@ -64,6 +64,9 @@ class sectionRedInfo {
         void *storedClientParam;
         /// Reduction sequence number
         int redNo;
+        /// Root only: a fragment of this reduction was completed by
+        /// contributions that did not all come through this tree
+        int8_t mixed;
         /// Messages for this reduction
         reductionMsgs  msgs [MAXFRAGS];
         /// Messages of future reductions
@@ -73,7 +76,7 @@ class sectionRedInfo {
         sectionRedInfo(): npProcessed(0),
                          storedCallback(NULL),
                          storedClientParam(NULL),
-                         redNo(0) {
+                         redNo(0), mixed(0) {
             for (int8_t i=0; i<MAXFRAGS; i++)
                 lcount [i] = ccount [i] = gcount [i] = 0;
         }
@@ -1488,8 +1491,6 @@ void CkMulticastMgr::recvRedMsg(CkReductionMsg *msg)
 
     CProxy_CkMulticastMgr  mCastGrp(thisgroup);
 
-    int updateReduceNo = 0;
-
     //-------------------------------------------------------------------------
     /// If this cookie is obsolete
     if (entry->isObsolete()) {
@@ -1508,8 +1509,6 @@ void CkMulticastMgr::recvRedMsg(CkReductionMsg *msg)
         if (!entry->hasParent() && !entry->isObsolete()) {
             /// Indicate it is not on old spanning tree
             msg->sourceFlag = 0;
-            /// Flag the redn as coming from an old tree and that the new entry cookie needs to know the new redn num.
-            updateReduceNo  = 1;
         }
         /// If I am not the root or this latest cookie is also obsolete
         else {
@@ -1618,11 +1617,7 @@ void CkMulticastMgr::recvRedMsg(CkReductionMsg *msg)
         const int8_t nFrags = msg->nFrags;
         /// Reduce this fragment
         reduceFragment (index, id, entry, redInfo, currentTreeUp);
-
-        // If migration happened, and my sub-tree reconstructed itself,
-        // share the current reduction number with myself and all my children
-        if (updateReduceNo)
-            mCastGrp[CkMyPe()].updateRedNo(entry, redInfo.redNo);
+        if (!currentTreeUp) redInfo.mixed = 1;
 
         /// If all the fragments for the current reduction have been processed
         if (redInfo.npProcessed == nFrags) {
@@ -1637,6 +1632,14 @@ void CkMulticastMgr::recvRedMsg(CkReductionMsg *msg)
                 redInfo.gcount [i] = 0;
             }
             redInfo.npProcessed = 0;
+            /// A child that did not carry every fragment still has the number
+            /// this tree was built with (contributions were in flight in the
+            /// old tree) and would hold the next reduction as a future one.
+            if (redInfo.mixed) {
+                redInfo.mixed = 0;
+                for (size_t c=0; c<entry->children.size(); c++)
+                    mCastGrp[entry->children[c].get_pe()].updateRedNo((mCastEntry *)entry->children[c].get_val(), redInfo.redNo);
+            }
             /// Now that, the current redn is done, release any pending msgs from future redns
             releaseFutureReduceMsgs(entry);
         }

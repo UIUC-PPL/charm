@@ -54,6 +54,7 @@ DIRS = \
   collide \
   qd \
   reduction_migrate_ahead \
+  section_migrate \
   bcast_zcpup \
 
 FTDIRS = \
