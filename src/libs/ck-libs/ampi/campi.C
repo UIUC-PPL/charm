@@ -79,8 +79,6 @@ struct Rank {
   // Init on element 0: completion of an array creation (CkCallback target)
   bool arrayCreated = false;
   CkArrayID createdAid;
-  // Init on element 0 off PE 0: PE 0 has its ampiPeMgr branch (CkCallback target)
-  bool peMgrOnPe0 = false;
 
   // Migration and restart (design 4A).
   void *state = nullptr;           // the user's state object (registered_ops)
@@ -908,13 +906,6 @@ static void array_created(void *param, void *msg) {
   r->tc->resume();
 }
 
-static void pemgr_on_pe0(void *param, void *msg) {
-  Rank *r = (Rank *)param;
-  r->peMgrOnPe0 = true;
-  CkFreeMsg(msg);
-  r->tc->resume();
-}
-
 // TCharm::semaGet, awaiting instead of suspending the thread
 static task<void *> sema_get(int id) {
   TCharm *tc = TCharm::get();
@@ -949,14 +940,9 @@ static task<void> ampi_init() {
   if (TCHARM_Element() == 0) { /* I'm responsible for building the arrays: */
     CkArrayID threads;
     opts = ampiInitRootArrayOptions(&threads, &nchunks);
-    // As in ampiInit: the dependence below does not apply on PE 0.
-    if (CkMyPe() != 0) {
-      r->peMgrOnPe0 = false;
-      ampiPeMgrWhenOnPe0(CkCallback(pemgr_on_pe0, r));
-      while (!r->peMgrOnPe0) co_await suspend();
-    }
     r->arrayCreated = false;
-    // As in ampiInit: the ampiParent manager's creation waits for ampiPeMgr on each PE.
+    // As in ampiInit: the ampiParent array manager's creation on every PE waits
+    // for that PE's ampiPeMgr branch.
     CkEntryOptions parentOpts;
     parentOpts.setGroupDepID(ampiPeMgrGroupID());
     CProxy_ampiParent::ckNew(threads, nchunks, opts, CkCallback(array_created, r), &parentOpts);
