@@ -1,6 +1,7 @@
-
-CHARMHOME ?= ~/charm/net-linux-x86_64
-CHARMC ?= $(CHARMHOME)/bin/charmc -I.
+-include ../../common.mk
+# Override on the command line: make CHARMHOME=/path/to/charm/build
+CHARMHOME = ../../..
+CHARMC = $(CHARMHOME)/bin/charmc -I.
 CXX=$(CHARMC)
 
 OPTS ?= -O3
@@ -22,8 +23,10 @@ Advection.o: Advection.C Advection.h OctIndex.h Main.decl.h Advection.decl.h
 Main.o: Main.C Advection.h OctIndex.h Main.decl.h Advection.decl.h
 OctIndex.o: OctIndex.C OctIndex.h Advection.decl.h
 
+# max_depth 3, 32^3 zones per block, 60 iterations, load balancing every
+# 9. The program checks no result (only internal asserts).
 test: all
-	./charmrun +p8 ++local ./advection 3 32 30 9 +balancer DistributedLB
+	$(call run, +p4 ./advection 3 32 60 9 +balancer DistributedLB)
 
 clean:
 	rm -f *.decl.h *.def.h conv-host *.o advection charmrun advection.ci.stamp
