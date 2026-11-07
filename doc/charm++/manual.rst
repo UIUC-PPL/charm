@@ -8751,10 +8751,67 @@ following:
        AMPI_Migrate(in_memory);
    }
 
+.. _sec:MemRollback:
+
+Rollback
+^^^^^^^^
+
+A program can return to its last completed in-memory checkpoint without
+any process failing, for example after it detects a soft error in its
+own data. The call is:
+
+.. code-block:: c++
+
+         void CkRollbackMemCheckpoint()
+
+It can be called on any PE. Every array element in the program is
+destroyed and recreated from the last completed in-memory checkpoint, on
+the PE that held it when the checkpoint was taken, and the callback that
+was passed to ``CkStartMemCheckpoint`` is delivered again, once. The
+program therefore continues from the point where that checkpoint
+completed. The same checkpoint can be rolled back to more than once.
+
+Preconditions:
+
+- A checkpoint must have completed: call ``CkRollbackMemCheckpoint`` in or
+  after the checkpoint's callback. A call before any checkpoint has
+  completed, or while a checkpoint is in progress, aborts the program.
+  A call while a rollback is already in progress is ignored.
+- No array element may migrate between the checkpoint and the rollback.
+  Do not let load balancing run in that interval. The runtime counts
+  migrations and aborts a rollback after one with the message
+  ``CharmFT> rollback refused: N array elements migrated on PE p since the
+  last in-memory checkpoint``.
+- The program must have stopped its own message traffic. The rollback
+  starts only when the runtime detects quiescence (see
+  :numref:`sec:qd`), so a program that keeps sending messages delays it
+  indefinitely, and a message sent to an element after the rollback has
+  started may reach its restored copy.
+
+Only array elements are restored. Groups, node groups, mainchares,
+readonly variables and singleton chares keep their current state. In
+particular, a counter kept in a mainchare is not reverted: the
+checkpoint callback is the place to reset such state (the test
+``tests/charm++/memckpt_rollback`` shows this). Arrays created after the
+checkpoint keep their managers but lose their elements.
+
+On a single process (one node), the second copy of each checkpoint is
+kept in the same process, so a process failure could not be survived;
+PE 0 prints ``CharmFT> one node: a process failure cannot be survived;
+checkpoint and rollback work`` at the first checkpoint. Checkpoint and
+rollback work normally there.
+
 .. _restarting-1:
 
 Restarting
 ^^^^^^^^^^
+
+On reconverse builds, a process failure currently ends the job: the
+runtime does not detect failures or start replacement processes, so the
+automatic restart described in the rest of this subsection, and the
+failure injection and demonstration subsections below, do not apply yet.
+Restart after a process failure is planned as a separate step;
+:numref:`sec:MemRollback` describes what works today.
 
 When a processor crashes, the restart protocol will be automatically
 invoked to recover all objects using the last checkpoints. The program
@@ -8788,20 +8845,21 @@ Building Instructions
 ^^^^^^^^^^^^^^^^^^^^^
 
 In order to have the double local-storage checkpoint/restart
-functionality available, the parameter ``syncft`` must be provided at
-build time:
+functionality available, the parameter ``syncft`` (or its synonym
+``memft``) must be provided at build time:
 
-.. code-block:: c++
+.. code-block:: bash
 
-      ./build charm++ netlrts-linux-x86_64 syncft
+      ./build charm++ reconverse-linux-x86_64 syncft
 
-At present, only a few of the machine layers underlying the Charm++
-runtime system support resilient execution. These include the TCP-based
-``net`` builds on Linux and Mac OS X. For clusters overbearing
-job-schedulers that kill a job if a node goes down, the way to
-demonstrate the killing of a process is show in
-Section :numref:`ft:inject` . Charm++ runtime system can
-automatically detect failures and restart from checkpoint.
+The option is off by default because every program built with it pays
+some costs: each array element registers with the checkpoint manager when
+it is created, the centralized load balancers collect statistics without
+reductions, and reductions do not skip inactive PEs. The build directory
+gets a ``-syncft`` suffix (for example ``reconverse-linux-x86_64-syncft``).
+On reconverse, a syncft build provides checkpoint and rollback
+(:numref:`sec:MemRollback`); restart after a process failure is not
+available yet (see :numref:`restarting-1`).
 
 Failure Injection
 ^^^^^^^^^^^^^^^^^
@@ -8813,12 +8871,15 @@ point in time. You must create a text file with two columns. The first
 colum will store the PEs that will fail. The second column will store
 the time at which the corresponding PE will fail. Make sure all the
 failures occur after the first checkpoint. The runtime parameter
-``kill_file`` has to be added to the command line along with the file
+``+killFile`` has to be added to the command line along with the file
 name:
 
 .. code-block:: bash
 
-   $ ./hello +pe 8 +kill_file <file>
+   $ ./hello +pe 8 +killFile <file>
+
+The option is recognized only by builds that support restart after a
+process failure, which reconverse builds do not yet.
 
 An example of this usage can be found in the ``syncfttest`` targets in
 ``tests/charm++/jacobi3d``.

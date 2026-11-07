@@ -133,6 +133,25 @@ jobs:
           make -C examples/charm++/zerocopy CHARMC=$B/bin/charmc
           TESTRUN_PROCS=2 TESTRUN_VA_RANDOMIZATION=1 timeout 1800 make -C examples/charm++/zerocopy test
 
+  # The syncft (in-memory checkpoint) build option: checkpoint, rollback and
+  # the migration refusal, in one and two processes. A job of its own because
+  # the option changes code every program runs (see doc/internals/memckpt.md).
+  reconverse-linux-x86_64-syncft:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+      - name: install dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake libfabric-dev
+      - name: build
+        run: ./build AMPI reconverse-linux-x86_64 syncft -j4 -g
+      - name: test (single process)
+        run: timeout 900 make -C tests/charm++/memckpt_rollback test
+      - name: test (2 processes, lcrun)
+        run: TESTRUN_PROCS=2 timeout 900 make -C tests/charm++/memckpt_rollback test
+
   # MPI interop (CharmLibInit/CharmLibExit) in an Open MPI program. A job of
   # its own so that the MPI packages stay out of the other builds.
   reconverse-linux-x86_64-mpi-interop:

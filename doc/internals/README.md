@@ -36,7 +36,7 @@ entry, and is planned once there is more than one chapter.
 | Chare arrays: creation, insertion, migration, sections | not yet written |
 | Groups and nodegroups | not yet written |
 | Load balancing: the LB framework and TreeLB | not yet written |
-| Checkpoint, restart, shrink/expand | not yet written |
+| [Checkpoint, restart, shrink/expand](memckpt.md) | first section written 2026-11-06: the double in-memory checkpoint and its rollback (syncft option); disk checkpoint and shrink/expand not yet written |
 | The reconverse layer: what Charm++ asks of the machine layer | not yet written |
 
 ## Models

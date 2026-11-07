@@ -58,6 +58,17 @@ because the epochs below it do not arrive again and a head waiting for one of
 them would never move, so every later broadcast would stay stored. The
 elements restored on the PE expect that same epoch or a later one.
 
+An in-memory rollback (memckpt.md) restores elements in the same processes,
+whose array managers have kept counting. After the rollback's quiescence
+every stored broadcast has reached every local element, so
+`CkArrayBroadcaster::flushState` empties the store and moves its head past
+the newest epoch seen, keeping that epoch (`BcastQueue::clear`), and each
+restored element is restamped to expect the next one
+(`CkArray::restampBroadcast`, called from `CkLocMgr::pupElementsFor` with
+`rebuild`). The epoch saved in the element's checkpoint is discarded: the
+broadcasts it would ask for were delivered before the rollback and are not
+sent again.
+
 A zero-copy broadcast (`CMK_ZC_BCAST_RECV_MSG`) is delivered first to one
 local element, which posts its buffers; the transfer then runs on the same
 message, the other local elements receive it as `CMK_ZC_BCAST_RECV_DONE_MSG`
@@ -145,7 +156,9 @@ migration, at the memory cost of broadcasts kept until spring cleaning.
   `CkArray::sendBroadcast`, `CkArray::recvBroadcast`,
   `CkArrayBroadcaster::ingestIncoming`, `attemptDelivery`,
   `bringUpToDate`, `releaseDelivered`, `springCleaning`.
-- src/ck-core/ckarray.h: `BcastQueue` (`releaseBelow`, `hold`, `consume`, `pup`).
+- src/ck-core/ckarray.h: `BcastQueue` (`releaseBelow`, `hold`, `consume`, `pup`, `clear`).
+- src/ck-core/ckarray.C: `CkArrayBroadcaster::flushState`, `CkArray::restampBroadcast`
+  (in-memory rollback).
 - src/ck-core/ckarray.h: `CkArrayBroadcaster` (`ckElementStamp`,
   `ckElementArriving`), `CkArray::stableLocations`.
 - src/ck-core/init.C: `+noAnytimeMigration`.
