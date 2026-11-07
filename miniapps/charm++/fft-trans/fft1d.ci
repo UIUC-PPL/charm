@@ -1,0 +1,55 @@
+mainmodule fft1d {
+
+  readonly CProxy_Main mainProxy;
+  readonly int numChares;
+  readonly int N;
+
+  message fftMsg {
+    fftw_complex data[];
+  };
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void FFTReady();
+    entry [reductiontarget] void FFTDone();
+    entry [reductiontarget] void printResidual(double residual);
+  };
+
+  array [1D] fft {
+    entry fft();
+    entry void getTranspose(fftMsg *m);
+    entry void initValidation();
+
+    entry void doFFT() {
+      for(iteration = 0; iteration < 3; ++iteration) {
+        atomic "transpose" {
+          if(thisIndex == 0)
+            CkPrintf("TRANSPOSING\n");
+          sendTranspose(iteration == 0 ? in : out);
+        }
+
+        for(count = 0; count < numChares; ++count)
+          when getTranspose[iteration] (fftMsg *m) atomic {
+            applyTranspose(m);
+          }
+
+        if (iteration < 2) atomic "compute" {
+          fftw_execute(p1);
+          if(iteration == 0)
+            twiddle(validating ? 1 : -1);
+        }
+      }
+
+      atomic {
+        if(!validating)
+          contribute(CkCallback(CkReductionTarget(Main,FFTDone), mainProxy));
+        else {
+          char filename[80];
+          sprintf(filename, "%d-%d.dump%d", numChares, N, thisIndex);
+          writeCommFile(n, in, filename);
+          calcResidual();
+        }
+      }
+    };
+  };
+};
