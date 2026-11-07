@@ -1,0 +1,133 @@
+====================
+AUTHORS
+====================
+Sam White <white67@illinois.edu>
+Adam Kunen <kunen1@llnl.gov>
+Abhinav Bhatele <bhatele1@llnl.gov>
+Peter Brown <brown42@llnl.gov>
+Teresa Bailey <bailey42@llnl.gov>
+
+
+====================
+OVERVIEW
+====================
+Kripke is a simple, scalable, 3D Sn deterministic particle transport code.  
+Its primary purpose is to research how data layout, programming paradigms and 
+architectures effect the implementation and performance of Sn transport.  
+A main goal of Kripke is investigating how different data-layouts affect 
+instruction, thread and task level parallelism, and what the implications are 
+on overall solver performance.
+
+
+====================
+CHARM++ PORT
+====================
+This is a Charm++ port of the Kripke proxy application, version 1.1.
+
+This is not intended to be a direct translation of the MPI reference code 
+into Charm++. It does incorporate as much of the C++ code from the reference 
+version as possible within the Charm++ programming paradigm and its idioms. It
+can be run with the same decomposition and made to send/receive the same number
+of messages per core as the MPI version.
+
+The Charm++ version decomposes over spatial zone sets in 3 dimensions, so that
+each chare is one zone set that has a variable number of energy group sets and
+direction sets associated with it. Over-decomposing into more zone sets than 
+cores empowers Charm++'s adaptive runtime system to schedule asynchronous 
+entry method invocations in order of actual message delivery.
+
+The Charm++ version, unlike the reference MPI implementation, is fully 
+asynchronous and so can overlap execution of two iterations at a time. This 
+allows some chares to get the next iteration's sweep in flight while others
+are finishing up the previous iteration. This is supported in Charm++ by two
+features:
+
+  1) All communication in Charm++ is asynchronous and non-blocking, so the 
+     non-blocking reduction at the end of each iteration allows "early" chares
+     to race ahead of "later" ones without blocking. Boundary conditions, 
+     spatial coordinates within the domain, layout/mapping of zonesets to 
+     cores, and network latencies all impact how early a chare can finish 
+     its sweep relative to others.
+
+  2) Charm++'s "Structured Directed Acyclic Graph" (SDAG) notation's "when" 
+     clause tells the runtime system to buffer incoming entry method 
+     invocations if they do not match the current iteration number of the 
+     receiving chare. Thus, the runtime system tolerates out-of-order messages.
+
+The Charm++ version implements all features of the reference version of Kripke,
+except the kernel testing infrastructure (the kernels are copied over directly 
+from the reference version) and the block jacobi solver (which is not as unique
+to deterministic particle transport as the parallel sweep).
+
+All of the parallel control flow in the Charm++ version is expressed in the 
+Charm++ interface file, kripke.ci. Otherwise the file structure is similiar 
+to the reference version.
+
+
+====================
+REQUIREMENTS
+====================
+GNU Make
+C++ Compiler (g++, icpc, xlcxx, etc.)
+Charm++/AMPI 6.6.0 or later
+
+
+====================
+BUILDING CHARM++
+====================
+To build the Charm++ port of Kripke, first compile Charm++.
+Download Charm++:
+
+git clone http://charm.cs.uiuc.edu/gerrit/charm
+cd charm
+
+Build Charm++ for a given network/OS/architecture interactively:
+
+./build
+
+Or build Charm++ directly from the command line.
+For a generic x86_64 Linux cluster:
+
+./build charm++ netlrts-linux-x86_64 --with-production
+
+For an x86_64 Linux cluster with an Infiniband network interface (e.g. Cab at LLNL):
+
+./build charm++ verbs-linux-x86_64 --with-production
+
+For a BlueGene/Q system with a PAMI network interface (e.g. Vulcan at LLNL):
+
+./build charm++ pami-bluegeneq --with-production
+
+For a Cray XK/XE system with a GNI network interface (e.g. Titan at ORNL)
+
+./build charm++ gni-crayxe --with-production
+
+NOTE: To debug a Charm++ program, add '-g' to the Charm++ build command line.
+To benchmark a Charm++ program, always build on top of the native network 
+interface provided by your target machine and add '--with-production' to the
+Charm++ build command line.
+
+
+====================
+BUILDING KRIPKE
+====================
+The Charm++ port currently uses GNU Make for compilation rather than CMake:
+
+cd kripke/src
+make -j8
+
+To run on 1 processor:
+
+./charmrun +p 1 ./kripke ++local [Kripke options]
+
+To run in parallel over N cores:
+
+./charmrun +p N ./kripke [Kripke options]
+
+
+NOTE: unlike the MPI and AMPI versions of Kripke, the Charm++ version does not have
+a --procs command line option, and the --zset option is global rather than per rank.
+This means that to compare performance between these models directly, the Charm++
+version's number of zset's should be equal to the number of zset's times the number
+of proc's in each dimension of the MPI and AMPI versions. All other command line
+options are the same.

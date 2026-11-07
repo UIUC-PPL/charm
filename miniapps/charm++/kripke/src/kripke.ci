@@ -1,0 +1,158 @@
+mainmodule kripke {
+  include "Grid.h";
+  include "Subdomain.h";
+  include "SubTVec.h";
+
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Kripke arrayProxy;
+  readonly int zsDimX;
+  readonly int zsDimY;
+  readonly int zsDimZ;
+  readonly int nIter;
+  readonly bool loadBalance;
+  readonly int lbIter;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void unknownCounts(long psi, long rhs, long phi, long phi_out);
+    entry [reductiontarget] void regionVolumes(double reg1, double reg2, double reg3);
+    entry [reductiontarget] void particleEdit(double part);
+    entry [reductiontarget] void done();
+    entry void outputStats(Timing timing);
+  };
+
+  array [3D] Kripke {
+    entry Kripke(Input_Variables ivars);
+    entry void receiveUpwind(int iteration, int axis, int idx_ds, int idx_gs, int n, double data[n]);
+    entry void ResumeFromSync();
+    entry void getTimers();
+
+    entry void run() {
+      serial { grid_data->timing.start("Solve"); }
+
+      for (iter = 0; iter < nIter; iter++) {
+
+        serial "Kernels" {
+
+          /*
+           * Compute the RHS:  rhs = LPlus*S*L*psi + Q
+           */
+          updateSweepDeps();
+
+          // Discrete to Moments transformation (phi = L*psi)
+          {
+            BLOCK_TIMER(grid_data->timing, LTimes);
+            kernel->LTimes(grid_data);
+          }
+
+          // Compute Scattering Source Term (psi_out = S*phi)
+          {
+            BLOCK_TIMER(grid_data->timing, Scattering);
+            kernel->scattering(grid_data);
+          }
+
+          // Compute External Source Term (psi_out = psi_out + Q)
+          {
+            BLOCK_TIMER(grid_data->timing, Source);
+            kernel->source(grid_data);
+          }
+
+          // Moments to Discrete transformation (rhs = LPlus*psi_out)
+          {
+            BLOCK_TIMER(grid_data->timing, LPlusTimes);
+            kernel->LPlusTimes(grid_data);
+          }
+
+          /*
+           * Sweep (psi = Hinv*rhs)
+           */
+
+          // Sweep: start sweeps for all group sets and direction sets in parallel
+          grid_data->timing.start("Sweep");
+          if (domainCorner) {
+
+            for (int sdom_id = 0; sdom_id < grid_data->subdomains.size(); sdom_id++) {
+              Subdomain &sdom = grid_data->subdomains[sdom_id];
+              if (sdom.deps != 0) continue;
+              for (int dim = 0; dim < 3; dim++) sdom.plane_data[dim]->clear(0.0);
+
+              // Perform sweep on local subdomain
+              {
+                BLOCK_TIMER(grid_data->timing, Sweep_Kernel);
+                kernel->sweep(&sdom);
+              }
+
+              // Send dependencies downwind
+              for (int dim = 0; dim < 3; dim++) {
+                if (sdom.downwind[dim].x != -1) {
+                  thisProxy(sdom.downwind[dim].x, sdom.downwind[dim].y, sdom.downwind[dim].z).receiveUpwind(
+                           iter, dim, sdom.idx_dir_set, sdom.idx_group_set,
+                           sdom.plane_data[dim]->elements, sdom.plane_data[dim]->ptr()); 
+                }
+              }
+            }//for-sdom_id
+          }//if-domainCorner
+        }//serial
+
+        // Sweep: receive upwind dependencies from all group sets and direction sets
+        for (dep = 0; dep < totalDeps; dep++) {
+
+          when receiveUpwind[iter](int iteration, int axis, int ds, int gs, int n, double data[n]) serial "Sweep" {
+
+            const int sdom_id = (gs * grid_data->num_direction_sets) + ds;
+            Subdomain &sdom = grid_data->subdomains[sdom_id];
+
+            // Decrement the dependencies counter
+            currDeps[sdom_id] --;
+            sdom.plane_data[axis]->elements = n;
+            for (int i = 0; i < n; i++) sdom.plane_data[axis]->data_pointer[i] = data[i];
+
+            // If all upwind dependencies are met
+            if (currDeps[sdom_id] == 0) {
+
+              // Perform sweep on local subdomain
+              applyBoundaryConditions(&sdom);
+              {
+                BLOCK_TIMER(grid_data->timing, Sweep_Kernel);
+                kernel->sweep(&sdom);
+              }
+
+              // Send dependencies downwind
+              for (int dim = 0; dim < 3; dim++) {
+                if (sdom.downwind[dim].x != -1) {
+                  thisProxy(sdom.downwind[dim].x, sdom.downwind[dim].y, sdom.downwind[dim].z).receiveUpwind(
+                           iter, dim, sdom.idx_dir_set, sdom.idx_group_set, 
+                           sdom.plane_data[dim]->elements, sdom.plane_data[dim]->ptr()); 
+                }
+              }
+            }
+          }//when-receiveUpwind
+        }//for-dep
+        serial { grid_data->timing.stop("Sweep"); }
+
+        // Contribute local particle count to global reduction
+        serial "GlobalParticles" {
+          double part_local = getNumParticles();
+          contribute(sizeof(double), &part_local, CkReduction::sum_double, 
+                    CkCallback(CkReductionTarget(Main, particleEdit), mainProxy));
+        }
+
+        // Invoke the load balancer
+        if (loadBalance && iter==lbIter) {
+          serial "LoadBalance" { AtSync(); }
+          when ResumeFromSync() serial {}
+        }
+      }//for-iter
+
+      serial "Exit" {
+        // Stop timers, finish up
+        grid_data->timing.stop("Solve");
+        contribute(CkCallback(CkReductionTarget(Main, done), mainProxy));
+      }
+    };
+  };
+
+  group ScatterLayout : CkArrayMap {
+    entry ScatterLayout();
+  };
+};
