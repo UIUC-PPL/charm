@@ -1,0 +1,6 @@
+*.o
+*.decl.h
+*.def.h
+
+charmrun
+leanmd

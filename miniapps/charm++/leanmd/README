@@ -1,0 +1,44 @@
+Developers and contact:
+This benchmark was developed by Nikhil Jain as part of PPL's effort
+to develop miniapplications that demonstrate utility of Charm++. It
+mimics the short-ranged force computation (due to Lennard Jones potential)
+in NAMD. It is roughly based on mol3d, developed by Edgar Solomonik and
+Abhinav Bhatele, which is a benchmark based on NAMD. Phil Miller's guidance
+was crucial in writing the SDAG routines. Later on Esteban Meneses and Xiang Ni
+added fault tolerance to it. It has been used in many publications related
+to Charm++. Contact nikhil.jain@acm.org for any bug report or comments.
+
+TO COMPILE-
+Do a make in this folder
+
+TO RUN-
+Either provide no arguments or provide all
+./charmrun +p<Procs> ./leanmd <dimX,dimY,dimZ,steps,firstLBstep,LBPeriod>
+Example - ./charmrun +p8 ./leanmd 2 2 2 1001 20 20
+Example - ./charmrun +p8 ./leanmd 2 2 2 1001 20 20 +balancer RefineLB
+Here is an example on how to use MetaBalancer
+Example - ./charmrun +p8 ./leanmd 2 2 2 1001 10 5 +balancer RefineLB +MetaLB
+Here is an example showing how to enable checkpoint and restart
+Example - ./charmrun +p8 ./leanmd 2 2 2 1001 20 20 25 +wp6
+Here is an example showing how to enable checkpoint application states, the applications states are stored in directory log
+Example - ./charmrun +p8 ./leanmd 2 2 2 1001 20 20 25 log
+
+READ ORDER
+leanmd.ci - contains the most important aspects of the program, look for run()
+function for each chare which is called right after constructor call for each
+chare. It contains most of the parallel flow and control flow information.
+
+Cell.* - contains the implementation of important functions attached with
+Cell; focus on sendPositions() and updateProperties()
+
+Compute.* - contains the implementation for Compute; the interact() function
+is important as it does the force computation.
+
+Main.* - contains the constructor for Main chare; also the starting point
+of the application; main chare passes control to run() of Main chare and
+constructors of Cell.
+
+physics.h - contains physics equation implementation for force computation; also
+contains the contribute for reduction of forces.
+
+defs.h - #define for constant values and some class declaration
