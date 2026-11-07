@@ -915,8 +915,11 @@ void _initDone(void)
   DEBUGF(("Reached CmiNodeBarrier(), pe = %d, rank = %d\n", CkMyPe(), CkMyRank()));
   CmiNodeBarrier();
   DEBUGF(("Crossed CmiNodeBarrier(), pe = %d, rank = %d\n", CkMyPe(), CkMyRank()));
-  _processBufferedMsgs();
+  // Epoch 1 before the buffered messages run: a group one of them creates
+  // must not carry epoch 0, which a PE still initializing indexes its init
+  // table by (negative for a creator other than PE 0).
   CkpvAccess(_charmEpoch)=1;
+  _processBufferedMsgs();
   if (userDrivenMode) {
     StopInteropScheduler();
   }
