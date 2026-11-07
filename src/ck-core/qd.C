@@ -263,7 +263,8 @@ void CkStartQD(const CkCallback& cb)
   msg->setCb(cb);
   envelope *env = UsrToEnv((void *)msg);
   CmiSetHandler(env, _qdHandlerIdx);
-#if CMK_MEM_CHECKPOINT
+// The restart phase exists in the message header only in __FAULT__ builds.
+#if CMK_MEM_CHECKPOINT && __FAULT__
   CmiGetRestartPhase(env) = 9999;        // make sure it is always executed
 #endif
   _CldEnqueue(0, env, _infoIdx);

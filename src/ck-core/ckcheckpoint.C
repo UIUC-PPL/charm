@@ -688,7 +688,8 @@ void CkPupArrayElementsData(PUP::er &p, int notifyListeners)
 	}
 }
 
-#if __FAULT__
+// also used by the in-memory checkpoint, which does not need __FAULT__
+#if __FAULT__ || CMK_MEM_CHECKPOINT
 int  CkCountArrayElements(){
     int numGroups = CkpvAccess(_groupIDTable)->size();
     int i;

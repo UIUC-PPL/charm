@@ -843,6 +843,11 @@ public:
   ///  The element's constructor will be called immediately after.
   virtual CkMigratable* allocateMigrated(int elChareType, CkElementCreation_t type);
   void stampListenerData(CkMigratable* elt);
+#if CMK_MEM_CHECKPOINT
+  // An element restored by a rollback expects the next broadcast, not the one
+  // after its checkpoint (those were delivered before the rollback)
+  void restampBroadcast(ArrayElement* elt);
+#endif
 
   /// Prepare creation message:
   void prepareCtorMsg(CkMessage* m, int listenerData[CK_ARRAYLISTENER_MAXLEN]);
@@ -1150,8 +1155,9 @@ private:
       storage.resize(16);
       headIndex = 0;
       mask = 0x0F;
-      curMaxEpoch = 0;
-      oldMaxEpoch = 0;
+      // the epoch count continues: the next broadcast to arrive is curMaxEpoch + 1
+      headEpoch = curMaxEpoch + 1;
+      oldMaxEpoch = curMaxEpoch;
     }
 
     void pup(PUP::er& p)

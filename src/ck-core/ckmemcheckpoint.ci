@@ -23,9 +23,12 @@ module CkMemCheckpoint {
 	entry void recvProcData(CkProcCheckPTMessage *);
 	entry [reductiontarget] void syncFiles();
  	entry [reductiontarget] void cpFinish();
+ 	entry [reductiontarget] void cpDone();
  	entry void report();
 	// restart
         entry [expedited] void restart(int);
+	entry void requestRollback();
+	entry void rollback();
   	entry [reductiontarget] void resetReductionMgr();
 	entry [reductiontarget] void removeArrayElements();
  	entry [reductiontarget] void recoverBuddies();

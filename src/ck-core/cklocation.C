@@ -3676,6 +3676,7 @@ void CkLocMgr::pupElementsFor(PUP::er& p, CkLocRec* rec, CkElementCreation_t typ
         if (c)
           c->redNo = 0;
       }
+      ((ArrayElement*)list[l])->thisArray->restampBroadcast((ArrayElement*)list[l]);
     }
   }
 #endif
@@ -3738,6 +3739,9 @@ void CkLocMgr::emigrate(CkLocRec* rec, int toPe)
 
   // Let all the elements know we're leaving
   callMethod(rec, &CkMigratable::ckAboutToMigrate);
+#if CMK_MEM_CHECKPOINT
+  CkMemCheckPTNoteMigration();  // a rollback is refused after a migration
+#endif
 
   // Record the move in the process's table before the migration message exists: a
   // destination in this process can land the element, and write its own entry,

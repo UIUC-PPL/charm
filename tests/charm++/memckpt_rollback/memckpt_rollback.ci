@@ -1,0 +1,24 @@
+mainmodule memckpt_rollback {
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Tally tallyProxy;
+  readonly int numElements;
+  readonly int lbMode;
+  readonly int numRollbacks;
+
+  mainchare Main {
+    entry Main(CkArgMsg *m);
+    entry [reductiontarget] void stepDone(int n, long data[n]);
+    entry void afterCheckpoint();
+    entry [reductiontarget] void tallyDone(int good, int bad);
+  };
+
+  array [1D] Worker {
+    entry Worker();
+    entry void doStep(int s);
+  };
+
+  group Tally {
+    entry Tally();
+    entry void check();
+  };
+};

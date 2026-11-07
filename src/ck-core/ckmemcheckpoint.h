@@ -151,6 +151,10 @@ public:
   void gotData();
   void recvProcData(CkProcCheckPTMessage *);
   void cpFinish();
+  void cpDone();
+  void requestRollback();
+  void rollback();
+  int numCompletedCheckpoints() const { return completedCheckpoints; }
   void syncFiles(void);
   void report();
   void recoverBuddies();
@@ -167,6 +171,7 @@ public:
   void pupAllElements(PUP::er &p);
   void startArrayCheckpoint();
   void recvArrayCheckpoint(CkArrayCheckPTMessage *m);
+  void arrayCopyStored();
   void recoverAll(CkArrayCheckPTMessage * msg, std::vector<CkGroupID> * gmap=NULL, std::vector<CkArrayIndex> * imap=NULL);
 public:
   static CkCallback  cpCallback;
@@ -187,7 +192,9 @@ private:
   /// the processor who initiate the checkpointing
   int cpStarter;
   std::vector<int> failedPes;
-  int thisFailedPe;
+  int thisFailedPe;           // -1 during a rollback
+  int completedCheckpoints;   // checkpoints whose report() ran on this PE
+  bool rollbackPending;       // PE 0 only: a rollback was requested and has not finished
 
     /// to use memory or disk checkpointing
   int    where;
@@ -207,6 +214,13 @@ void CkMemRestart(const char *, CkArgMsg *);
 // called by user applications
 // to start a checkpointing
 void CkStartMemCheckpoint(CkCallback &cb);
+
+// called by user applications, on any PE, after a completed checkpoint: restores
+// every array element from it and sends the checkpoint's callback again
+void CkRollbackMemCheckpoint();
+
+// called by the location manager when an array element leaves this PE
+void CkMemCheckPTNoteMigration();
 
 // true if inside a restarting phase
 extern "C" int CkInRestarting();

@@ -135,6 +135,9 @@ CpvDeclare(CkProcCheckPTMessage**, procChkptBuf);
 //point to the checkpoint should be used for recovery
 CpvDeclare(int, chkpPointer);
 CpvDeclare(int, chkpNum);
+// array elements that emigrated from this PE since its last checkpoint pack;
+// a rollback is refused when nonzero (see CkRollbackMemCheckpoint)
+CpvDeclare(int, migrationsSinceCheckpoint);
 
 // compute the backup processor
 // FIXME: avoid crashed processors
@@ -159,6 +162,8 @@ inline int CkMemCheckPT::BuddyPE(int pe)
     CmiAbort("Failed to find a buddy processor");
   }
 #else
+  // With one PE the only buddy is the PE itself (rollback still works).
+  if (CkNumPes() == 1) return pe;
   budpe = pe;
   while (budpe == pe || isFailed(budpe)) 
           budpe = (budpe+1)%CkNumPes();
@@ -189,7 +194,7 @@ void ArrayElement::init_checkpt() {
 
         budPEs[0] = CkMyPe();
         budPEs[1] = CProxy_CkMemCheckPT(ckCheckPTGroupID).ckLocalBranch()->BuddyPE(CkMyPe());
-	CmiAssert(budPEs[0] != budPEs[1]);
+	CmiAssert(CkNumPes() == 1 || budPEs[0] != budPEs[1]);
         // inform checkPTMgr
         CProxy_CkMemCheckPT checkptMgr(ckCheckPTGroupID);
 	//DEBUGF("[%d] ArrayElement::init_checkpt array %d %p pe: %d %d\n", CkMyPe(), ((CkGroupID)thisArrayID).idx, this, budPEs[0], budPEs[1]);
@@ -348,18 +353,16 @@ CkMemCheckPT::CkMemCheckPT(int w)
 #endif
 #if CK_NO_PROC_POOL
   if (numnodes <= 2)
-#else
-  if (numnodes == 1)
-#endif
   {
     if (CkMyPe() == 0 && !quietModeRequested)
-#if CK_NO_PROC_POOL
       CkPrintf("CharmFT> Warning: In-memory checkpointing is disabled because there are less than three nodes.\n");
-#else
-      CkPrintf("CharmFT> Warning: In-memory checkpointing is disabled because there is only one node.\n");
-#endif
     _memChkptOn = false;
   }
+#else
+  (void)numnodes;  // one process is allowed: doItNow warns that a failure cannot be survived
+#endif
+  completedCheckpoints = 0;
+  rollbackPending = false;
   inRestarting = false;
   recvCount = peCount = 0;
   recvChkpCount = 0;
@@ -405,6 +408,8 @@ void CkMemCheckPT::pup(PUP::er& p)
   p|where;			// where to checkpoint
   p|peCount;
   if (p.isUnpacking()) {
+  	completedCheckpoints = 0;
+  	rollbackPending = false;
   	recvCount = peCount = 0;
  	recvChkpCount = 0;
 	ackCount = 0;
@@ -539,6 +544,12 @@ void CkMemCheckPT::doItNow(int starter, CkCallback &&cb)
     if (!quietModeRequested)
       CkPrintf("CharmFT> Checkpointing...\n");
   }
+  static bool oneNodeWarned = false;
+  if (CkMyPe() == 0 && CkNumNodes() == 1 && !oneNodeWarned) {
+    oneNodeWarned = true;
+    if (!quietModeRequested)
+      CkPrintf("CharmFT> one node: a process failure cannot be survived; checkpoint and rollback work\n");
+  }
 #if !CMK_CHKP_ALL
   int len = ckTable.size();
   for (int i=0; i<len; i++) {
@@ -614,10 +625,29 @@ void CkMemCheckPT::startArrayCheckpoint(){
 		PUP::toMem p(msg->packData);
 		pupAllElements(p);
 	}
+	CpvAccess(migrationsSinceCheckpoint) = 0;
 	thisProxy[msg->bud2].recvArrayCheckpoint((CkArrayCheckPTMessage *)CkCopyMsg((void **)&msg));
 	chkpTable[0].updateBuffer(CpvAccess(chkpPointer)^1,msg);
-        recvCount++;
+	arrayCopyStored();
 #endif
+}
+
+// Two array copies per PE per checkpoint: its own and its buddy's. The buddy's
+// can arrive before this PE runs doItNow, so whichever comes second contributes.
+void CkMemCheckPT::arrayCopyStored()
+{
+	recvCount++;
+	if (recvCount < 2) return;
+	recvCount = 0;
+	if (where == CkCheckPoint_inMEM) {
+		contribute(CkCallback(CkReductionTarget(CkMemCheckPT, cpFinish), thisProxy[cpStarter]));
+	}
+	else if (where == CkCheckPoint_inDISK) {
+		// another barrier for finalize the writing using fsync
+		contribute(CkCallback(CkReductionTarget(CkMemCheckPT, syncFiles), thisgroup));
+	}
+	else
+		CmiAbort("Unknown checkpoint scheme");
 }
 
 void CkMemCheckPT::recvArrayCheckpoint(CkArrayCheckPTMessage *msg)
@@ -638,27 +668,13 @@ void CkMemCheckPT::recvArrayCheckpoint(CkArrayCheckPTMessage *msg)
 	chkpTable[idx].updateBuffer(pointer,msg);
 	
 	if(isChkpting){
-		recvCount++;
-  
 		recvChkpCount++;
 		if(recvChkpCount==2)
 		{
 		  CpvAccess(chkpNum)++;
 		  recvChkpCount=0;
 		}
-
-		if(recvCount == 2){
-		  if (where == CkCheckPoint_inMEM) {
-			contribute(CkCallback(CkReductionTarget(CkMemCheckPT, cpFinish), thisProxy[cpStarter]));
-		  }
-		  else if (where == CkCheckPoint_inDISK) {
-			// another barrier for finalize the writing using fsync
-			contribute(CkCallback(CkReductionTarget(CkMemCheckPT, syncFiles), thisgroup));
-		  }
-		  else
-			CmiAbort("Unknown checkpoint scheme");
-		  recvCount = 0;
-		}
+		arrayCopyStored();
 	}
 #endif
 }
@@ -777,16 +793,23 @@ void CkMemCheckPT::cpFinish()
 {
     if (!quietModeRequested)
       CkPrintf("CharmFT> Checkpoint finished in %f seconds.\n", CmiWallTimer()-startTime);
-    cpCallback.send();
     peCount = 0;
     thisProxy.report();
   }
+}
+
+// on cpStarter, once every PE has run report(): a rollback requested from the
+// callback (or after it) then sees the completed checkpoint on every PE
+void CkMemCheckPT::cpDone()
+{
+  cpCallback.send();
 }
 
 // for debugging, report checkpoint info
 void CkMemCheckPT::report()
 {
   inCheckpointing = false;
+  completedCheckpoints++;
 #if !CMK_CHKP_ALL
   int objsize = 0;
   int len = ckTable.size();
@@ -801,6 +824,7 @@ void CkMemCheckPT::report()
   if(CkMyPe()==0)
     DEBUGF("[%d] Checkpointed processor data of size: %zu\n", CkMyPe(), CpvAccess(procChkptBuf)[CpvAccess(chkpPointer)]->len);
 #endif
+  contribute(CkCallback(CkReductionTarget(CkMemCheckPT, cpDone), thisProxy[cpStarter]));
 }
 
 /*****************************************************************************
@@ -911,8 +935,8 @@ void CkMemCheckPT::restart(int diePe)
 
   inRestarting = true;
                                                                                 
-  // disable load balancer's barrier
-  if (CkMyPe() != diePe) resetLB(diePe);
+  // disable load balancer's barrier; a rollback (diePe < 0) has no failed PE to mark
+  if (diePe >= 0 && CkMyPe() != diePe) resetLB(diePe);
 
   CKLOCMGR_LOOP(mgr->startInserting(););
 
@@ -1012,7 +1036,7 @@ void CkMemCheckPT::recoverBuddies()
   }
 #else
   //send to failed pe
-  if(CkMyPe()!=thisFailedPe&&chkpTable[1].bud1==thisFailedPe){
+  if(thisFailedPe>=0&&CkMyPe()!=thisFailedPe&&chkpTable[1].bud1==thisFailedPe){
 #if CK_NO_PROC_POOL
       // find a new buddy
       int budPe = BuddyPE(CkMyPe());
@@ -1146,7 +1170,8 @@ void CkMemCheckPT::recoverArrayElements()
 
   // _crashedNode = -1;
   CpvAccess(_crashedNode) = -1;
-  inRestarting = false;
+  // inRestarting is cleared in finishUp: it is shared by the PEs of a process,
+  // and other PEs here may still be resuming their elements
 #if (!STREAMING_INFORMHOME && CK_NO_PROC_POOL) || !CMK_CHKP_USE_REDN
   if (CkMyPe() == 0)
     CkStartQD(CkCallback(CkIndex_CkMemCheckPT::finishUp(), thisProxy));
@@ -1205,14 +1230,23 @@ void CkMemCheckPT::finishUp()
   //CKLOCMGR_LOOP(mgr->doneInserting(););
   recvCount = peCount = 0;
   recvChkpCount = 0;
-  if (CkMyPe() == thisFailedPe)
+  inRestarting = false;
+  // the failed PE sends the checkpoint callback, or PE 0 after a rollback
+  if (CkMyPe() == thisFailedPe || (thisFailedPe < 0 && CkMyPe() == 0))
   {
        DEBUGF("[%d] CkMemCheckPT ----- %s in %f seconds, callback triggered\n",CkMyPe(), stage, CmiWallTimer()-startTime);
        //CkStartQD(cpCallback);
-       cpCallback.send();
+       if (thisFailedPe < 0) {
+         CpvAccess(migrationsSinceCheckpoint) = 0;
+         rollbackPending = false;
+       }
        if (!quietModeRequested)
-         CkPrintf("CharmFT> Restart finished in %f seconds.\n", CkWallTimer()-restartT);
+         CkPrintf("CharmFT> %s finished in %f seconds.\n",
+                  thisFailedPe < 0 ? "Rollback" : "Restart", CkWallTimer()-restartT);
+       cpCallback.send();
   }
+  else if (thisFailedPe < 0)
+    CpvAccess(migrationsSinceCheckpoint) = 0;
 #if CMK_CONVERSE_MPI	
   if (CmiMyPe() == BuddyPE(thisFailedPe)) {
     lastPingTime = CmiWallTimer();
@@ -1279,6 +1313,58 @@ void CkStartMemCheckpoint(CkCallback &cb)
 #endif
 }
 
+// User callable function: restore every array element from the last
+// completed in-memory checkpoint and deliver its callback again
+void CkRollbackMemCheckpoint()
+{
+#if CMK_MEM_CHECKPOINT
+  if (CkInRestarting()) return;  // a rollback or restart is already under way
+  CkMemCheckPT *mgr = CProxy_CkMemCheckPT(ckCheckPTGroupID).ckLocalBranch();
+  if (CkMemCheckPT::inCheckpointing)
+    CkAbort("CharmFT> rollback refused: an in-memory checkpoint is in progress");
+  if (mgr->numCompletedCheckpoints() == 0)
+    CkAbort("CharmFT> rollback refused: no in-memory checkpoint has completed");
+  CProxy_CkMemCheckPT(ckCheckPTGroupID)[0].requestRollback();
+#else
+  CkAbort("CharmFT> CkRollbackMemCheckpoint needs a build with the syncft (or memft) option");
+#endif
+}
+
+// on PE 0: start one rollback once nothing is in flight anywhere, so that no
+// message meant for a destroyed element reaches its restored copy
+void CkMemCheckPT::requestRollback()
+{
+  CmiAssert(CkMyPe() == 0);
+  if (rollbackPending) return;
+  rollbackPending = true;
+  restartT = CkWallTimer();
+  if (!quietModeRequested)
+    CkPrintf("CharmFT> Rolling back to the last in-memory checkpoint...\n");
+  CkStartQD(CkCallback(CkIndex_CkMemCheckPT::rollback(), thisProxy));
+}
+
+// on every PE, at quiescence: check the restrictions before anything is
+// destroyed, then run the restart chain with no failed PE
+void CkMemCheckPT::rollback()
+{
+  if (completedCheckpoints == 0)
+    CkAbort("CharmFT> rollback refused: no in-memory checkpoint has completed");
+  int moved = CpvAccess(migrationsSinceCheckpoint);
+  if (moved != 0)
+    CkAbort("CharmFT> rollback refused: %d array elements migrated on PE %d since the last "
+            "in-memory checkpoint; load balancing between a checkpoint and its rollback is "
+            "not supported", moved, CkMyPe());
+  restart(-1);
+}
+
+// called on the PE an array element leaves (CkLocMgr::emigrate)
+void CkMemCheckPTNoteMigration()
+{
+#if CMK_MEM_CHECKPOINT
+  CpvAccess(migrationsSinceCheckpoint)++;
+#endif
+}
+
 void CkRestartCheckPoint(int diePe)
 {
   DEBUGF("CkRestartCheckPoint  CkMemCheckPT GID:%d at time %f\n", ckCheckPTGroupID.idx, CkWallTimer());
@@ -1287,6 +1373,10 @@ void CkRestartCheckPoint(int diePe)
   checkptMgr.restart(diePe);
 }
 
+// The Converse handlers below restart a replacement for a dead process. They
+// need __FAULT__ (restart phase in the message header, crash notification from
+// the machine layer), which reconverse does not have; rollback does not use them.
+#if __FAULT__
 static int _diePE = -1;
 
 // callback function used locally by ccs handler
@@ -1548,6 +1638,12 @@ void CkMemRestart(const char *dummy, CkArgMsg *args)
    CmiAbort("Fault tolerance is not support, rebuild charm++ with 'syncft' option");
 #endif
 }
+#else
+void CkMemRestart(const char *dummy, CkArgMsg *args)
+{
+  CmiAbort("CharmFT> restart after a process failure is not supported on this build");
+}
+#endif // __FAULT__
 
 // can be called in other files
 // return true if it is in restarting
@@ -1624,6 +1720,8 @@ public:
   }
 };
 
+// Crash notification from the machine layer; only __FAULT__ builds have one.
+#if __FAULT__
 static void notifyHandler(char *msg)
 {
 #if CMK_MEM_CHECKPOINT
@@ -1659,6 +1757,7 @@ static void notify_crash(int node)
 }
 
 extern void (*notify_crash_fn)(int node);
+#endif // __FAULT__
 
 #if CMK_CONVERSE_MPI
 //static int pingHandlerIdx;
@@ -1777,6 +1876,8 @@ void pingBuddy()
 void CkRegisterRestartHandler( )
 {
 #if CMK_MEM_CHECKPOINT
+  // the dead-process restart handlers exist only with __FAULT__ (see above)
+#if __FAULT__
   notifyHandlerIdx = CkRegisterHandler(notifyHandler);
   askProcDataHandlerIdx = CkRegisterHandler(askProcDataHandler);
   recoverProcDataHandlerIdx = CkRegisterHandler(recoverProcDataHandler);
@@ -1784,6 +1885,8 @@ void CkRegisterRestartHandler( )
   restartBeginHandlerIdx = CkRegisterHandler(restartBeginHandler);
   reportChkpSeqHandlerIdx = CkRegisterHandler(reportChkpSeqHandler);
   getChkpSeqHandlerIdx = CkRegisterHandler(getChkpSeqHandler);
+  changePhaseHandlerIdx = CkRegisterHandler(changePhaseHandler);
+#endif
 
 #if CMK_CONVERSE_MPI
   pingHandlerIdx = CkRegisterHandler(pingHandler);
@@ -1792,7 +1895,6 @@ void CkRegisterRestartHandler( )
   replicaDieHandlerIdx = CkRegisterHandler(replicaDieHandler);
   replicaDieBcastHandlerIdx = CkRegisterHandler(replicaDieBcastHandler);
 #endif
-  changePhaseHandlerIdx = CkRegisterHandler(changePhaseHandler);
 
   CpvInitialize(CkProcCheckPTMessage **, procChkptBuf);
   CpvAccess(procChkptBuf) = new CkProcCheckPTMessage *[2];
@@ -1803,8 +1905,12 @@ void CkRegisterRestartHandler( )
   CpvAccess(chkpPointer) = 0;
   CpvInitialize(int, chkpNum);
   CpvAccess(chkpNum) = 0;
+  CpvInitialize(int, migrationsSinceCheckpoint);
+  CpvAccess(migrationsSinceCheckpoint) = 0;
 
+#if __FAULT__
   notify_crash_fn = notify_crash;
+#endif
 
 #if ! CMK_CONVERSE_MPI
   // print pid to kill

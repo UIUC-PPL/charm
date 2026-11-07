@@ -60,7 +60,8 @@ void CkRestartMain(const char* dirname, CkArgMsg* args);
 #if CMK_SHRINK_EXPAND
 void CkResumeRestartMain(char *msg);
 #endif
-#if __FAULT__
+// also used by the in-memory checkpoint, which does not need __FAULT__
+#if __FAULT__ || CMK_MEM_CHECKPOINT
 int  CkCountArrayElements();
 #endif
 

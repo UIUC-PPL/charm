@@ -1060,6 +1060,13 @@ void CkArray::stampListenerData(CkMigratable* elt)
   CK_ARRAYLISTENER_STAMP_LOOP(elt2->listenerData);
 }
 
+#if CMK_MEM_CHECKPOINT
+void CkArray::restampBroadcast(ArrayElement* elt)
+{
+  broadcaster->ckElementStamp(broadcaster->ckGetData(elt));
+}
+#endif
+
 CkMigratable* CkArray::allocateMigrated(int elChareType, CkElementCreation_t type)
 {
   ArrayElement* ret = allocate(elChareType, NULL, true, NULL);
@@ -1605,6 +1612,8 @@ bool CkArrayBroadcaster::isFinalRecipient(const std::vector<CkMigratable*>& elem
   return true;
 }
 
+// In-memory rollback, after quiescence: every local element has had every
+// stored broadcast, and restored elements are restamped (restampBroadcast)
 void CkArrayBroadcaster::flushState() { storedBcasts.clear(); }
 
 void CkBroadcastMsgArray(int entryIndex, void* msg, CkArrayID aID, int opts)

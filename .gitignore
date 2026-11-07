@@ -59,6 +59,8 @@ tests/charm++/anytime_migration/migrate
 tests/charm++/megatest/megatest
 tests/charm++/migratable_threads/migthread
 tests/charm++/simplearrayhello/hello
+tests/charm++/memckpt_rollback/memckpt_rollback
+tests/charm++/memckpt_rollback/restriction.out
 
 # Output of coverage/run.sh and coverage/report.sh
 coverage/out/
