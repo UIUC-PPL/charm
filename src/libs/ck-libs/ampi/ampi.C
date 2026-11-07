@@ -570,6 +570,9 @@ class ampiPeMgr : public CBase_ampiPeMgr {
   // Runs once this PE's branch exists: a message to a group branch that is
   // not there yet is held until it is created.
   void whenPresent(const CkCallback &cb) noexcept { cb.send(CkAllocSysMsg()); }
+  // Runs on PE 0, so code is the one the exit handler passes to ConverseExit in
+  // PE 0's process, which is the status the launcher reports (MPI_Abort).
+  void exitWithCode(int code) noexcept { CkExit(code); }
   void pup(PUP::er &p) noexcept {
     // Do nothing, localAmpiParents will be repopulated as ranks are reconstructed
   }
@@ -10199,10 +10202,30 @@ AMPI_API_IMPL(int, MPI_Intercomm_merge, MPI_Comm intercomm, int high, MPI_Comm *
   return MPI_SUCCESS;
 }
 
+// MPI_Abort ends the whole program with errorcode as its exit status: PE 0
+// calls CkExit(errorcode), and the calling rank never returns to user code.
 AMPI_API_IMPL(int, MPI_Abort, MPI_Comm comm, int errorcode)
 {
   AMPI_API_INIT("AMPI_Abort", comm, errorcode);
-  CkAbort("AMPI: Application called MPI_Abort()!\n");
+  if (!CtvAccess(ampiInitDone)) {
+    CkAbort("AMPI: Application called MPI_Abort() with error code %d before MPI_Init\n",
+            errorcode);
+    return errorcode;
+  }
+  ampiParent *ptr = getAmpiParent();
+  CkError("AMPI: Application called MPI_Abort() on rank %d of MPI_COMM_WORLD with error code %d\n",
+          ptr->thisIndex, errorcode);
+  ampiPeMgrProxy[0].exitWithCode(errorcode);
+  if (tcharm_campi) {
+    // campi: no thread; this runs on the scheduler's stack inside the rank's
+    // coroutine. The scheduler processes the exit messages here and the
+    // process exits from inside ConverseExit, so this call does not return.
+    CsdScheduler(-1);
+  } else {
+    // Suspend the rank for good; the PE's scheduler carries out the exit. The
+    // loop keeps a spurious wake-up from returning into user code.
+    while (true) ptr = ptr->block();
+  }
   return errorcode;
 }
 

@@ -33,6 +33,7 @@ module ampi {
   group [migratable] ampiPeMgr {
     entry EXPEDITED ampiPeMgr();
     entry void whenPresent(CkCallback cb);
+    entry void exitWithCode(int code);
   };
 
   array[1D] ampiParent {
