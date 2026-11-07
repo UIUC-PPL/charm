@@ -15,6 +15,7 @@ mainmodule memckpt_rollback {
   array [1D] Worker {
     entry Worker();
     entry void doStep(int s);
+    entry void token(int s);
   };
 
   group Tally {

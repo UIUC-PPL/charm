@@ -130,8 +130,13 @@ class Tally : public CBase_Tally {
   }
 };
 
+// Each step an element also sends a token to its right neighbor and finishes
+// the step when it has the neighbor's token too, so that point-to-point sends
+// go through the location tables after a rollback.
 class Worker : public CBase_Worker {
   int step = 0;
+  int tokenStep = 0;     // step of the last token received from the left neighbor
+  int finishedStep = 0;  // last step this element contributed for
   long acc = 0;
   std::vector<long> *history;  // heap state that must be restored
 
@@ -142,6 +147,8 @@ class Worker : public CBase_Worker {
 
   void pup(PUP::er &p) {
     p | step;
+    p | tokenStep;
+    p | finishedStep;
     p | acc;
     p | *history;
   }
@@ -156,7 +163,21 @@ class Worker : public CBase_Worker {
     acc = nextAcc(acc, thisIndex, s);
     history->push_back(acc);
     if (s == kCheckpointStep + 1) tallyProxy.ckLocalBranch()->ranStep6[thisIndex]++;
-    if (lbMode && s == kCheckpointStep + 1) {
+    thisProxy[(thisIndex + 1) % numElements].token(s);
+    tryFinish();
+  }
+
+  void token(int s) {
+    if (s != tokenStep + 1)
+      CkAbort("memckpt_rollback: element %d after token %d got token %d", thisIndex, tokenStep, s);
+    tokenStep = s;
+    tryFinish();
+  }
+
+  void tryFinish() {
+    if (tokenStep != step || finishedStep == step) return;
+    finishedStep = step;
+    if (lbMode && step == kCheckpointStep + 1) {
       AtSync();
       return;
     }
