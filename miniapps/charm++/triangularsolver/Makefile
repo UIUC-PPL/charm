@@ -1,4 +1,6 @@
-CHARMDIR = $(HOME)/charm
+-include ../../common.mk
+# Override on the command line: make CHARMDIR=/path/to/charm/build
+CHARMDIR = ../../..
 CHARMC=$(CHARMDIR)/bin/charmc $(OPTS)
 
 OBJS = sparse_solve.o 
@@ -17,4 +19,4 @@ clean:
 sparse_solve.o: sparse_solve.C ColumnsSolve.h sparse_solve.decl.h MessagePool.h
 	$(CHARMC) -c sparse_solve.C
 test: all
-	./sparse_solve 2 ./nv_example.rcm
+	$(call run, +p2 ./sparse_solve 2 ./nv_example.rcm)

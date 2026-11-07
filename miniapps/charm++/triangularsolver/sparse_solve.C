@@ -282,7 +282,10 @@ public:
 				maxResult = max(sum-B_CONST,maxResult);
 			}
 		}
-		CkPrintf("residual=%lf \n",maxResult/((maxRowsum*maxX+B_CONST)*totalColumns*numeric_limits<double>::epsilon()) );
+		double residual = maxResult/((maxRowsum*maxX+B_CONST)*totalColumns*numeric_limits<double>::epsilon());
+		CkPrintf("residual=%lf \n",residual );
+		if (!(residual < 16.0)) // HPL's threshold for a scaled residual
+			CkAbort("triangularsolver: residual too large");
 		CkExit();
 	}
 
