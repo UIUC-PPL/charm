@@ -21,14 +21,15 @@ test: section_migrate
 	$(call run, ./section_migrate +p4 -stillroot -inflight +randomized_msgq +randomized_seed 4)
 	$(call run, ./section_migrate +p4 -lb +balancer RotateLB)
 	$(call run, ./section_migrate +p4 -lb -auto +balancer RotateLB +randomized_msgq +randomized_seed 2)
+	$(call run, ./section_migrate +p3 -inflight -root)
+	$(call run, ./section_migrate +p4 -inflight -root +randomized_msgq +randomized_seed 2)
+	$(call run, ./section_migrate +p3 -lb -inflight +balancer RotateLB)
+	$(call run, ./section_migrate +p4 -lb -inflight +balancer RotateLB)
 
 # Known failures (each hangs, and the program aborts after 20 s):
-# the root moves while section reductions are in flight (migrateMe, then LB);
 # #4132 item 1, the root moves again before its new tree is set up;
 # #4132 item 3, the root moves before its tree is ready.
 test-known-failures: section_migrate
-	$(call run, ./section_migrate +p3 -inflight -root)
-	$(call run, ./section_migrate +p3 -lb -inflight +balancer RotateLB)
 	$(call run, ./section_migrate +p4 -double +randomized_msgq +randomized_seed 2)
 	$(call run, ./section_migrate +p3 -lb -inflight -every +balancer RotateLB +randomized_msgq +randomized_seed 2)
 
