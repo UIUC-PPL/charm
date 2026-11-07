@@ -567,9 +567,6 @@ class ampiPeMgr : public CBase_ampiPeMgr {
     ampiPeMgrProxy = thisgroup;
   }
   ampiPeMgr(CkMigrateMessage *m) noexcept : CBase_ampiPeMgr(m) {}
-  // Runs once this PE's branch exists: a message to a group branch that is
-  // not there yet is held until it is created.
-  void whenPresent(const CkCallback &cb) noexcept { cb.send(CkAllocSysMsg()); }
   void pup(PUP::er &p) noexcept {
     // Do nothing, localAmpiParents will be repopulated as ranks are reconstructed
   }
@@ -1304,16 +1301,6 @@ CkGroupID ampiPeMgrGroupID() noexcept
   return ampiPeMgrProxy.ckGetGroupID();
 }
 
-// Element 0 only, when it is not on PE 0: send cb once PE 0 has its ampiPeMgr
-// branch. CkCreateArray runs on PE 0, and PE 0 builds its own branch of the
-// ampiParent array manager directly (_createGroup calls CkCreateLocalGroup),
-// without checking the group dependence that orders the other PEs. When
-// element 0 is on PE 0, CProxy_ampiPeMgr::ckNew has already built that branch.
-void ampiPeMgrWhenOnPe0(const CkCallback &cb) noexcept
-{
-  ampiPeMgrProxy[0].whenPresent(cb);
-}
-
 // Every rank, once its MPI_COMM_WORLD ampi object exists: mark init done and
 // contribute to the allInitDone reduction (which sets ampiInitCallDone).
 ampiParent *ampiInitWorldLocal(ampi *ptr, int nchunks) noexcept
@@ -1352,14 +1339,11 @@ static ampi *ampiInit(char **argv) noexcept
   { /* I'm responsible for building the arrays: */
     CkArrayID threads;
     opts=ampiInitRootArrayOptions(&threads,&_nchunks);
-    // The dependence below does not apply on PE 0 (see ampiPeMgrWhenOnPe0).
-    if (CkMyPe() != 0)
-      ampiPeMgrWhenOnPe0(CkCallbackResumeThread());
 
     ck::future<CkArrayID> newAmpiFuture;
     CkCallback cb(newAmpiFuture.handle());
-    // ampiParent::init() uses this PE's ampiPeMgr branch, so on every PE the
-    // array manager's creation waits for the group's.
+    // ampiParent::init() uses this PE's ampiPeMgr branch, so the ampiParent
+    // array manager's creation on every PE waits for that PE's ampiPeMgr branch.
     CkEntryOptions parentOpts;
     parentOpts.setGroupDepID(ampiPeMgrGroupID());
     CProxy_ampiParent::ckNew(threads, _nchunks, opts, cb, &parentOpts);
