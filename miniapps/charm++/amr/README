@@ -1,0 +1,38 @@
+*****Contact Akhil Langer at alanger@illinois.edu (or akhilanger@gmail.com) for any questions****
+
+1. Changes in the Makefile
+a) set the CHARMHOME variable to the path of charm directory
+
+
+Compiling the code:
+1. make
+2. for debugging: make OPTS=-g -O0
+
+Running the code:
+./charmrun +p8 ++local ./advection arg1 arg2 arg3
+where arg1 = max_depth of the mesh
+      arg2 = #zones in one dimension per chare
+      arg3 = #iterations for which the code is to be run
+      arg4 = load balancing frequency (should be a multiple of 3, 3 is the refinement frequency)
+      arg5(optional) = intial mesh size (set to 128 by default)
+
+READING ORDER
+1. advection.ci - read the entry methods - iterate, remeshing, doComputationStep
+2. QuadIndex.h - contains the bit Vector based 3D Octtree implementaion
+                provides interface to get neighbor indices, child indices, etc.
+3. Advection.C - contains implementation of boundary exchange functions, iterpolation, 
+                finite state machine for granularity decision consensus, refinement and
+                coarsening functions, etc.
+
+Citation:
+@inproceedings{langer2012scalable,
+  title={Scalable Algorithms for Distributed-Memory Adaptive Mesh Refinement},
+  author={Langer, Akhil and Lifflander, Jonathan and Miller, Phil and Pan, Kuo-Chuan and Kale, Laxmikant V and Ricker, Paul},
+  booktitle={Computer Architecture and High Performance Computing (SBAC-PAD), 2012 IEEE 24th International Symposium on},
+  pages={100--107},
+  year={2012},
+  organization={IEEE}
+}
+
+
+*****Contact Akhil Langer at alanger@illinois.edu (or akhilanger@gmail.com) for any questions****

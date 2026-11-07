@@ -1,0 +1,339 @@
+mainmodule Main{
+
+  readonly CProxy_Main mainProxy;
+  readonly CProxy_Advection qtree;
+
+  readonly int block_height;
+  readonly int block_width;
+  readonly int block_depth;
+
+  readonly int array_height;
+  readonly int array_width;
+  readonly int array_depth;
+
+  readonly int num_chare_rows;
+  readonly int num_chare_cols;
+  readonly int num_chare_Zs;
+        
+  readonly int min_depth;
+  readonly int max_depth;
+
+  readonly float xctr;
+  readonly float yctr;
+  readonly float zctr;
+  readonly float radius;
+        
+  readonly float vx;
+  readonly float vy;
+  readonly float vz;
+
+  readonly float apx;
+  readonly float anx;
+  readonly float apy;
+  readonly float any;
+  readonly float apz;
+  readonly float anz;
+  readonly float tmax;
+  readonly float dt;
+  readonly float cfl;
+
+  readonly int max_iterations;
+  readonly int refine_frequency;
+  readonly int lb_freq;
+
+  //initproc TurnManualLBOn();
+  readonly CProxy_AdvectionGroup ppc;
+  //readonly bool inInitialMeshGenerationPhase;
+
+  mainchare [migratable] Main{
+    entry Main(CkArgMsg *m);
+    entry void terminate();
+    entry void startMeshGeneration();
+    entry [reductiontarget] void totalWorkUnits(int total);
+  };
+
+  group [migratable] AdvMap : CkArrayMap {
+    entry void AdvMap();
+  };
+
+  extern module Advection;
+};
+
+module Advection{
+  class Neighbor;
+
+  group [migratable] AdvectionGroup{
+    entry AdvectionGroup();
+    entry void reduceWorkUnits();
+    entry void meshGenerationPhaseIsOver();
+    entry void incrementWorkUnitCount(int);
+    entry void recvChildLogs(map<int, pair<float, float> > peQdtimes, 
+                           map<int, pair<float, float> > peRemeshtimes, 
+                           map<int, int> peWorkunits,
+                           map<int, int> peminLoad,
+                           map<int, int> pemaxLoad,
+                           map<int, float> peavgLoad);
+    entry void reduceQdTimes(){
+      serial{
+        for(map<int, int>::iterator it=workUnits.begin(); it!=workUnits.end(); it++){
+          if(it->first % lb_freq == 0 || it->first % lb_freq == lb_freq-1){//this is the load balancing iteration
+            minLoad[it->first] = workUnits[it->first];
+            maxLoad[it->first] = workUnits[it->first];
+            avgLoad[it->first] = workUnits[it->first];
+          }
+        }
+      }
+      if(2*CkMyPe()+1<CkNumPes()) {
+        when recvChildLogs(map<int, pair<float, float> > peQdtimes, 
+                           map<int, pair<float, float> > peRemeshtimes, 
+                           map<int, int> peWorkunits,
+                           map<int, int> peminLoad,
+                           map<int, int> pemaxLoad,
+                           map<int, float> peavgLoad) serial{
+          processQdTimes(peQdtimes, peRemeshtimes, peWorkunits, peminLoad, pemaxLoad, peavgLoad);
+        }
+      }
+      if(2*CkMyPe()+2 < CkNumPes()) {
+        when recvChildLogs(map<int, pair<float, float> > peQdtimes, 
+                           map<int, pair<float, float> > peRemeshtimes, 
+                           map<int, int> peWorkunits,
+                           map<int, int> peminLoad,
+                           map<int, int> pemaxLoad,
+                           map<int, float> peavgLoad) serial{
+          processQdTimes(peQdtimes, peRemeshtimes, peWorkunits, peminLoad, pemaxLoad, peavgLoad);
+        }
+      }
+      serial{
+        if(CkMyPe()==0){
+          printLogs();
+        }else{
+          ppc[(CkMyPe()-1)/2].recvChildLogs(qdtimes, remeshtimes, workUnits, minLoad, maxLoad, avgLoad);
+        }
+      }
+    };
+  };
+
+
+  array [OctIndex] Advection {
+    //constructors
+    entry Advection();
+    entry Advection(float, float, float, float, float, float);
+    //this constructor is used whena new chare is constructed upon refinement
+    entry Advection(float, float, float,
+                    float, float,
+                    float, float, float,
+                    int, int, std::vector<float>,
+                    std::map<OctIndex, Neighbor> neighbors);
+    
+    //entry methods for exchanging boundary layers
+    entry void receiveGhosts(int iter, int dir, int quadrant, int width, float u[width]);
+    entry void signalExchangeGhostsCompletion();
+
+    //remeshing phase 1 entry methods
+    entry void informParent(int, int, Decision, int cascade_length);
+    entry void recvParentDecision(int, int cascade_length);
+    entry void exchangePhase1Msg(int, int, int, Decision, int cascade_length);
+    
+    //remeshing phase 2 entry methods
+    entry void startPhase2(int);
+    entry void recvChildData(int, float, float, int, int, std::vector<float>, 
+        std::map<OctIndex, Neighbor> neighbors,
+				std::map<OctIndex, Decision> uncleDecisions);
+    entry void recvChildData(int, int, float, float, int, int, std::vector<float>, 
+        std::map<OctIndex, Neighbor> neighbors,
+				std::map<OctIndex, Decision> uncleDecisions);
+    entry void startLdb();
+    entry void phase1Finish() {
+     serial{
+      //inform everybody that phase 1 is over
+      thisProxy.startPhase2(meshGenIterations);
+     }
+    };
+    entry void makeGranularityDecisionAndCommunicate();
+    //sdag entry method that specifies the control flow 
+    //of the Remeshing phase
+    entry void doRemeshing() {
+      serial {
+        remeshStartTime = CmiWallTimer();
+        if(isRoot()) ckout << "doing remeshing now.. iterations = " << iterations << ", meshGenIterations = " << meshGenIterations << endl;
+        logfile << "begin remeshing, miterations " << meshGenIterations << std::endl;
+        if (/*!inInitialMeshGenerationPhase*/ meshGenIterations>max_depth && isLeaf) thisProxy[thisIndex].exchangeGhosts();
+        else thisProxy[thisIndex].signalExchangeGhostsCompletion();
+      }
+      //Remshing takes place in two phases:
+      //in phase 1, each chare makes a granularity 
+      //decision based on the error estimator and
+      //communicates the decision to its neighbor
+      //chares update their granularity decision
+      //based on their neighbor messages in 
+      //order to maintain the level difference
+      //restriction between neighboring blocks
+      //(refinement is given highest priority followed
+      //by the stay decision). These decisions may
+      //propagate across the mesh.
+      //Quiesence detector is started to know
+      //when all the chares have come to a consensus
+      //about their granularity decision
+      when signalExchangeGhostsCompletion() serial{
+          VB(logfile << "registering qd, isLeaf = " << isLeaf << std::endl;);
+          thisProxy[thisIndex].makeGranularityDecisionAndCommunicate();
+          if(isRoot()){
+            if(iterations%lb_freq==0 && iterations >= 1)
+              CkStartQD(CkCallback(CkIndex_Advection::startLdb(), thisProxy));
+            else
+              CkStartQD(CkCallback(CkIndex_Advection::phase1Finish(), thisProxy[thisIndex]));
+          }
+      }
+      //in phase 2, the  blocks which need to be
+      //refined iterpolates its data, and creates new 
+      //child chares. chares which are to be derefined
+      //send their data to the parent and destroy themselves
+      //completion of this phase is again detected by a 
+      //Quiesence detector
+      while(!phase1Over){
+        serial { 
+          lastBusyTime = CmiWallTimer();
+          VB(logfile << " in while loop, miterations " << meshGenIterations << std::endl;);
+        }
+        case {
+          when exchangePhase1Msg[meshGenIterations](int iterations, int dir, 
+                                            int quad, Decision dec, int length) 
+          serial{
+            VB(logfile << "itearions: " << iterations << std::endl;);
+            processPhase1Msg(dir, quad, dec, length);
+            VB(logfile << "out of processPhase1msg" << std::endl;);
+            lastBusyTime = CmiWallTimer();
+          }
+
+          when recvParentDecision[meshGenIterations](int iterations, int length) serial {
+            VB(logfile << "recvd message from parent" << std::endl;);
+            processParentDecision(length);
+            lastBusyTime = CmiWallTimer();
+          }
+
+          when informParent[meshGenIterations](int iterations, int cnum, Decision dec, int length) serial{
+            VB(logfile << "recvd message from child " << thisIndex.getChild(cnum).getIndexString() << ", iterations " << meshGenIterations << std::endl;);
+            processChildDecision(cnum, dec, length);
+            lastBusyTime = CmiWallTimer();
+          }
+
+          when startPhase2[meshGenIterations](int meshgeniter) serial{
+            lastIdleTime = CmiWallTimer();
+            ppc.ckLocalBranch()->recordQdTime(meshGenIterations, lastBusyTime, lastIdleTime);
+            if(isRoot()) ckout << "starting phase 2, iterations = " << meshgeniter << ", meshGenIterations = " << meshGenIterations << endl;
+            VB(logfile << "QD detected: phase1 over" << std::endl;
+            logfile << "decision: " << decision << std::endl;);
+            doPhase2();
+            phase1Over = true;
+            //iterate();
+            //if (isRoot()) CkStartQD(CkCallback(CkIndex_Advection::iterate(), thisProxy));
+          }
+        }
+      }
+      serial{
+        phase1Over=false;
+      }
+    };
+
+    entry void doComputationStep(){
+      serial {
+        //ckout <<  thisIndex.getIndexString().c_str() << " " << isLeaf << endl;
+        if(isLeaf)
+          ppc.ckLocalBranch()->incrementWorkUnitCount(iterations);
+        if (isRoot())
+            ckout  << "starting iteration " << iterations << " at root, time = " << CmiWallTimer() << endl;
+        //only the leaf chares participate in boundary exchange,
+        //others just indicate boundary exchange completion
+        if(isLeaf) thisProxy[thisIndex].exchangeGhosts();
+        else thisProxy[thisIndex].signalExchangeGhostsCompletion();
+      }
+      when signalExchangeGhostsCompletion() serial {
+        //only the leaf chares do the computation
+        //others just move on to the next iteration
+        if(isLeaf) compute();
+        iterate();
+      }
+    };
+
+    entry void iterate(){
+      serial {
+      //in the initial mesh generation phase
+      //the mesh keeps on remeshing itself
+      //until it has reached a stable state based
+      //on the error estimate for the initial conditions
+      //After the initialMeshGeneration phase is over
+      //the program does remeshing after every refine_frequency
+      //steps of computation
+      if(/*inInitialMeshGenerationPhase && */meshGenIterations++ < max_depth){
+        thisProxy[thisIndex].doRemeshing();
+      } else {
+        if (isRoot()) ppc.meshGenerationPhaseIsOver();
+        if((iterations)%refine_frequency == 0){//last one was a remeshing phase
+          remeshEndTime = CmiWallTimer();
+          ppc.ckLocalBranch()->recordRemeshTime(iterations, remeshStartTime, remeshEndTime);
+        }
+        iterations++;
+        myt = myt + mydt;
+        if(iterations > max_iterations ||  myt>=tmax){
+          if (isRoot()) CkStartQD(CkCallback(CkIndex_Main::terminate(), mainProxy));
+          return;
+        }
+        mydt = min(dx,min(dy,dz))/sqrt(vx*vx+vy*vy+vz*vz) * cfl;
+        if ((myt + mydt) >= tmax )
+          mydt = tmax - myt;
+
+        if(iterations % refine_frequency == 0) thisProxy[thisIndex].doRemeshing();//time to do remeshing
+        else thisProxy[thisIndex].doComputationStep();
+      }
+     }
+    };
+
+    entry void printSelf() {
+      if(isLeaf) atomic { printData(); }
+      else {
+        for(amr3d_i = 0; amr3d_i < NUM_CHILDREN; amr3d_i++) {
+          atomic { qtree(thisIndex.getChild(amr3d_i)).printSelf(); }
+          when donePrinting() {}
+        }
+      }
+    };
+
+    entry void donePrinting();
+
+    entry void exchangeGhosts(){
+      serial {
+        prepareData4Exchange();
+        //send boundaries to neighbors which are 
+        //on the same level  as you and to your
+        //uncles. For the neighbors which are your
+        //nephews, wait until they send their boundaries
+        //interpolate them and send them the interpolated
+        //boundaries
+        for(int i=0; i<NUM_NEIGHBORS; i++)
+          sendGhost(i);
+      }
+
+      while (imsg < 6) {
+        when receiveGhosts[iterations] (int iter, int dir, int quadrant, int width, float u1[width]) serial {
+          process(iter, dir, quadrant, width, u1);
+          //send interpolated data to nephews
+          sendReadyData();
+        }
+      }
+      serial { thisProxy[thisIndex].signalExchangeGhostsCompletion(); }
+    };
+
+    entry void wait4ChildData(){
+      serial{mem_allocate_all();}
+      for(ichild=0; ichild<NUM_CHILDREN; ichild++){
+          serial{VB(logfile << "waiting for child data " << meshGenIterations << std::endl;);}
+          when recvChildData[meshGenIterations](int iter, int a, float b, float c, int d, int e, 
+          std::vector<float> f, std::map<OctIndex, Neighbor> g, std::map<OctIndex, Decision> h) 
+          serial{
+            recvChildData(a,b,c,d,e,f,g,h);
+          }
+      }
+      serial{iterate();}
+    };
+  };
+};
